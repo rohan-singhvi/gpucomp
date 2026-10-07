@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod files;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "gpucomp",
@@ -15,8 +17,13 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Print the selected GPU adapter, backend and device limits.
+    /// Compress a file into the chunked .gpcz container.
+    Compress(files::CompressArgs),
+    /// Decompress a .gpcz file, or just a byte range of it.
+    Decompress(files::DecompressArgs),
+    /// With a file: summarise the container. Without: print the GPU adapter, backend and limits.
     Info {
+        file: Option<PathBuf>,
         #[arg(long, value_enum)]
         backend: Option<BackendArg>,
     },
@@ -53,6 +60,10 @@ struct BenchArgs {
     /// Measure CPU baselines only.
     #[arg(long)]
     cpu_only: bool,
+    /// Also benchmark every file in this directory, plus their concatenation
+    /// (e.g. testdata/corpus/silesia after scripts/fetch_corpus).
+    #[arg(long)]
+    corpus: Option<PathBuf>,
     #[arg(long, value_enum)]
     backend: Option<BackendArg>,
     #[arg(long, default_value = "bench/results")]
@@ -81,7 +92,15 @@ impl BackendArg {
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     match Cli::parse().command {
-        Command::Info { backend } => {
+        Command::Compress(args) => files::compress(&args)?,
+        Command::Decompress(args) => files::decompress(&args)?,
+        Command::Info {
+            file: Some(file), ..
+        } => files::info(&file)?,
+        Command::Info {
+            file: None,
+            backend,
+        } => {
             let ctx = gpu::Context::new(&gpu::ContextOptions {
                 backends: backend.map(BackendArg::backends),
             })?;
@@ -119,6 +138,13 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
             backend,
             measurements: bench::suite::platform(ctx.as_ref(), &cfg)?,
         };
+        let mut run = run;
+        let mut inputs = bench::suite::synthetic_inputs(cfg.bytes);
+        if let Some(dir) = &args.corpus {
+            inputs.extend(corpus_inputs(dir)?);
+        }
+        run.measurements
+            .extend(bench::suite::codecs(&inputs, &cfg)?);
         print!("{}", bench::report::render(std::slice::from_ref(&run)));
         if args.record {
             let path = bench::store::write_run(&args.results_dir, &run)?;
@@ -135,6 +161,28 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// Every regular file in `dir` (sorted by name) as `<dir name>/<file>`, plus
+/// their concatenation as `<dir name>/all`.
+fn corpus_inputs(dir: &std::path::Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    let corpus = dir
+        .file_name()
+        .map_or("corpus".into(), |n| n.to_string_lossy().into_owned());
+    let mut paths: Vec<_> = std::fs::read_dir(dir)?
+        .map(|e| e.map(|e| e.path()))
+        .collect::<Result<_, _>>()?;
+    paths.retain(|p| p.is_file());
+    paths.sort();
+    anyhow::ensure!(!paths.is_empty(), "no files in {}", dir.display());
+    let mut inputs = Vec::new();
+    for path in paths {
+        let name = path.file_name().unwrap().to_string_lossy();
+        inputs.push((format!("{corpus}/{name}"), std::fs::read(&path)?));
+    }
+    let all = inputs.iter().flat_map(|(_, d)| d.iter().copied()).collect();
+    inputs.push((format!("{corpus}/all"), all));
+    Ok(inputs)
 }
 
 /// Short HEAD commit, suffixed `-dirty` when the working tree has changes.
@@ -176,6 +224,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Info {
+                file: None,
                 backend: Some(BackendArg::Dx12)
             }
         ));
@@ -197,6 +246,29 @@ mod tests {
         assert!(!args.record && !args.report && !args.report_only);
         assert_eq!(args.results_dir, PathBuf::from("bench/results"));
         assert_eq!(args.report_path, PathBuf::from("BENCHMARKS.md"));
+    }
+
+    #[test]
+    fn corpus_inputs_are_sorted_files_plus_their_concatenation() {
+        let dir = std::env::temp_dir().join(format!("gpucomp-corpus-{}", std::process::id()));
+        let corpus = dir.join("mini");
+        std::fs::create_dir_all(corpus.join("subdir")).unwrap();
+        std::fs::write(corpus.join("b.txt"), b"bbb").unwrap();
+        std::fs::write(corpus.join("a.txt"), b"aa").unwrap();
+        let inputs = corpus_inputs(&corpus).unwrap();
+        let summary: Vec<_> = inputs
+            .iter()
+            .map(|(n, d)| (n.as_str(), d.as_slice()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("mini/a.txt", &b"aa"[..]),
+                ("mini/b.txt", b"bbb"),
+                ("mini/all", b"aabbb")
+            ]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

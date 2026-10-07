@@ -1,0 +1,300 @@
+//! Chunked `.gpcz` compression and decompression on the CPU, parallel over
+//! chunks with rayon. These are the fair multi-threaded CPU baselines.
+
+use std::io::{Read, Seek, SeekFrom};
+
+use format::{pad4, ChunkEntry, Codec, Filter, FormatError, Header, Index};
+use rayon::prelude::*;
+
+use crate::lz4::decode::DecodeError;
+use crate::lz4::encode::Params;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CpuError {
+    #[error(transparent)]
+    Format(#[from] FormatError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("chunk {chunk}: {source}")]
+    Decode { chunk: usize, source: DecodeError },
+    #[error("chunk {chunk}: lz4_flex: {message}")]
+    Lz4Flex { chunk: usize, message: String },
+    #[error("chunk {chunk}: checksum mismatch")]
+    Checksum { chunk: usize },
+    #[error("chunk {chunk}: filter not supported by this decoder")]
+    UnsupportedFilter { chunk: usize },
+    #[error("input too large: {0} chunks")]
+    TooManyChunks(u64),
+}
+
+/// Which LZ4 block encoder compresses each chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoder {
+    /// `lz4_flex`: the CPU compression baseline.
+    Lz4Flex,
+    /// The hand-written greedy encoder, the GPU encoder's CPU twin.
+    Greedy(Params),
+}
+
+/// Which LZ4 block decoder decodes each chunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decoder {
+    HandWritten,
+    Lz4Flex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompressOptions {
+    pub codec: Codec,
+    pub chunk_size: u32,
+    pub encoder: Encoder,
+    pub checksums: bool,
+    pub level: u8,
+}
+
+impl Default for CompressOptions {
+    fn default() -> Self {
+        CompressOptions {
+            codec: Codec::Lz4,
+            chunk_size: format::DEFAULT_CHUNK_SIZE,
+            encoder: Encoder::Lz4Flex,
+            checksums: false,
+            level: 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecompressOptions {
+    pub decoder: Decoder,
+    /// Check per-chunk checksums when the file has them.
+    pub verify: bool,
+}
+
+impl Default for DecompressOptions {
+    fn default() -> Self {
+        DecompressOptions {
+            decoder: Decoder::HandWritten,
+            verify: true,
+        }
+    }
+}
+
+/// Low 32 bits of xxh3-64, the per-chunk checksum.
+pub fn checksum(bytes: &[u8]) -> u32 {
+    xxhash_rust::xxh3::xxh3_64(bytes) as u32
+}
+
+pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuError> {
+    let chunk_size = options.chunk_size;
+    let chunk_count = format::chunk_count_for(input.len() as u64, chunk_size.max(1));
+    let header = Header {
+        codec: options.codec,
+        chunk_size,
+        chunk_count: u32::try_from(chunk_count)
+            .map_err(|_| CpuError::TooManyChunks(chunk_count))?,
+        total_size: input.len() as u64,
+        checksums: options.checksums,
+        level: options.level,
+    };
+    // Validate the header (chunk size) before doing any work.
+    Index {
+        header,
+        chunks: Vec::new(),
+    }
+    .validate(0)
+    .or_else(|e| match e {
+        FormatError::ChunkCountMismatch { .. } => Ok(()),
+        e => Err(e),
+    })?;
+
+    // Compress every chunk independently, in parallel.
+    let payloads: Vec<(Vec<u8>, bool, u32)> = input
+        .par_chunks(chunk_size as usize)
+        .map(|chunk| {
+            let sum = if options.checksums {
+                checksum(chunk)
+            } else {
+                0
+            };
+            let compressed = match (options.codec, options.encoder) {
+                (Codec::Stored, _) => None,
+                (Codec::Lz4, Encoder::Lz4Flex) => Some(lz4_flex::block::compress(chunk)),
+                (Codec::Lz4, Encoder::Greedy(params)) => {
+                    Some(crate::lz4::encode::encode_block(chunk, &params))
+                }
+            };
+            match compressed {
+                Some(c) if c.len() < chunk.len() => (c, false, sum),
+                _ => (chunk.to_vec(), true, sum),
+            }
+        })
+        .collect();
+
+    // Lay payloads out back to back, each padded to 4 bytes.
+    let mut chunks = Vec::with_capacity(payloads.len());
+    let mut offset = 0u64;
+    for (i, (payload, stored, sum)) in payloads.iter().enumerate() {
+        chunks.push(ChunkEntry {
+            comp_offset: offset,
+            comp_size: payload.len() as u32,
+            stored: *stored,
+            uncomp_size: header.uncomp_size_of(i as u32),
+            checksum: *sum,
+            filter: Filter::None,
+        });
+        offset = pad4(offset + payload.len() as u64);
+    }
+    let index = Index { header, chunks };
+    let mut out = index.to_bytes();
+    out.reserve(offset as usize);
+    for (payload, _, _) in &payloads {
+        out.extend_from_slice(payload);
+        out.resize(pad4(out.len() as u64) as usize, 0);
+    }
+    Ok(out)
+}
+
+pub fn decompress(file: &[u8], options: &DecompressOptions) -> Result<Vec<u8>, CpuError> {
+    let index = Index::parse(file)?;
+    let data = &file[index.data_offset() as usize..];
+    index.validate(data.len() as u64)?;
+    let mut out = vec![0u8; index.header.total_size as usize];
+    out.par_chunks_mut(index.header.chunk_size as usize)
+        .zip(&index.chunks)
+        .enumerate()
+        .try_for_each(|(i, (dst, entry))| {
+            let start = entry.comp_offset as usize;
+            let payload = &data[start..start + entry.comp_size as usize];
+            decode_chunk(i, entry, index.header.checksums, payload, dst, options)
+        })?;
+    Ok(out)
+}
+
+/// Decodes one chunk's payload into `dst` (exactly `uncomp_size` bytes).
+fn decode_chunk(
+    chunk: usize,
+    entry: &ChunkEntry,
+    has_checksums: bool,
+    payload: &[u8],
+    dst: &mut [u8],
+    options: &DecompressOptions,
+) -> Result<(), CpuError> {
+    if entry.filter != Filter::None {
+        return Err(CpuError::UnsupportedFilter { chunk });
+    }
+    if entry.stored {
+        dst.copy_from_slice(payload);
+    } else {
+        match options.decoder {
+            Decoder::HandWritten => crate::lz4::decode::decode_block(payload, dst)
+                .map_err(|source| CpuError::Decode { chunk, source })?,
+            Decoder::Lz4Flex => {
+                let n = lz4_flex::block::decompress_into(payload, dst).map_err(|e| {
+                    CpuError::Lz4Flex {
+                        chunk,
+                        message: e.to_string(),
+                    }
+                })?;
+                if n != dst.len() {
+                    return Err(CpuError::Lz4Flex {
+                        chunk,
+                        message: format!("decoded {n} bytes, expected {}", dst.len()),
+                    });
+                }
+            }
+        }
+    }
+    if options.verify && has_checksums && checksum(dst) != entry.checksum {
+        return Err(CpuError::Checksum { chunk });
+    }
+    Ok(())
+}
+
+/// Reads and validates the header and chunk table, checking payload bounds
+/// against the reader's total length.
+pub fn read_index<R: Read + Seek>(reader: &mut R) -> Result<Index, CpuError> {
+    let file_len = reader.seek(SeekFrom::End(0))?;
+    reader.seek(SeekFrom::Start(0))?;
+    let mut header = [0u8; format::HEADER_SIZE];
+    read_exact_or_truncated(reader, &mut header, file_len)?;
+    let parsed = Header::parse(&header)?;
+    let table_len = format::ENTRY_SIZE as u64 * u64::from(parsed.chunk_count);
+    if format::HEADER_SIZE as u64 + table_len > file_len {
+        return Err(FormatError::Truncated {
+            need: format::HEADER_SIZE as u64 + table_len,
+            have: file_len,
+        }
+        .into());
+    }
+    let mut bytes = header.to_vec();
+    bytes.resize(format::HEADER_SIZE + table_len as usize, 0);
+    reader.read_exact(&mut bytes[format::HEADER_SIZE..])?;
+    let index = Index::parse(&bytes)?;
+    index.validate(file_len - index.data_offset())?;
+    Ok(index)
+}
+
+fn read_exact_or_truncated<R: Read>(
+    reader: &mut R,
+    buf: &mut [u8],
+    have: u64,
+) -> Result<(), CpuError> {
+    if (buf.len() as u64) > have {
+        return Err(FormatError::Truncated {
+            need: buf.len() as u64,
+            have,
+        }
+        .into());
+    }
+    reader.read_exact(buf)?;
+    Ok(())
+}
+
+/// Decompresses `[offset, offset + len)` of the original, reading only the
+/// index and the chunks that overlap the range.
+pub fn decompress_range<R: Read + Seek>(
+    reader: &mut R,
+    offset: u64,
+    len: u64,
+    options: &DecompressOptions,
+) -> Result<Vec<u8>, CpuError> {
+    let index = read_index(reader)?;
+    let chunks = index.chunks_for_range(offset, len)?;
+    if chunks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let chunk_size = u64::from(index.header.chunk_size);
+    let first_start = chunks.start as u64 * chunk_size;
+
+    // Read the needed payloads (contiguous in the file), then decode in parallel.
+    let entries = &index.chunks[chunks.clone()];
+    let payload_start = entries[0].comp_offset;
+    let last = entries[entries.len() - 1];
+    let payload_end = last.comp_offset + u64::from(last.comp_size);
+    reader.seek(SeekFrom::Start(index.data_offset() + payload_start))?;
+    let mut payloads = vec![0u8; (payload_end - payload_start) as usize];
+    reader.read_exact(&mut payloads)?;
+
+    let span: u64 = entries.iter().map(|e| u64::from(e.uncomp_size)).sum();
+    let mut out = vec![0u8; span as usize];
+    out.par_chunks_mut(chunk_size as usize)
+        .zip(entries)
+        .enumerate()
+        .try_for_each(|(k, (dst, entry))| {
+            let start = (entry.comp_offset - payload_start) as usize;
+            let payload = &payloads[start..start + entry.comp_size as usize];
+            decode_chunk(
+                chunks.start + k,
+                entry,
+                index.header.checksums,
+                payload,
+                dst,
+                options,
+            )
+        })?;
+    let skip = (offset - first_start) as usize;
+    out.drain(..skip);
+    out.truncate(len as usize);
+    Ok(out)
+}

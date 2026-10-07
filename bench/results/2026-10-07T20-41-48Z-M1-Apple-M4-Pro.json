@@ -1,0 +1,867 @@
+{
+  "date": "2026-10-07T20:41:48Z",
+  "commit": "8dc7b59-dirty",
+  "label": "M1",
+  "note": "CPU container + LZ4 baselines (lz4_flex 1t/mt, greedy GPU-twin encoder, hand-written decoder); Silesia added",
+  "os": "macos",
+  "adapter": "Apple M4 Pro",
+  "backend": "metal",
+  "measurements": [
+    {
+      "name": "cpu.memcpy",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 66.96064660873158,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.upload",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 9.952651656856839,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.readback",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 6.555660647725572,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.xor.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 86.3796443842627,
+      "ratio": null,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.xor.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.492242166108914,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 23.10534162123675,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 118.89733127578941,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 1.3723654638579208,
+      "ratio": 184.0858478351511,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 18.43702913744164,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 15.43449588877959,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 6.360213485397229,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 3.6925520635407016,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 8.033687470201246,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.468834106834433,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 16.023008005969036,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 16.42169050596841,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 15.39172152874652,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 0.6535117933414074,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 4.871562114139852,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 0.8076367043711483,
+      "ratio": 1.8170436489106827,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.7801738350619143,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 14.035641952472204,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 5.2309265155796325,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 1.6552075496697694,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 9.06282680443585,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 1.2717432369666106,
+      "ratio": 1.927838333239348,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 6.143370158323765,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 15.62505200871814,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 7.867263616584041,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.5353474303738702,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 2.1120594102613994,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.5752269315424121,
+      "ratio": 1.4959342076063868,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 3.958583501212341,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 23.633506542290114,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 5.682928542753914,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.86529029474025,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 3.77766391953961,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.0250665036181787,
+      "ratio": 1.8472049116004248,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 3.173249693814012,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 13.633196976024482,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 7.4773517342782565,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.8614297179206212,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 2.232559535098575,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.7725837994854744,
+      "ratio": 1.7081412568330352,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 3.9629955849082403,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 23.214405621433343,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 11.023799888994294,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.578572469643475,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 11.461384905522454,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.057512698698605,
+      "ratio": 5.139432818043852,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 3.8770688624992817,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 14.69306256500082,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 10.404707778666369,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.695500235820581,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.486238829096807,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.71989141118652,
+      "ratio": 1.4020607279366923,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 2.831332930798345,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 10.075237666325487,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 6.062521248217614,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.8076354773686819,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.9158216379895436,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.8717852882703777,
+      "ratio": 1.6544887492552436,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 3.2189003820289983,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 21.899644114204815,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 11.796990889387173,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.4517590629056173,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 2.0732689107676867,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.5495866822794174,
+      "ratio": 1.8017651159325883,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 3.14486037188608,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 10.427999118831824,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 4.174178951996201,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.9284714233896125,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 4.881263420910245,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.8059358091434907,
+      "ratio": 2.492495887446387,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 3.327036933183476,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 12.925386973753085,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 7.069386745488793,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.886859699962236,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.6187902552181388,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.8574698414106031,
+      "ratio": 1.0906622229708594,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 3.402805788005252,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 12.448813044918726,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 9.61478768947655,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.6241266206761583,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 2.9067097176042465,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.7365934684359559,
+      "ratio": 1.921404007249101,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 2.9331998376713884,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 13.515562127727687,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 5.392271823743933,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 3.9389512386149454,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 2.373958131108588,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.9472350049869829,
+      "ratio": 1.0233491867055804,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 31.91804143126177,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 68.61788354561575,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 52.98486278972346,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.1469738321274467,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 6.143858761867543,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.6551023364542107,
+      "ratio": 3.342914393353796,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 3.471806446374929,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 10.19039503108432,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 6.665286710775377,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.837517275984194,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 5.1593161944410655,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.9755392324172616,
+      "ratio": 1.96584628533631,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 3.035653526914048,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 13.03505446941333,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 8.20498063547331,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    }
+  ]
+}

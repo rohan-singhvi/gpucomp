@@ -3,13 +3,32 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::record::Run;
+use crate::record::{Measurement, Run};
 
 /// How many past runs the history table shows per adapter.
 pub const HISTORY_RUNS: usize = 8;
 
-/// Renders the short Markdown summary: per adapter, the latest run in full
-/// plus a history matrix (measurement × run) of GB/s.
+/// Inputs preferred, in order, for a measurement's history row.
+const HEADLINE_INPUTS: [&str; 3] = ["silesia/all", "text", "random"];
+
+/// Per-file corpus inputs (`corpus/file`) stay in the JSON; the report keeps
+/// synthetic inputs and whole-corpus totals (`corpus/all`).
+fn shown(m: &Measurement) -> bool {
+    !m.input.contains('/') || m.input.ends_with("/all")
+}
+
+fn first_seen<'a>(items: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+    let mut out: Vec<&str> = Vec::new();
+    for item in items {
+        if !out.contains(&item) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+/// Renders the short Markdown summary: per adapter, the latest run as a
+/// measurement × input matrix, plus a history (measurement × run) of GB/s.
 pub fn render(runs: &[Run]) -> String {
     let mut md = String::new();
     let _ = writeln!(md, "# Benchmarks\n");
@@ -36,42 +55,74 @@ pub fn render(runs: &[Run]) -> String {
             "### Latest run — {} · {} · `{}` · {}\n",
             latest.label, latest.date, latest.commit, latest.os
         );
-        let _ = writeln!(md, "| Measurement | Input | Size | GB/s | Ratio | Timing |");
-        let _ = writeln!(md, "|---|---|---:|---:|---:|---|");
-        for m in &latest.measurements {
-            let ratio = m.ratio.map_or("—".to_string(), |r| format!("{r:.2}×"));
-            let timing = serde_json::to_string(&m.timing).unwrap_or_default();
-            let _ = writeln!(
-                md,
-                "| {} | {} | {} | {:.2} | {ratio} | {} |",
-                m.name,
-                m.input,
-                human_bytes(m.bytes),
-                m.gbps,
-                timing.trim_matches('"')
-            );
+        let rows: Vec<&Measurement> = latest.measurements.iter().filter(|m| shown(m)).collect();
+        let inputs = first_seen(rows.iter().map(|m| m.input.as_str()));
+        let names = first_seen(rows.iter().map(|m| m.name.as_str()));
+        let _ = writeln!(md, "GB/s, with compression ratio where it applies.\n");
+        let _ = writeln!(md, "| Measurement | {} | Timing |", inputs.join(" | "));
+        let _ = writeln!(md, "|---|{}---|", "---:|".repeat(inputs.len()));
+        for name in &names {
+            let mut row = format!("| {name} |");
+            let mut timing = String::new();
+            for input in &inputs {
+                let cell = match rows.iter().find(|m| m.name == *name && m.input == *input) {
+                    Some(m) => {
+                        timing = serde_json::to_string(&m.timing)
+                            .unwrap_or_default()
+                            .trim_matches('"')
+                            .to_string();
+                        match m.ratio {
+                            Some(r) => format!("{:.2} · {r:.2}×", m.gbps),
+                            None => format!("{:.2}", m.gbps),
+                        }
+                    }
+                    None => "—".into(),
+                };
+                let _ = write!(row, " {cell} |");
+            }
+            let _ = writeln!(md, "{row} {timing} |");
         }
+        let sizes: Vec<String> = inputs
+            .iter()
+            .filter_map(|i| rows.iter().find(|m| m.input == *i))
+            .map(|m| format!("{} {}", m.input, human_bytes(m.bytes)))
+            .collect();
+        let _ = writeln!(md, "\nInput sizes: {}.", sizes.join(", "));
 
+        // History: one headline input per measurement, across recent runs.
         let recent = &runs[runs.len().saturating_sub(HISTORY_RUNS)..];
         let mut keys: Vec<(&str, &str)> = Vec::new();
-        for run in recent {
-            for m in &run.measurements {
-                let key = (m.name.as_str(), m.input.as_str());
-                if !keys.contains(&key) {
-                    keys.push(key);
+        for run in recent.iter().rev() {
+            let shown_rows: Vec<&Measurement> =
+                run.measurements.iter().filter(|m| shown(m)).collect();
+            for name in first_seen(shown_rows.iter().map(|m| m.name.as_str())) {
+                if keys.iter().any(|(n, _)| *n == name) {
+                    continue;
                 }
+                let measured: Vec<&str> = shown_rows
+                    .iter()
+                    .filter(|m| m.name == name)
+                    .map(|m| m.input.as_str())
+                    .collect();
+                let input = HEADLINE_INPUTS
+                    .iter()
+                    .find(|h| measured.contains(h))
+                    .copied()
+                    .unwrap_or(measured[0]);
+                keys.push((name, input));
             }
         }
+        keys.sort_by_key(|(name, _)| names.iter().position(|n| n == name).unwrap_or(usize::MAX));
         let _ = writeln!(md, "\n### History (GB/s, oldest → newest)\n");
-        let mut header = "| Measurement | Input |".to_string();
-        let mut rule = "|---|---|".to_string();
+        let mut header = "| Measurement (input) |".to_string();
+        let mut rule = "|---|".to_string();
         for run in recent {
             let _ = write!(header, " {} `{}` |", run.label, run.commit);
             rule.push_str("---:|");
         }
         let _ = writeln!(md, "{header}\n{rule}");
         for (name, input) in keys {
-            let mut row = format!("| {name} | {input} |");
+            let mut row = format!("| {name} ({input}) |");
             for run in recent {
                 let cell = run
                     .measurements
@@ -117,7 +168,7 @@ pub fn human_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::record::{sample_run, Measurement, Run, Timing};
+    use crate::record::{sample_run, Timing};
 
     fn run(date: &str, label: &str, adapter: &str, rows: &[(&str, f64)]) -> Run {
         Run {
@@ -259,6 +310,74 @@ mod tests {
         );
         // Runs without a note aren't listed.
         assert!(!history.contains("- **M1**"), "{history}");
+    }
+
+    fn on(name: &str, input: &str, gbps: f64) -> Measurement {
+        Measurement {
+            name: name.into(),
+            input: input.into(),
+            gbps,
+            ..sample_run().measurements[0].clone()
+        }
+    }
+
+    fn with(rows: Vec<Measurement>) -> Run {
+        Run {
+            measurements: rows,
+            ..run("2026-10-07T00:00:00Z", "M1", "GPU A", &[])
+        }
+    }
+
+    #[test]
+    fn per_file_corpus_rows_are_left_out() {
+        let md = render(&[with(vec![
+            on("cpu.x", "silesia/dickens", 1.0),
+            on("cpu.x", "silesia/all", 2.0),
+        ])]);
+        assert!(!md.contains("silesia/dickens"), "{md}");
+        assert!(md.contains("silesia/all"), "{md}");
+    }
+
+    #[test]
+    fn latest_table_is_a_measurement_by_input_matrix() {
+        let md = render(&[with(vec![
+            on("cpu.x", "text", 1.0),
+            on("cpu.x", "zeros", 2.0),
+            on("cpu.y", "text", 3.0),
+        ])]);
+        let latest = latest_section(&md);
+        assert!(
+            latest.contains("| Measurement | text | zeros |"),
+            "{latest}"
+        );
+        let x_rows: Vec<_> = latest
+            .lines()
+            .filter(|l| l.starts_with("| cpu.x"))
+            .collect();
+        assert_eq!(x_rows.len(), 1, "{latest}");
+        assert!(
+            x_rows[0].contains("1.00") && x_rows[0].contains("2.00"),
+            "{latest}"
+        );
+        let y_row = latest.lines().find(|l| l.starts_with("| cpu.y")).unwrap();
+        assert!(y_row.contains("3.00") && y_row.contains("—"), "{y_row}");
+    }
+
+    #[test]
+    fn history_tracks_one_headline_input_per_measurement() {
+        let md = render(&[with(vec![
+            on("cpu.x", "text", 1.0),
+            on("cpu.x", "silesia/all", 2.0),
+            on("cpu.y", "random", 3.0),
+        ])]);
+        let history = &md[md.find("### History").unwrap()..];
+        let rows: Vec<_> = history
+            .lines()
+            .filter(|l| l.starts_with("| cpu."))
+            .collect();
+        assert_eq!(rows.len(), 2, "{history}");
+        assert!(rows[0].starts_with("| cpu.x (silesia/all)") && rows[0].contains("2.00"));
+        assert!(rows[1].starts_with("| cpu.y (random)") && rows[1].contains("3.00"));
     }
 
     #[test]
