@@ -10,8 +10,8 @@ use wgpu::BufferUsages;
 
 use crate::{dispatch_grid, Context, GpuError};
 
-const SHADER: &str = include_str!("../../shaders/lz4_decode_naive.wgsl");
-const WG_SIZE: u32 = 64;
+const NAIVE_SHADER: &str = include_str!("../../shaders/lz4_decode_naive.wgsl");
+const COOP_SHADER: &str = include_str!("../../shaders/lz4_decode_coop.wgsl");
 
 /// Per-chunk result codes written by the decode shader (0 = ok).
 /// They mirror `cpu::lz4::decode::DecodeError`.
@@ -43,6 +43,8 @@ pub enum GpuDecodeError {
     Checksum { chunk: usize },
     #[error("chunk {chunk}: filter not supported by this decoder")]
     UnsupportedFilter { chunk: usize },
+    #[error("decoder configuration not supported: {0}")]
+    Unsupported(String),
 }
 
 impl ChunkStatus {
@@ -59,34 +61,88 @@ impl ChunkStatus {
     }
 }
 
-/// Naive GPU LZ4 decoder (M2): one invocation decodes one whole chunk.
+/// Which decode kernel to run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeKernel {
+    /// M2: one invocation decodes one whole chunk, byte by byte.
+    Naive,
+    /// M5: one workgroup per chunk; invocation 0 decodes serially and hands
+    /// copies of at least `long_copy` bytes to the whole workgroup.
+    Cooperative,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecoderConfig {
+    pub kernel: DecodeKernel,
+    /// Invocations per workgroup.
+    pub workgroup: u32,
+    /// Cooperative kernel only: copies at least this long are done by the
+    /// whole workgroup; shorter ones by invocation 0.
+    pub long_copy: u32,
+}
+
+impl Default for DecoderConfig {
+    fn default() -> Self {
+        DecoderConfig {
+            kernel: DecodeKernel::Cooperative,
+            workgroup: 32,
+            long_copy: 16,
+        }
+    }
+}
+
+/// GPU LZ4 decoder.
 pub struct Lz4GpuDecoder {
     pipeline: wgpu::ComputePipeline,
+    config: DecoderConfig,
 }
 
 impl Lz4GpuDecoder {
-    /// Compiles the decode pipeline; reuse the decoder across calls.
+    /// The default decoder (see [`DecoderConfig::default`]).
     pub fn new(ctx: &Context) -> Self {
+        Self::with_config(ctx, DecoderConfig::default()).expect("default decoder config is valid")
+    }
+
+    /// Compiles the decode pipeline; reuse the decoder across calls.
+    pub fn with_config(ctx: &Context, config: DecoderConfig) -> Result<Self, GpuDecodeError> {
+        let limits = ctx.device_limits();
+        if config.workgroup == 0
+            || config.workgroup > limits.max_compute_invocations_per_workgroup
+            || config.workgroup > limits.max_compute_workgroup_size_x
+        {
+            return Err(GpuDecodeError::Unsupported(format!(
+                "workgroup size {}",
+                config.workgroup
+            )));
+        }
+        let (label, source) = match config.kernel {
+            DecodeKernel::Naive => ("lz4 decode (naive)", NAIVE_SHADER),
+            DecodeKernel::Cooperative => ("lz4 decode (cooperative)", COOP_SHADER),
+        };
+        let mut constants = vec![("WG_SIZE", f64::from(config.workgroup))];
+        if config.kernel == DecodeKernel::Cooperative {
+            constants.push(("LONG_COPY", f64::from(config.long_copy.max(1))));
+        }
         let module = ctx
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("lz4 decode (naive)"),
-                source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
             });
         let pipeline = ctx
             .device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("lz4 decode (naive)"),
+                label: Some(label),
                 layout: None,
                 module: &module,
                 entry_point: Some("main"),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("WG_SIZE", f64::from(WG_SIZE))],
+                    constants: &constants,
                     ..Default::default()
                 },
                 cache: None,
             });
-        Lz4GpuDecoder { pipeline }
+        Ok(Lz4GpuDecoder { pipeline, config })
     }
 
     /// Decompresses a whole `.gpcz` file held in memory.
@@ -242,13 +298,16 @@ impl Lz4GpuDecoder {
         encoder.clear_buffer(&p.dst_buf, 0, None);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("lz4 decode (naive)"),
+                label: Some("lz4 decode"),
                 timestamp_writes: timer.map(crate::GpuTimer::pass_writes),
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &p.bind_group, &[]);
             let (x, y) = dispatch_grid(
-                (p.chunks.len() as u32).div_ceil(WG_SIZE),
+                match self.config.kernel {
+                    DecodeKernel::Naive => (p.chunks.len() as u32).div_ceil(self.config.workgroup),
+                    DecodeKernel::Cooperative => p.chunks.len() as u32,
+                },
                 ctx.device_limits().max_compute_workgroups_per_dimension,
             );
             pass.dispatch_workgroups(x, y, 1);

@@ -155,3 +155,59 @@ The malformed-input suite (every truncation, every single-byte corruption of a
 3-chunk file) runs against the GPU decoder on each backend.
 Apple M4 Pro / Metal: 621 combinations exact. M4 changes no code paths, so it has
 no benchmark run.
+
+## Toolchain pinned to 1.99.0
+`rust-toolchain.toml` said `stable`, which meant 1.95 locally and 1.99 on CI. A
+newer clippy lint (`chunks_exact` with a constant size) broke CI on the M2 and M3
+pushes while local checks passed. The toolchain is now pinned to `1.99.0` (CI
+installs it from the file), and the two flagged sites use `as_chunks`. Bump the pin
+deliberately.
+
+## M5 — Cooperative decoder: windowed design rejected, hybrid adopted
+First design (rejected): invocation 0 parsed windows of 64 sequence headers into
+workgroup memory, then all invocations copied literals, then matches in dependency
+groups (a match joins the group if its source pattern lies before the group's first
+match; overlapping matches copied in parallel as periodic patterns). Correct, but on
+short-sequence data every invocation walked every sequence, and text needs a group
+barrier every few sequences: synthetic text fell from 7.4 GB/s (naive) to 0.8–1.3.
+
+Adopted (`lz4_decode_coop.wgsl`): invocation 0 decodes exactly like the naive kernel
+(same checks, order and statuses) and hands only copies of ≥ `long_copy` bytes to the
+whole workgroup (barrier, word-wise copy, barrier). Overlapping matches still copy in
+parallel via the periodic formula `dst[m − off + k mod off]`.
+
+Kernel GB/s, Apple M4 Pro, 256 MiB inputs, 64 KiB chunks:
+
+| kernel | zeros | random | text | mixed | Silesia |
+|---|---:|---:|---:|---:|---:|
+| naive (M2) | 31.8 | 42.7 | 7.4 | 8.3 | 1.95 |
+| hybrid wg16, long_copy 16 | 20.7 | 49.5 | 1.9 | 4.6 | 3.13 |
+| **hybrid wg32, long_copy 16** | 33.2 | 52.5 | 1.9 | 4.9 | **3.23** |
+| hybrid wg64, long_copy 16 | 34.0 | 54.5 | 1.1 | 2.9 | 1.93 |
+
+Default: hybrid, workgroup 32 (one Apple SIMD group), `long_copy` 16. On Silesia,
+the real-data benchmark, it's 1.66× the naive kernel (kernel) and 1.35× end to end
+(1.74 vs 1.29 GB/s), which meets M5's "clear speedup over M2". **Regression:**
+uniform short-sequence data (synthetic text) is ~4× slower. The naive kernel runs
+32 *different chunks* in the 32 lanes of a SIMD group, in lockstep, while one
+workgroup per chunk runs the serial parse on 1 lane of 32. Even with no cooperative
+copies at all (`long_copy` = 1 MiB) the hybrid gets 1.9 GB/s on text. Naive stays
+available (`DecodeKernel::Naive`). The structural fix is M6's GLZ, whose separate
+streams remove the serial token parse.
+
+## M5 — atomicOr vs word ownership: a tie; atomicOr kept
+Both write schemes assemble whole output words. Option 1 merges every word with
+`atomicOr`. Option 2 used `atomicStore` for words entirely inside one copy, and
+`atomicOr` only at shared edges. Across workgroup sizes 16–64 and thresholds
+16–128, they were within ±2% of each other on every input. The simpler option 1
+stays (option 2 removed), and it's what M3's emit already uses.
+
+## M5 — Encoder fixes folded in from the M3 profile
+(1) The parse now totals the block's encoded size, from register values (an earlier
+version re-read storage and cost text ~15%). If the block won't shrink the chunk,
+the workgroup skips emit: random input 0.49 → 0.68 GB/s. `encode_blocks` reports
+such chunks as `EncodedBlock::Incompressible { size }`. (2) Literal runs ≥ 64 bytes
+are copied by the whole workgroup, word by word, and owners write only headers and
+short runs. Text 0.79 → 0.95 GB/s. Silesia is unchanged (~0.7 GB/s), because the
+serial parse dominates there. The parallel parse is still the next encoder step.
+Output remains byte-identical to the CPU twin.

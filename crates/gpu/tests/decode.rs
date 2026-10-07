@@ -1,4 +1,5 @@
-//! GPU LZ4 decompression must be byte-identical to the original (M2).
+//! GPU LZ4 decompression must be byte-identical to the original, for every
+//! decoder kernel: naive (M2) and cooperative (M5).
 
 mod common;
 
@@ -8,7 +9,7 @@ use common::{context, fixtures, random, text, CHUNK};
 use cpu::container::{compress, CompressOptions, Encoder};
 use cpu::lz4::decode::DecodeError;
 use format::{ChunkEntry, Codec, Filter, Header, Index};
-use gpu::decode::{ChunkStatus, GpuDecodeError, Lz4GpuDecoder};
+use gpu::decode::{ChunkStatus, DecodeKernel, DecoderConfig, GpuDecodeError, Lz4GpuDecoder};
 use proptest::prelude::*;
 
 const ENCODERS: [Encoder; 2] = [
@@ -29,17 +30,47 @@ fn opts(encoder: Encoder) -> CompressOptions {
     }
 }
 
+/// Every decoder configuration under test.
+fn decoders(ctx: &gpu::Context) -> Vec<(String, Lz4GpuDecoder)> {
+    let mut configs = vec![DecoderConfig {
+        kernel: DecodeKernel::Naive,
+        ..DecoderConfig::default()
+    }];
+    for (workgroup, long_copy) in [
+        (32, 16),
+        (64, 4), // tiny threshold: nearly every copy is cooperative
+        (8, 1),
+        (32, 1 << 20), // never cooperative: pure serial path
+    ] {
+        configs.push(DecoderConfig {
+            kernel: DecodeKernel::Cooperative,
+            workgroup,
+            long_copy,
+        });
+    }
+    configs
+        .into_iter()
+        .map(|c| {
+            (
+                format!("{c:?}"),
+                Lz4GpuDecoder::with_config(ctx, c).unwrap(),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn every_cpu_encoding_decodes_exactly_on_the_gpu() {
     let Some(ctx) = context() else { return };
-    let decoder = Lz4GpuDecoder::new(&ctx);
-    for (name, input) in fixtures() {
-        for encoder in ENCODERS {
-            let file = compress(&input, &opts(encoder)).unwrap();
-            let out = decoder
-                .decompress(&ctx, &file, true)
-                .unwrap_or_else(|e| panic!("{name} {encoder:?}: {e}"));
-            assert!(out == input, "{name} {encoder:?}: output differs");
+    for (cfg, decoder) in decoders(&ctx) {
+        for (name, input) in fixtures() {
+            for encoder in ENCODERS {
+                let file = compress(&input, &opts(encoder)).unwrap();
+                let out = decoder
+                    .decompress(&ctx, &file, true)
+                    .unwrap_or_else(|e| panic!("{cfg} {name} {encoder:?}: {e}"));
+                assert!(out == input, "{cfg} {name} {encoder:?}: output differs");
+            }
         }
     }
 }
@@ -53,37 +84,39 @@ fn stored_codec_files_decode_on_the_gpu() {
         ..opts(Encoder::Lz4Flex)
     };
     let file = compress(&input, &options).unwrap();
-    assert_eq!(
-        Lz4GpuDecoder::new(&ctx)
-            .decompress(&ctx, &file, true)
-            .unwrap(),
-        input
-    );
+    for (cfg, decoder) in decoders(&ctx) {
+        assert!(
+            decoder.decompress(&ctx, &file, true).unwrap() == input,
+            "{cfg}"
+        );
+    }
 }
 
 #[test]
 fn gpu_range_reads_match_slices_of_the_original() {
     let Some(ctx) = context() else { return };
-    let decoder = Lz4GpuDecoder::new(&ctx);
     let input = text(10 * CHUNK as usize + 1234);
     let file = compress(&input, &opts(ENCODERS[1])).unwrap();
     let (c, n) = (u64::from(CHUNK), input.len() as u64);
-    for (offset, len) in [
-        (0, 10),
-        (c + 5, 100),
-        (c - 50, 100),
-        (c - 1, 2 * c + 2),
-        (n - 1234, 1234),
-        (n - 10, 10),
-        (0, n),
-        (3 * c, 0),
-    ] {
+    for ((cfg, decoder), (offset, len)) in decoders(&ctx).iter().flat_map(|d| {
+        [
+            (0, 10),
+            (c + 5, 100),
+            (c - 50, 100),
+            (c - 1, 2 * c + 2),
+            (n - 1234, 1234),
+            (n - 10, 10),
+            (0, n),
+            (3 * c, 0),
+        ]
+        .map(|r| (d, r))
+    }) {
         let got = decoder
             .decompress_range(&ctx, &mut Cursor::new(&file), offset, len, true)
             .unwrap();
         assert!(
             got == input[offset as usize..(offset + len) as usize],
-            "{offset}+{len}"
+            "{cfg} {offset}+{len}"
         );
     }
 }
@@ -94,10 +127,15 @@ fn checksum_mismatch_is_reported() {
     let mut file = compress(&random(2 * CHUNK as usize, 3), &opts(Encoder::Lz4Flex)).unwrap();
     let data = Index::parse(&file).unwrap().data_offset() as usize;
     file[data + 4097] ^= 0xFF; // inside stored chunk 1
-    assert!(matches!(
-        Lz4GpuDecoder::new(&ctx).decompress(&ctx, &file, true),
-        Err(GpuDecodeError::Checksum { chunk: 1 })
-    ));
+    for (cfg, decoder) in decoders(&ctx) {
+        assert!(
+            matches!(
+                decoder.decompress(&ctx, &file, true),
+                Err(GpuDecodeError::Checksum { chunk: 1 })
+            ),
+            "{cfg}"
+        );
+    }
 }
 
 #[test]
@@ -108,10 +146,15 @@ fn filtered_chunks_are_rejected() {
     index.chunks[2].filter = Filter::Delta { width: 2 };
     let rest = &file[index.data_offset() as usize..];
     let patched = [index.to_bytes(), rest.to_vec()].concat();
-    assert!(matches!(
-        Lz4GpuDecoder::new(&ctx).decompress(&ctx, &patched, true),
-        Err(GpuDecodeError::UnsupportedFilter { chunk: 2 })
-    ));
+    for (cfg, decoder) in decoders(&ctx) {
+        assert!(
+            matches!(
+                decoder.decompress(&ctx, &patched, true),
+                Err(GpuDecodeError::UnsupportedFilter { chunk: 2 })
+            ),
+            "{cfg}"
+        );
+    }
 }
 
 /// A one-chunk LZ4 file whose payload is `payload`, decoding to `n` bytes.
@@ -153,7 +196,6 @@ fn expected_status(e: DecodeError) -> ChunkStatus {
 #[test]
 fn malformed_payloads_report_the_same_error_as_the_cpu_decoder() {
     let Some(ctx) = context() else { return };
-    let decoder = Lz4GpuDecoder::new(&ctx);
     let cases: [(&[u8], u32); 9] = [
         (&[], 4),                       // truncated: no token
         (b"\x50hel", 5),                // truncated literals
@@ -165,15 +207,21 @@ fn malformed_payloads_report_the_same_error_as_the_cpu_decoder() {
         (&[0x15, b'a', 1, 0, 0x00], 5), // match overflow
         (b"\x50hello", 6),              // output too short
     ];
-    for (payload, n) in cases {
-        let mut reference = vec![0; n as usize];
-        let cpu_error = cpu::lz4::decode::decode_block(payload, &mut reference).unwrap_err();
-        let file = single_chunk_file(payload, n);
-        match decoder.decompress(&ctx, &file, false) {
-            Err(GpuDecodeError::Chunk { chunk: 0, status }) => {
-                assert_eq!(status, expected_status(cpu_error), "{payload:?} -> {n}");
+    for (cfg, decoder) in decoders(&ctx) {
+        for (payload, n) in cases {
+            let mut reference = vec![0; n as usize];
+            let cpu_error = cpu::lz4::decode::decode_block(payload, &mut reference).unwrap_err();
+            let file = single_chunk_file(payload, n);
+            match decoder.decompress(&ctx, &file, false) {
+                Err(GpuDecodeError::Chunk { chunk: 0, status }) => {
+                    assert_eq!(
+                        status,
+                        expected_status(cpu_error),
+                        "{cfg} {payload:?} -> {n}"
+                    );
+                }
+                other => panic!("{cfg} {payload:?} -> {n}: expected a chunk error, got {other:?}"),
             }
-            other => panic!("{payload:?} -> {n}: expected a chunk error, got {other:?}"),
         }
     }
 }
@@ -181,14 +229,44 @@ fn malformed_payloads_report_the_same_error_as_the_cpu_decoder() {
 #[test]
 fn hand_made_overlapping_matches_decode_on_the_gpu() {
     let Some(ctx) = context() else { return };
-    let decoder = Lz4GpuDecoder::new(&ctx);
-    for (payload, expected) in [
-        (&[0x15u8, b'a', 1, 0, 0x00][..], b"aaaaaaaaaa".to_vec()),
-        (&[0x22, b'a', b'b', 2, 0, 0x00], b"abababab".to_vec()),
-        (&[0x1F, b'z', 1, 0, 255, 1, 0x00], vec![b'z'; 276]),
-    ] {
-        let file = single_chunk_file(payload, expected.len() as u32);
-        assert_eq!(decoder.decompress(&ctx, &file, false).unwrap(), expected);
+    // 'abc' then a 1000-byte match at offset 3 (period-3 overlap).
+    let period3 = [
+        &[0x3F, b'a', b'b', b'c', 3, 0, 255, 255, 255, 220][..],
+        &[0x00],
+    ]
+    .concat();
+    let abc: Vec<u8> = b"abc"
+        .iter()
+        .copied()
+        .cycle()
+        .take(3 + 4 + 15 + 3 * 255 + 220)
+        .collect();
+    // A chain where each match copies the previous match's output.
+    let chain = [
+        &[0x40, b'w', b'x', b'y', b'z', 4, 0][..], // 'wxyz', match 4 @ 4  -> wxyzwxyz
+        &[0x00, 4, 0],                             // match 4 @ 4              (12 bytes)
+        &[0x04, 12, 0],                            // match 8 @ 12             (20 bytes)
+        &[0x00],                                   // empty final sequence
+    ]
+    .concat();
+    for (cfg, decoder) in decoders(&ctx) {
+        for (payload, expected) in [
+            (&[0x15u8, b'a', 1, 0, 0x00][..], b"aaaaaaaaaa".to_vec()),
+            (&[0x22, b'a', b'b', 2, 0, 0x00], b"abababab".to_vec()),
+            (&[0x1F, b'z', 1, 0, 255, 1, 0x00], vec![b'z'; 276]),
+            (&period3, abc.clone()),
+            (&chain, b"wxyz".repeat(5)),
+        ] {
+            let mut reference = vec![0; expected.len()];
+            cpu::lz4::decode::decode_block(payload, &mut reference).unwrap();
+            assert_eq!(reference, expected, "test stream itself is wrong");
+            let file = single_chunk_file(payload, expected.len() as u32);
+            assert_eq!(
+                decoder.decompress(&ctx, &file, false).unwrap(),
+                expected,
+                "{cfg}"
+            );
+        }
     }
 }
 
@@ -207,8 +285,10 @@ proptest! {
             ..opts(ENCODERS[usize::from(greedy)])
         };
         let file = compress(&input, &options).unwrap();
-        let out = Lz4GpuDecoder::new(&ctx).decompress(&ctx, &file, true).unwrap();
-        prop_assert!(out == input);
+        for (cfg, decoder) in decoders(&ctx) {
+            let out = decoder.decompress(&ctx, &file, true).unwrap();
+            prop_assert!(out == input, "{}", cfg);
+        }
     }
 
     #[test]
@@ -222,8 +302,10 @@ proptest! {
             let i = at.index(file.len());
             file[i] ^= byte | 1;
         }
-        if let Ok(out) = Lz4GpuDecoder::new(&ctx).decompress(&ctx, &file, true) {
-            prop_assert!(out == input);
+        for (cfg, decoder) in decoders(&ctx) {
+            if let Ok(out) = decoder.decompress(&ctx, &file, true) {
+                prop_assert!(out == input, "{}", cfg);
+            }
         }
     }
 }

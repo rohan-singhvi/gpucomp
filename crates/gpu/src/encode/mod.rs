@@ -58,6 +58,17 @@ pub enum GpuEncodeError {
     TooManyChunks(u64),
 }
 
+/// One chunk's LZ4 block, as reported by [`Lz4GpuEncoder::encode_blocks`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EncodedBlock {
+    Compressed(Vec<u8>),
+    /// The block would be `size` bytes, no smaller than the chunk, so the GPU
+    /// skipped writing it (the container stores such chunks raw).
+    Incompressible {
+        size: u32,
+    },
+}
+
 /// Bytes reserved per chunk for its compressed output: the LZ4 worst case
 /// (`n + n/255 + 16`), rounded up to whole words.
 pub fn slot_size(chunk_size: u32) -> u32 {
@@ -150,17 +161,26 @@ impl Lz4GpuEncoder {
         self.params
     }
 
-    /// Encodes every `chunk_size` chunk of `input` as a raw LZ4 block,
-    /// without the stored fallback. For tests and debugging.
+    /// Encodes every `chunk_size` chunk of `input` as an LZ4 block. For tests
+    /// and debugging.
     pub fn encode_blocks(
         &self,
         ctx: &Context,
         input: &[u8],
         chunk_size: u32,
-    ) -> Result<Vec<Vec<u8>>, GpuEncodeError> {
+    ) -> Result<Vec<EncodedBlock>, GpuEncodeError> {
         let encoded = self.encode(ctx, input, chunk_size)?;
-        Ok((0..encoded.sizes.len())
-            .map(|i| encoded.block(i).to_vec())
+        Ok(input
+            .chunks(chunk_size as usize)
+            .enumerate()
+            .map(|(i, chunk)| {
+                let size = encoded.sizes[i];
+                if size as usize >= chunk.len() {
+                    EncodedBlock::Incompressible { size }
+                } else {
+                    EncodedBlock::Compressed(encoded.block(i).to_vec())
+                }
+            })
             .collect())
     }
 
@@ -189,6 +209,7 @@ impl Lz4GpuEncoder {
             .chunks(chunk_size as usize)
             .enumerate()
             .map(|(i, chunk)| {
+                // Blocks that don't shrink their chunk were never written.
                 let block = encoded.block(i);
                 let stored = block.len() >= chunk.len();
                 format::ChunkPayload {

@@ -76,10 +76,13 @@ fn gpu_decode_suite_times_kernel_and_end_to_end_per_input() {
         names,
         [
             "gpu.lz4.decompress.naive.kernel",
-            "gpu.lz4.decompress.naive.e2e"
+            "gpu.lz4.decompress.naive.e2e",
+            "gpu.lz4.decompress.coop.kernel",
+            "gpu.lz4.decompress.coop.e2e",
         ]
     );
     assert_eq!(rows[1].timing, Timing::WallE2e);
+    assert_eq!(rows[3].timing, Timing::WallE2e);
     for m in &rows {
         assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
         assert!(m.ratio.unwrap() > 1.5, "{m:?}");

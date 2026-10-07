@@ -86,66 +86,92 @@ pub fn platform(ctx: Option<&Context>, cfg: &SuiteConfig) -> anyhow::Result<Vec<
     Ok(rows)
 }
 
-/// GPU decompression of each input (compressed by `lz4_flex`, 64 KiB chunks):
-/// kernel-only (timestamps, else submit + wait) and end to end (parse,
-/// upload, decode, readback).
+/// GPU decompression of each input (compressed by `lz4_flex`, 64 KiB chunks)
+/// with the naive (M2) and cooperative (M5, default) kernels: kernel-only
+/// (timestamps, else submit + wait) and end to end (parse, upload, decode,
+/// readback).
 pub fn gpu_decode(
     ctx: &Context,
     inputs: &[(String, Vec<u8>)],
     cfg: &SuiteConfig,
 ) -> anyhow::Result<Vec<Measurement>> {
+    use gpu::decode::{DecodeKernel, DecoderConfig};
+    let naive = DecoderConfig {
+        kernel: DecodeKernel::Naive,
+        ..DecoderConfig::default()
+    };
+    gpu_decode_configs(
+        ctx,
+        inputs,
+        cfg,
+        &[("naive", naive), ("coop", DecoderConfig::default())],
+    )
+}
+
+/// [`gpu_decode`] for arbitrary decoder configurations, labelled
+/// `gpu.lz4.decompress.<label>.{kernel,e2e}`; rows are grouped by label.
+pub fn gpu_decode_configs(
+    ctx: &Context,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+    configs: &[(&str, gpu::decode::DecoderConfig)],
+) -> anyhow::Result<Vec<Measurement>> {
     use cpu::container::{compress, CompressOptions};
     use gpu::decode::Lz4GpuDecoder;
 
-    let decoder = Lz4GpuDecoder::new(ctx);
     let timer = GpuTimer::new(ctx);
+    let files = inputs
+        .iter()
+        .map(|(_, data)| compress(data, &CompressOptions::default()))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut rows = Vec::new();
-    for (name, data) in inputs {
-        let file = compress(data, &CompressOptions::default())?;
-        let n = data.len() as u64;
-        let ratio = Some(n as f64 / file.len() as f64);
-        let row = |label: &str, elapsed: Duration, timing| Measurement {
-            name: label.into(),
-            input: name.clone(),
-            bytes: n,
-            gbps: gbps(n, elapsed),
-            ratio,
-            timing,
-        };
-        anyhow::ensure!(
-            decoder.decompress(ctx, &file, false)? == *data,
-            "GPU decode of {name} differs from the input"
-        );
-
-        let Some(prepared) = decoder.prepare_file(ctx, &file)? else {
-            continue; // empty input
-        };
-        let (kernel, timing) = match &timer {
-            Some(timer) => (
-                median_of(cfg.warmup, cfg.runs, || {
-                    decoder.dispatch(ctx, &prepared, Some(timer));
-                    Ok(timer.read(ctx)?)
-                })?,
-                Timing::GpuTimestamp,
-            ),
-            None => (
-                median_of(cfg.warmup, cfg.runs, || {
-                    let start = Instant::now();
-                    decoder.dispatch(ctx, &prepared, None);
-                    ctx.wait()?;
-                    Ok(start.elapsed())
-                })?,
-                Timing::WallGpu,
-            ),
-        };
-        rows.push(row("gpu.lz4.decompress.naive.kernel", kernel, timing));
-
-        let e2e = median_of(cfg.warmup, cfg.runs, || {
-            let start = Instant::now();
-            decoder.decompress(ctx, &file, false)?;
-            Ok(start.elapsed())
-        })?;
-        rows.push(row("gpu.lz4.decompress.naive.e2e", e2e, Timing::WallE2e));
+    for (label, config) in configs {
+        let decoder = Lz4GpuDecoder::with_config(ctx, *config)?;
+        for ((name, data), file) in inputs.iter().zip(&files) {
+            let n = data.len() as u64;
+            let ratio = Some(n as f64 / file.len() as f64);
+            let row = |kind: &str, elapsed: Duration, timing| Measurement {
+                name: format!("gpu.lz4.decompress.{label}.{kind}"),
+                input: name.clone(),
+                bytes: n,
+                gbps: gbps(n, elapsed),
+                ratio,
+                timing,
+            };
+            anyhow::ensure!(
+                decoder.decompress(ctx, file, false)? == *data,
+                "{label} GPU decode of {name} differs from the input"
+            );
+            let Some(prepared) = decoder.prepare_file(ctx, file)? else {
+                continue; // empty input
+            };
+            let (kernel, timing) = match &timer {
+                Some(timer) => (
+                    median_of(cfg.warmup, cfg.runs, || {
+                        decoder.dispatch(ctx, &prepared, Some(timer));
+                        Ok(timer.read(ctx)?)
+                    })?,
+                    Timing::GpuTimestamp,
+                ),
+                None => (
+                    median_of(cfg.warmup, cfg.runs, || {
+                        let start = Instant::now();
+                        decoder.dispatch(ctx, &prepared, None);
+                        ctx.wait()?;
+                        Ok(start.elapsed())
+                    })?,
+                    Timing::WallGpu,
+                ),
+            };
+            drop(prepared);
+            let e2e = median_of(cfg.warmup, cfg.runs, || {
+                let start = Instant::now();
+                decoder.decompress(ctx, file, false)?;
+                Ok(start.elapsed())
+            })?;
+            rows.push(row("kernel", kernel, timing));
+            rows.push(row("e2e", e2e, Timing::WallE2e));
+        }
     }
     Ok(rows)
 }
@@ -351,10 +377,8 @@ pub fn pseudo_random(n: usize) -> Vec<u8> {
 }
 
 fn bytemuck_words(bytes: &[u8]) -> Vec<u32> {
-    bytes
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
+    let (words, _) = bytes.as_chunks::<4>();
+    words.iter().map(|w| u32::from_le_bytes(*w)).collect()
 }
 
 #[cfg(test)]

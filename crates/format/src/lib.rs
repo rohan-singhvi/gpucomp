@@ -243,9 +243,10 @@ impl Index {
         let header = Header::parse(bytes)?;
         let end = HEADER_SIZE as u64 + ENTRY_SIZE as u64 * u64::from(header.chunk_count);
         need(bytes, end)?;
-        let chunks = bytes[HEADER_SIZE..end as usize]
-            .chunks_exact(ENTRY_SIZE)
-            .map(|e| ChunkEntry::parse(e.try_into().unwrap()))
+        let (entries, _) = bytes[HEADER_SIZE..end as usize].as_chunks::<ENTRY_SIZE>();
+        let chunks = entries
+            .iter()
+            .map(ChunkEntry::parse)
             .collect::<Result<_, _>>()?;
         Ok(Index { header, chunks })
     }

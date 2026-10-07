@@ -4,7 +4,11 @@
 //      table that only holds positions from earlier blocks (latest wins);
 //   2. greedy parse by invocation 0, extending the matches it takes;
 //   3. parallel emit: a workgroup prefix sum over encoded sequence sizes gives
-//      each sequence its output offset.
+//      each sequence its output offset; each sequence's owner writes its
+//      header bytes and short literal runs, and the whole workgroup copies
+//      literal runs of at least LONG_LITERALS bytes.
+// The parse also totals the encoded size: if the block wouldn't shrink the
+// chunk, emit is skipped (the host stores such chunks raw).
 
 struct Params {
     chunk_size: u32, // input bytes per chunk (last chunk may be shorter)
@@ -29,11 +33,13 @@ const MIN_MATCH: u32 = 4u;
 const MFLIMIT: u32 = 12u;
 const LAST_LITERALS: u32 = 5u;
 const MAX_OFFSET: u32 = 65535u;
+const LONG_LITERALS: u32 = 64u;
 
 // Bucket value = position + 1; 0 = empty (workgroup memory starts zeroed).
 var<workgroup> table: array<atomic<u32>, 1u << HASH_LOG>;
 var<workgroup> scan: array<u32, WG_SIZE>;
 var<workgroup> seq_count: u32;
+var<workgroup> encoded_size: u32;
 
 fn in_byte(i: u32) -> u32 {
     return (input[i >> 2u] >> ((i & 3u) * 8u)) & 0xFFu;
@@ -83,11 +89,8 @@ fn put_length(pos_in: u32, len: u32) -> u32 {
     return pos + 1u;
 }
 
-// Sequence k of a chunk lives at scratch[q .. q + 4]:
-// lit_start, lit_len, match_len (0 = final sequence), offset.
-fn sequence_size(q: u32) -> u32 {
-    let lit_len = scratch[q + 1u];
-    let match_len = scratch[q + 2u];
+// Encoded bytes of one sequence (match_len 0 = final, literals only).
+fn encoded_len(lit_len: u32, match_len: u32) -> u32 {
     var size = 1u + length_extra(lit_len) + lit_len;
     if (match_len > 0u) {
         size += 2u + length_extra(match_len - MIN_MATCH);
@@ -95,6 +98,14 @@ fn sequence_size(q: u32) -> u32 {
     return size;
 }
 
+// Sequence k of a chunk lives at scratch[q .. q + 4]:
+// lit_start, lit_len, match_len (0 = final sequence), offset.
+fn sequence_size(q: u32) -> u32 {
+    return encoded_len(scratch[q + 1u], scratch[q + 2u]);
+}
+
+// Writes the sequence's header bytes, and its literals if the run is short
+// (long runs are copied cooperatively; see copy_literals).
 fn emit_sequence(q: u32, chunk_start: u32, pos_in: u32) {
     let lit_start = scratch[q];
     let lit_len = scratch[q + 1u];
@@ -107,14 +118,32 @@ fn emit_sequence(q: u32, chunk_start: u32, pos_in: u32) {
     var pos = pos_in;
     put_byte(pos, (min(lit_len, 15u) << 4u) | min(match_code, 15u));
     pos = put_length(pos + 1u, lit_len);
-    for (var k = 0u; k < lit_len; k++) {
-        put_byte(pos + k, in_byte(chunk_start + lit_start + k));
+    if (lit_len < LONG_LITERALS) {
+        for (var k = 0u; k < lit_len; k++) {
+            put_byte(pos + k, in_byte(chunk_start + lit_start + k));
+        }
     }
     pos += lit_len;
     if (match_len > 0u) {
         put_byte(pos, offset & 0xFFu);
         put_byte(pos + 1u, offset >> 8u);
         pos = put_length(pos + 2u, match_code);
+    }
+}
+
+// Cooperative: output[d .. d + len) = input[s .. s + len), one output word
+// per step, merged with atomicOr (edge words are shared with neighbours).
+fn copy_literals(d: u32, s: u32, len: u32, lid: u32) {
+    let last = (d + len - 1u) >> 2u;
+    for (var w = (d >> 2u) + lid; w <= last; w += WG_SIZE) {
+        var value = 0u;
+        for (var b = 0u; b < 4u; b++) {
+            let p = w * 4u + b;
+            if (p >= d && p < d + len) {
+                value |= in_byte(s + (p - d)) << (b * 8u);
+            }
+        }
+        atomicOr(&output[w], value);
     }
 }
 
@@ -182,6 +211,7 @@ fn main(
     // at p >= 4k and the next read is at >= p + 4.
     if (lid == 0u) {
         var count = 0u;
+        var total = 0u; // encoded block size so far
         var anchor = 0u;
         var p = 0u;
         var match_limit = 0u;
@@ -210,6 +240,7 @@ fn main(
             scratch[q + 1u] = p - anchor;
             scratch[q + 2u] = end - p;
             scratch[q + 3u] = offset;
+            total += encoded_len(p - anchor, end - p);
             count++;
             p = end;
             anchor = end;
@@ -219,10 +250,20 @@ fn main(
         scratch[q + 1u] = n - anchor;
         scratch[q + 2u] = 0u;
         scratch[q + 3u] = 0u;
+        total += encoded_len(n - anchor, 0u);
         seq_count = count + 1u;
+        encoded_size = total;
     }
     storageBarrier();
     let count = workgroupUniformLoad(&seq_count);
+    let total = workgroupUniformLoad(&encoded_size);
+    if (total >= n) {
+        // Won't shrink the chunk: report the size and skip emit.
+        if (lid == 0u) {
+            sizes[chunk] = total;
+        }
+        return;
+    }
 
     // ---- Phase 3: parallel emit ----
     let out_base = chunk * params.slot_size;
@@ -247,6 +288,16 @@ fn main(
         }
         if (i < count) {
             emit_sequence(sbase + 4u * i, start, out_base + running + scan[lid] - size);
+        }
+        // Long literal runs of this block's sequences, by the whole workgroup.
+        let in_block = min(WG_SIZE, count - block);
+        for (var j = 0u; j < in_block; j++) {
+            let q = sbase + 4u * (block + j);
+            let lit_len = scratch[q + 1u];
+            if (lit_len >= LONG_LITERALS) {
+                let seq_pos = out_base + running + scan[j] - sequence_size(q);
+                copy_literals(seq_pos + 1u + length_extra(lit_len), start + scratch[q], lit_len, lid);
+            }
         }
         running += scan[WG_SIZE - 1u];
         workgroupBarrier();

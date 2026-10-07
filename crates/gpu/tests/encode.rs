@@ -10,7 +10,7 @@ use cpu::container::{
 };
 use cpu::lz4::encode::{encode_block, Params};
 use gpu::decode::Lz4GpuDecoder;
-use gpu::encode::{EncodeParams, GpuCompressOptions, GpuEncodeError, Lz4GpuEncoder};
+use gpu::encode::{EncodeParams, EncodedBlock, GpuCompressOptions, GpuEncodeError, Lz4GpuEncoder};
 use proptest::prelude::*;
 
 fn twin(p: EncodeParams) -> Params {
@@ -18,6 +18,18 @@ fn twin(p: EncodeParams) -> Params {
         block: p.block as usize,
         hash_log: p.hash_log,
         probe_len: p.probe_len as usize,
+    }
+}
+
+/// What the GPU must report for a chunk the twin encodes as `twin_block`:
+/// the block itself, or, if it doesn't shrink the chunk, just its size.
+fn expected(twin_block: Vec<u8>, chunk_len: usize) -> EncodedBlock {
+    if twin_block.len() >= chunk_len {
+        EncodedBlock::Incompressible {
+            size: twin_block.len() as u32,
+        }
+    } else {
+        EncodedBlock::Compressed(twin_block)
     }
 }
 
@@ -37,10 +49,15 @@ fn gpu_blocks_are_byte_identical_to_the_cpu_twin() {
     for (name, input) in fixtures() {
         let blocks = encoder.encode_blocks(&ctx, &input, CHUNK).unwrap();
         let chunks: Vec<&[u8]> = input.chunks(CHUNK as usize).collect();
+        if name == "random" {
+            assert!(blocks
+                .iter()
+                .all(|b| matches!(b, EncodedBlock::Incompressible { .. })));
+        }
         assert_eq!(blocks.len(), chunks.len(), "{name}");
         for (i, (block, chunk)) in blocks.iter().zip(chunks).enumerate() {
             assert!(
-                *block == encode_block(chunk, &twin(params)),
+                *block == expected(encode_block(chunk, &twin(params)), chunk.len()),
                 "{name}: chunk {i} differs from the CPU twin"
             );
         }
@@ -73,7 +90,7 @@ fn other_parameters_also_match_the_twin() {
         assert_eq!(blocks.len(), input.len().div_ceil(16_384), "{params:?}");
         for (i, (block, chunk)) in blocks.iter().zip(input.chunks(16_384)).enumerate() {
             assert!(
-                *block == encode_block(chunk, &twin(params)),
+                *block == expected(encode_block(chunk, &twin(params)), chunk.len()),
                 "{params:?} chunk {i}"
             );
         }
@@ -166,7 +183,7 @@ proptest! {
         let blocks = encoder.encode_blocks(&ctx, &input, 1 << chunk_shift).unwrap();
         prop_assert_eq!(blocks.len(), input.len().div_ceil(1 << chunk_shift));
         for (block, chunk) in blocks.iter().zip(input.chunks(1 << chunk_shift)) {
-            prop_assert!(*block == encode_block(chunk, &twin(params)));
+            prop_assert!(*block == expected(encode_block(chunk, &twin(params)), chunk.len()));
         }
     }
 }
