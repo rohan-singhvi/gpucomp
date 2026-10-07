@@ -85,3 +85,20 @@ fn gpu_decode_suite_times_kernel_and_end_to_end_per_input() {
         assert!(m.ratio.unwrap() > 1.5, "{m:?}");
     }
 }
+
+#[test]
+fn gpu_encode_suite_times_kernel_and_end_to_end_per_input() {
+    let Some(ctx) = context() else { return };
+    let inputs = vec![(
+        "text".to_string(),
+        bench::suite::synthetic_inputs(SMALL.bytes).remove(2).1,
+    )];
+    let rows = bench::suite::gpu_encode(&ctx, &inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["gpu.lz4.compress.kernel", "gpu.lz4.compress.e2e"]);
+    assert_eq!(rows[1].timing, Timing::WallE2e);
+    for m in &rows {
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+        assert!(m.ratio.unwrap() > 1.5, "{m:?}");
+    }
+}

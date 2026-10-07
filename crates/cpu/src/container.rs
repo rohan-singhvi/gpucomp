@@ -4,7 +4,7 @@
 use std::io::{Read, Seek, SeekFrom};
 
 pub use format::{checksum, read_index};
-use format::{pad4, ChunkEntry, Codec, Filter, FormatError, Header, Index};
+use format::{ChunkEntry, Codec, Filter, FormatError, Header, Index};
 use rayon::prelude::*;
 
 use crate::lz4::decode::DecodeError;
@@ -136,28 +136,15 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
         })
         .collect();
 
-    // Lay payloads out back to back, each padded to 4 bytes.
-    let mut chunks = Vec::with_capacity(payloads.len());
-    let mut offset = 0u64;
-    for (i, (payload, stored, sum)) in payloads.iter().enumerate() {
-        chunks.push(ChunkEntry {
-            comp_offset: offset,
-            comp_size: payload.len() as u32,
+    let payloads: Vec<format::ChunkPayload> = payloads
+        .iter()
+        .map(|(bytes, stored, checksum)| format::ChunkPayload {
+            bytes,
             stored: *stored,
-            uncomp_size: header.uncomp_size_of(i as u32),
-            checksum: *sum,
-            filter: Filter::None,
-        });
-        offset = pad4(offset + payload.len() as u64);
-    }
-    let index = Index { header, chunks };
-    let mut out = index.to_bytes();
-    out.reserve(offset as usize);
-    for (payload, _, _) in &payloads {
-        out.extend_from_slice(payload);
-        out.resize(pad4(out.len() as u64) as usize, 0);
-    }
-    Ok(out)
+            checksum: *checksum,
+        })
+        .collect();
+    Ok(format::assemble(header, &payloads))
 }
 
 pub fn decompress(file: &[u8], options: &DecompressOptions) -> Result<Vec<u8>, CpuError> {

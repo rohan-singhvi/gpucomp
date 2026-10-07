@@ -104,3 +104,39 @@ multi-threaded at 12–13 GB/s. Throughput scales with chunk count, because each
 is one serial thread (4096 threads for 256 MiB), so most of the GPU sits idle. End to
 end it's 1.3–2.7 GB/s, bounded by the 6–10 GB/s transfers plus readback. M5
 parallelises within each chunk.
+
+## M3 — GPU encoder is byte-identical to the CPU twin
+`lz4_encode.wgsl` runs `cpu::lz4::encode`'s algorithm phase for phase: workgroup =
+match-finding block, one `atomicMax` insert per position after the block's lookups
+(latest position wins), `probe_len`-capped probes, and a serial greedy parse that
+extends the matches it takes. Tests require identical blocks, and identical whole
+containers (`gpu compress` == `cpu compress --encoder greedy`), for several
+`(block, hash_log, probe_len)` settings and for random inputs. This is stronger than
+the plan's "valid and deterministic", and makes any GPU bug show up as a diff
+against a CPU reference that's easy to debug.
+
+## M3 — In-place sequences, workgroup scan for output offsets
+The match scratch buffer (one u32 per position: `len << 16 | offset`) is overwritten
+in place by the parse's sequences (4 u32 each). Sequence k lands at words 4k..4k+3,
+and the k earlier matches each consumed ≥ 4 positions, so it never overwrites an
+unread match. The emit phase scans encoded sequence sizes with a Hillis–Steele scan
+in workgroup memory, `WG_SIZE` sequences at a time, then writes in parallel with
+`atomicOr` into the zeroed output slot (the plan's first option). `HASH_LOG` and
+`WG_SIZE` are pipeline overrides. Override-sized workgroup arrays work in wgpu 30,
+and `new()` rejects parameters that exceed the device's workgroup memory or size.
+Output packing (stored fallback, checksums, layout) happens on the host through
+`format::assemble`, now shared with the CPU encoder.
+
+## M3 — Encoder profile: the serial parse dominates
+Apple M4 Pro, Silesia, 64 KiB chunks, timed by stopping the shader after each phase
+(throwaway experiment, reverted):
+phase 1 (match finding) ≈ 30%, phase 2 (one-thread parse) ≈ 45–60%, phase 3
+(emit) ≈ 15–25%. Kernel throughput is ~0.7 GB/s, vs `lz4_flex` at 5.1 GB/s
+multi-threaded. The parse runs on one invocation per workgroup, reading every
+position's match from storage memory, so 63 of 64 lanes idle for most of the
+kernel. Incompressible chunks are also slow in emit, because one invocation copies
+an entire 64 KiB literal run with byte-wise atomics. Planned next steps, in order:
+(1) parallel parse (pointer jumping over "next position" links, as the plan
+suggests), (2) cooperative literal copies in emit (M5's word-ownership scheme),
+(3) skipping emit for chunks that will be stored anyway. Ratio is on target:
+greedy twin = GPU = 1.97× vs `lz4_flex` 2.04× on Silesia (3.4% gap; target ≤ 10%).

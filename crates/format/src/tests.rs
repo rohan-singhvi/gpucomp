@@ -310,6 +310,37 @@ fn validate_rejects_compressed_chunk_in_stored_codec() {
     rejects_chunk(idx, DATA_LEN, 0);
 }
 
+// ---- assembly ----
+
+#[test]
+fn assemble_lays_out_padded_payloads_after_the_table() {
+    let h = Header {
+        total_size: 4096 + 5,
+        chunk_count: 2,
+        ..header()
+    };
+    let payloads = [
+        ChunkPayload {
+            bytes: &[1, 2, 3, 4, 5, 6],
+            stored: false,
+            checksum: 7,
+        },
+        ChunkPayload {
+            bytes: &[9; 5],
+            stored: true,
+            checksum: 8,
+        },
+    ];
+    let file = assemble(h, &payloads);
+    let idx = Index::parse(&file).unwrap();
+    let data = &file[idx.data_offset() as usize..];
+    assert_eq!(idx.validate(data.len() as u64), Ok(()));
+    assert_eq!(data, [1, 2, 3, 4, 5, 6, 0, 0, 9, 9, 9, 9, 9, 0, 0, 0]);
+    assert_eq!(idx.chunks[1].comp_offset, 8);
+    assert_eq!((idx.chunks[1].stored, idx.chunks[1].checksum), (true, 8));
+    assert_eq!(idx.chunks[1].uncomp_size, 5);
+}
+
 // ---- random access ----
 
 #[test]

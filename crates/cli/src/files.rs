@@ -21,6 +21,12 @@ pub struct CompressArgs {
     /// CPU block encoder: `lz4-flex` (baseline) or `greedy` (the GPU encoder's twin).
     #[arg(long, value_enum, default_value_t = EncoderArg::Lz4Flex)]
     pub encoder: EncoderArg,
+    /// Compress on the GPU (LZ4 codec; output is identical to `--encoder greedy`).
+    #[arg(long, conflicts_with_all = ["encoder", "codec"])]
+    pub gpu: bool,
+    /// GPU backend (with --gpu).
+    #[arg(long, value_enum, requires = "gpu")]
+    pub backend: Option<crate::BackendArg>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -130,6 +136,19 @@ pub fn describe(index: &Index, file_len: u64) -> String {
 
 pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
     let input = std::fs::read(&args.input)?;
+    if args.gpu {
+        let ctx = gpu::Context::new(&gpu::ContextOptions {
+            backends: args.backend.map(crate::BackendArg::backends),
+        })?;
+        let encoder = gpu::encode::Lz4GpuEncoder::new(&ctx, Default::default())?;
+        let options = gpu::encode::GpuCompressOptions {
+            chunk_size: args.chunk_size,
+            checksums: args.checksum,
+            level: 1,
+        };
+        std::fs::write(&args.output, encoder.compress(&ctx, &input, &options)?)?;
+        return Ok(());
+    }
     let options = CompressOptions {
         codec: match args.codec {
             CodecArg::Stored => Codec::Stored,

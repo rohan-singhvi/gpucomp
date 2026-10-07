@@ -140,3 +140,36 @@ fn gpu_decompress_restores_the_file_and_ranges() {
     ]);
     assert!(std::fs::read(&part).unwrap() == sample()[77_777..82_098]);
 }
+
+#[test]
+fn gpu_compress_matches_cpu_greedy_and_round_trips() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, gpu_packed, cpu_packed, out) = (
+        temp("f.txt"),
+        temp("f.gpu.gpcz"),
+        temp("f.cpu.gpcz"),
+        temp("f.out"),
+    );
+    std::fs::write(&input, sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    gpucomp(&[
+        "compress",
+        &s(&input),
+        &s(&gpu_packed),
+        "--gpu",
+        "--checksum",
+    ]);
+    gpucomp(&[
+        "compress",
+        &s(&input),
+        &s(&cpu_packed),
+        "--encoder",
+        "greedy",
+        "--checksum",
+    ]);
+    assert!(std::fs::read(&gpu_packed).unwrap() == std::fs::read(&cpu_packed).unwrap());
+    gpucomp(&["decompress", &s(&gpu_packed), &s(&out), "--verify"]);
+    assert!(std::fs::read(&out).unwrap() == sample());
+}

@@ -148,6 +148,8 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
         if let Some(ctx) = &ctx {
             run.measurements
                 .extend(bench::suite::gpu_decode(ctx, &inputs, &cfg)?);
+            run.measurements
+                .extend(bench::suite::gpu_encode(ctx, &inputs, &cfg)?);
         }
         print!("{}", bench::report::render(std::slice::from_ref(&run)));
         if args.record {

@@ -312,6 +312,39 @@ impl Index {
     }
 }
 
+/// One chunk's encoded payload, for [`assemble`].
+#[derive(Debug, Clone, Copy)]
+pub struct ChunkPayload<'a> {
+    pub bytes: &'a [u8],
+    pub stored: bool,
+    pub checksum: u32,
+}
+
+/// Writes a complete file: header, chunk table, then the payloads in order,
+/// each padded to 4 bytes. Filters are `None` (until M7).
+pub fn assemble(header: Header, payloads: &[ChunkPayload]) -> Vec<u8> {
+    let mut chunks = Vec::with_capacity(payloads.len());
+    let mut offset = 0u64;
+    for (i, p) in payloads.iter().enumerate() {
+        chunks.push(ChunkEntry {
+            comp_offset: offset,
+            comp_size: p.bytes.len() as u32,
+            stored: p.stored,
+            uncomp_size: header.uncomp_size_of(i as u32),
+            checksum: p.checksum,
+            filter: Filter::None,
+        });
+        offset = pad4(offset + p.bytes.len() as u64);
+    }
+    let mut out = Index { header, chunks }.to_bytes();
+    out.reserve(offset as usize);
+    for p in payloads {
+        out.extend_from_slice(p.bytes);
+        out.resize(pad4(out.len() as u64) as usize, 0);
+    }
+    out
+}
+
 /// Error from [`read_index`]: I/O or format.
 #[derive(Debug, thiserror::Error)]
 pub enum ReadError {

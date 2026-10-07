@@ -150,6 +150,67 @@ pub fn gpu_decode(
     Ok(rows)
 }
 
+/// GPU compression of each input (64 KiB chunks, level-1 parameters):
+/// kernel-only and end to end (upload, encode, readback, packing, checksums off).
+pub fn gpu_encode(
+    ctx: &Context,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+) -> anyhow::Result<Vec<Measurement>> {
+    use gpu::encode::{GpuCompressOptions, Lz4GpuEncoder};
+
+    let encoder = Lz4GpuEncoder::new(ctx, Default::default())?;
+    let options = GpuCompressOptions::default();
+    let timer = GpuTimer::new(ctx);
+    let mut rows = Vec::new();
+    for (name, data) in inputs {
+        if data.is_empty() {
+            continue;
+        }
+        let file = encoder.compress(ctx, data, &options)?;
+        let n = data.len() as u64;
+        let ratio = Some(n as f64 / file.len() as f64);
+        let row = |label: &str, elapsed: Duration, timing| Measurement {
+            name: label.into(),
+            input: name.clone(),
+            bytes: n,
+            gbps: gbps(n, elapsed),
+            ratio,
+            timing,
+        };
+
+        let prepared = encoder.prepare(ctx, data, options.chunk_size)?;
+        let (kernel, timing) = match &timer {
+            Some(timer) => (
+                median_of(cfg.warmup, cfg.runs, || {
+                    encoder.dispatch(ctx, &prepared, Some(timer));
+                    Ok(timer.read(ctx)?)
+                })?,
+                Timing::GpuTimestamp,
+            ),
+            None => (
+                median_of(cfg.warmup, cfg.runs, || {
+                    let start = Instant::now();
+                    encoder.dispatch(ctx, &prepared, None);
+                    ctx.wait()?;
+                    Ok(start.elapsed())
+                })?,
+                Timing::WallGpu,
+            ),
+        };
+        drop(prepared);
+        rows.push(row("gpu.lz4.compress.kernel", kernel, timing));
+
+        let e2e = median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            encoder.compress(ctx, data, &options)?;
+            Ok(start.elapsed())
+        })?;
+        rows.push(row("gpu.lz4.compress.e2e", e2e, Timing::WallE2e));
+    }
+    Ok(rows)
+}
+
 /// Synthetic benchmark inputs of `n` bytes each: `zeros`, `random`, `text`
 /// (pseudo-English from a fixed vocabulary) and `mixed` (thirds of each).
 pub fn synthetic_inputs(n: usize) -> Vec<(String, Vec<u8>)> {
