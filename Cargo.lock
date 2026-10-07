@@ -482,6 +482,7 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "thiserror",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -568,8 +569,11 @@ name = "gpu"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "cpu",
+ "format",
  "log",
  "pollster",
+ "proptest",
  "thiserror",
  "wgpu",
 ]

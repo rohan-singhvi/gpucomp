@@ -36,8 +36,15 @@ pub struct DecompressArgs {
     /// Check per-chunk checksums (when the file has them).
     #[arg(long)]
     pub verify: bool,
+    /// CPU block decoder (ignored with --gpu).
     #[arg(long, value_enum, default_value_t = DecoderArg::HandWritten)]
     pub decoder: DecoderArg,
+    /// Decompress on the GPU.
+    #[arg(long)]
+    pub gpu: bool,
+    /// GPU backend (with --gpu).
+    #[arg(long, value_enum, requires = "gpu")]
+    pub backend: Option<crate::BackendArg>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -148,6 +155,21 @@ pub fn decompress(args: &DecompressArgs) -> anyhow::Result<()> {
         },
         verify: args.verify,
     };
+    if args.gpu {
+        let ctx = gpu::Context::new(&gpu::ContextOptions {
+            backends: args.backend.map(crate::BackendArg::backends),
+        })?;
+        let decoder = gpu::decode::Lz4GpuDecoder::new(&ctx);
+        let output = match (args.offset, args.length) {
+            (Some(offset), Some(length)) => {
+                let mut file = std::io::BufReader::new(std::fs::File::open(&args.input)?);
+                decoder.decompress_range(&ctx, &mut file, offset, length, args.verify)?
+            }
+            _ => decoder.decompress(&ctx, &std::fs::read(&args.input)?, args.verify)?,
+        };
+        std::fs::write(&args.output, output)?;
+        return Ok(());
+    }
     let output = match (args.offset, args.length) {
         (Some(offset), Some(length)) => {
             let mut file = std::io::BufReader::new(std::fs::File::open(&args.input)?);

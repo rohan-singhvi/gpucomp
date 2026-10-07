@@ -62,3 +62,26 @@ fn kernel_timing_source_follows_timer_availability() {
     };
     assert_eq!(kernel.timing, expected);
 }
+
+#[test]
+fn gpu_decode_suite_times_kernel_and_end_to_end_per_input() {
+    let Some(ctx) = context() else { return };
+    let inputs = vec![(
+        "text".to_string(),
+        bench::suite::synthetic_inputs(SMALL.bytes).remove(2).1,
+    )];
+    let rows = bench::suite::gpu_decode(&ctx, &inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "gpu.lz4.decompress.naive.kernel",
+            "gpu.lz4.decompress.naive.e2e"
+        ]
+    );
+    assert_eq!(rows[1].timing, Timing::WallE2e);
+    for m in &rows {
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+        assert!(m.ratio.unwrap() > 1.5, "{m:?}");
+    }
+}

@@ -6,6 +6,7 @@ license-file = "../../LICENSE"
 
 [dependencies]
 thiserror.workspace = true
+xxhash-rust.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

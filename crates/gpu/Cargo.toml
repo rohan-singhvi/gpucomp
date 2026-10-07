@@ -5,11 +5,16 @@ edition.workspace = true
 license-file = "../../LICENSE"
 
 [dependencies]
+format = { path = "../format" }
 wgpu.workspace = true
 pollster.workspace = true
 bytemuck.workspace = true
 log.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+cpu = { path = "../cpu" }
+proptest.workspace = true
 
 [lints]
 workspace = true

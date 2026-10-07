@@ -71,3 +71,36 @@ With Silesia, the report was 237 lines. `BENCHMARKS.md` now shows one row per
 measurement and one column per input. Per-file corpus inputs (`silesia/<file>`) stay in
 the JSON, and `silesia/all` is shown. History tracks one headline input per measurement,
 preferring `silesia/all`, then `text`, then `random`.
+
+## M2 — Naive GPU decoder writes bytes with OR into owned words
+The plan suggested accumulating output bytes in a register and flushing whole words.
+Matches read back bytes written moments earlier, possibly still in that register,
+which makes the bookkeeping fiddly. M2 instead ORs each byte into its word: the
+output buffer is zeroed, every byte is written exactly once, and each invocation owns
+all the words of its chunk (chunk outputs start 4-aligned, and only the last chunk ends
+unaligned). That makes the read-modify-write race-free. It's the correctness baseline,
+and M5 replaces it.
+
+## M2 — Shader mirrors the CPU decoder's checks, in order
+`lz4_decode_naive.wgsl` follows `cpu::lz4::decode::decode_block` step for step and
+writes a per-chunk status (`ChunkStatus` = CPU `DecodeError`). A test feeds both
+decoders the same malformed payloads and requires the same error. Every loop
+consumes input or is bounded by the chunk's output size, so malformed input can't
+hang the GPU. A property test flips random bytes and runs the decode.
+
+## M2 — Shared helpers moved to `format`
+`read_index` and `checksum` are part of the container spec, so they moved from `cpu`
+to `format` (re-exported by `cpu`). `gpu` depends on `format` only, and on `cpu` only
+as a dev-dependency for tests.
+
+## M2 — One batch per decode until M8
+A decode uploads the whole needed payload span and output in one binding each. Spans
+larger than `max_storage_buffer_binding_size` (capped to u32 addressing) are rejected
+with `TooLarge`. M8 adds batching.
+
+## M2 — Results (Apple M4 Pro, 256 MiB inputs, 64 KiB chunks)
+Naive GPU decode, kernel only: Silesia 2.0 GB/s, text 7.3 GB/s, vs `lz4_flex`
+multi-threaded at 12–13 GB/s. Throughput scales with chunk count, because each chunk
+is one serial thread (4096 threads for 256 MiB), so most of the GPU sits idle. End to
+end it's 1.3–2.7 GB/s, bounded by the 6–10 GB/s transfers plus readback. M5
+parallelises within each chunk.

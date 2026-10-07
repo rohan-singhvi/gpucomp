@@ -100,3 +100,43 @@ fn info_on_a_file_summarises_the_container() {
         assert!(out.contains(needle), "missing {needle:?} in:\n{out}");
     }
 }
+
+fn has_gpu() -> bool {
+    let ok = gpu::Context::new(&gpu::ContextOptions::default()).is_ok();
+    if !ok {
+        eprintln!("skipping GPU CLI test: no adapter");
+    }
+    ok
+}
+
+#[test]
+fn gpu_decompress_restores_the_file_and_ranges() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, packed) = (temp("e.txt"), temp("e.gpcz"));
+    let (whole, part) = (temp("e.out"), temp("e.part"));
+    std::fs::write(&input, sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    gpucomp(&[
+        "compress",
+        &s(&input),
+        &s(&packed),
+        "--chunk-size",
+        "8K",
+        "--checksum",
+    ]);
+    gpucomp(&["decompress", &s(&packed), &s(&whole), "--gpu", "--verify"]);
+    assert!(std::fs::read(&whole).unwrap() == sample());
+    gpucomp(&[
+        "decompress",
+        &s(&packed),
+        &s(&part),
+        "--gpu",
+        "--offset",
+        "77777",
+        "--length",
+        "4321",
+    ]);
+    assert!(std::fs::read(&part).unwrap() == sample()[77_777..82_098]);
+}

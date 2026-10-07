@@ -3,6 +3,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
+pub use format::{checksum, read_index};
 use format::{pad4, ChunkEntry, Codec, Filter, FormatError, Header, Index};
 use rayon::prelude::*;
 
@@ -25,6 +26,15 @@ pub enum CpuError {
     UnsupportedFilter { chunk: usize },
     #[error("input too large: {0} chunks")]
     TooManyChunks(u64),
+}
+
+impl From<format::ReadError> for CpuError {
+    fn from(e: format::ReadError) -> Self {
+        match e {
+            format::ReadError::Io(e) => CpuError::Io(e),
+            format::ReadError::Format(e) => CpuError::Format(e),
+        }
+    }
 }
 
 /// Which LZ4 block encoder compresses each chunk.
@@ -78,11 +88,6 @@ impl Default for DecompressOptions {
             verify: true,
         }
     }
-}
-
-/// Low 32 bits of xxh3-64, the per-chunk checksum.
-pub fn checksum(bytes: &[u8]) -> u32 {
-    xxhash_rust::xxh3::xxh3_64(bytes) as u32
 }
 
 pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuError> {
@@ -208,46 +213,6 @@ fn decode_chunk(
     if options.verify && has_checksums && checksum(dst) != entry.checksum {
         return Err(CpuError::Checksum { chunk });
     }
-    Ok(())
-}
-
-/// Reads and validates the header and chunk table, checking payload bounds
-/// against the reader's total length.
-pub fn read_index<R: Read + Seek>(reader: &mut R) -> Result<Index, CpuError> {
-    let file_len = reader.seek(SeekFrom::End(0))?;
-    reader.seek(SeekFrom::Start(0))?;
-    let mut header = [0u8; format::HEADER_SIZE];
-    read_exact_or_truncated(reader, &mut header, file_len)?;
-    let parsed = Header::parse(&header)?;
-    let table_len = format::ENTRY_SIZE as u64 * u64::from(parsed.chunk_count);
-    if format::HEADER_SIZE as u64 + table_len > file_len {
-        return Err(FormatError::Truncated {
-            need: format::HEADER_SIZE as u64 + table_len,
-            have: file_len,
-        }
-        .into());
-    }
-    let mut bytes = header.to_vec();
-    bytes.resize(format::HEADER_SIZE + table_len as usize, 0);
-    reader.read_exact(&mut bytes[format::HEADER_SIZE..])?;
-    let index = Index::parse(&bytes)?;
-    index.validate(file_len - index.data_offset())?;
-    Ok(index)
-}
-
-fn read_exact_or_truncated<R: Read>(
-    reader: &mut R,
-    buf: &mut [u8],
-    have: u64,
-) -> Result<(), CpuError> {
-    if (buf.len() as u64) > have {
-        return Err(FormatError::Truncated {
-            need: buf.len() as u64,
-            have,
-        }
-        .into());
-    }
-    reader.read_exact(buf)?;
     Ok(())
 }
 

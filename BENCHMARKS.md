@@ -6,44 +6,49 @@ Ratio = original size / compressed size. Timing: `gpu-timestamp` = kernel only, 
 
 ## Apple M4 Pro (metal)
 
-### Latest run — M1 · 2026-10-07T20:41:48Z · `8dc7b59-dirty` · macos
+### Latest run — M2 · 2026-10-07T20:51:16Z · `d4cf5b9-dirty` · macos
 
 GB/s, with compression ratio where it applies.
 
 | Measurement | random | zeros | text | mixed | silesia/all | Timing |
 |---|---:|---:|---:|---:|---:|---|
-| cpu.memcpy | 66.96 | — | — | — | — | cpu |
-| gpu.upload | 9.95 | — | — | — | — | wall-e2e |
-| gpu.readback | 6.56 | — | — | — | — | wall-e2e |
-| gpu.xor.kernel | 86.38 | — | — | — | — | wall-gpu |
-| gpu.xor.e2e | 2.49 | — | — | — | — | wall-e2e |
-| cpu.lz4_flex.compress.1t | 3.69 · 1.00× | 23.11 · 224.43× | 0.65 · 2.10× | 1.66 · 2.03× | 0.84 · 2.04× | cpu |
-| cpu.lz4_flex.compress.mt | 8.03 · 1.00× | 118.90 · 224.43× | 4.87 · 2.10× | 9.06 · 2.03× | 5.16 · 2.04× | cpu |
-| cpu.greedy.compress.mt | 2.47 · 1.00× | 1.37 · 184.09× | 0.81 · 1.82× | 1.27 · 1.93× | 0.98 · 1.97× | cpu |
-| cpu.lz4_flex.decompress.1t | 16.02 · 1.00× | 18.44 · 224.43× | 2.78 · 2.10× | 6.14 · 2.03× | 3.04 · 2.04× | cpu |
-| cpu.lz4_flex.decompress.mt | 16.42 · 1.00× | 15.43 · 224.43× | 14.04 · 2.10× | 15.63 · 2.03× | 13.04 · 2.04× | cpu |
-| cpu.handwritten.decompress.mt | 15.39 · 1.00× | 6.36 · 224.43× | 5.23 · 2.10× | 7.87 · 2.03× | 8.20 · 2.04× | cpu |
+| cpu.memcpy | 66.27 | — | — | — | — | cpu |
+| gpu.upload | 9.66 | — | — | — | — | wall-e2e |
+| gpu.readback | 5.99 | — | — | — | — | wall-e2e |
+| gpu.xor.kernel | 100.60 | — | — | — | — | wall-gpu |
+| gpu.xor.e2e | 2.63 | — | — | — | — | wall-e2e |
+| cpu.lz4_flex.compress.1t | 4.19 · 1.00× | 22.53 · 224.43× | 0.65 · 2.10× | 1.64 · 2.03× | 0.84 · 2.04× | cpu |
+| cpu.lz4_flex.compress.mt | 7.56 · 1.00× | 121.03 · 224.43× | 5.05 · 2.10× | 8.91 · 2.03× | 5.14 · 2.04× | cpu |
+| cpu.greedy.compress.mt | 2.72 · 1.00× | 1.39 · 184.09× | 0.85 · 1.82× | 1.24 · 1.93× | 1.03 · 1.97× | cpu |
+| cpu.lz4_flex.decompress.1t | 16.09 · 1.00× | 15.20 · 224.43× | 2.78 · 2.10× | 6.08 · 2.03× | 3.07 · 2.04× | cpu |
+| cpu.lz4_flex.decompress.mt | 15.27 · 1.00× | 16.92 · 224.43× | 13.52 · 2.10× | 16.08 · 2.03× | 12.22 · 2.04× | cpu |
+| cpu.handwritten.decompress.mt | 16.46 · 1.00× | 6.58 · 224.43× | 5.19 · 2.10× | 7.46 · 2.03× | 7.98 · 2.04× | cpu |
+| gpu.lz4.decompress.naive.kernel | 43.33 · 1.00× | 30.83 · 224.43× | 7.26 · 2.10× | 8.31 · 2.03× | 1.98 · 2.04× | wall-gpu |
+| gpu.lz4.decompress.naive.e2e | 2.67 · 1.00× | 4.01 · 224.43× | 2.44 · 2.10× | 2.62 · 2.03× | 1.29 · 2.04× | wall-e2e |
 
 Input sizes: random 256 MiB, zeros 256 MiB, text 256 MiB, mixed 256 MiB, silesia/all 202.1 MiB.
 
 ### History (GB/s, oldest → newest)
 
-| Measurement (input) | M0 `bd4fbb7-dirty` | M1 `8dc7b59-dirty` |
-|---|---:|---:|
-| cpu.memcpy (random) | 65.88 | 66.96 |
-| gpu.upload (random) | 9.47 | 9.95 |
-| gpu.readback (random) | 6.27 | 6.56 |
-| gpu.xor.kernel (random) | 111.93 | 86.38 |
-| gpu.xor.e2e (random) | 2.38 | 2.49 |
-| cpu.lz4_flex.compress.1t (silesia/all) | — | 0.84 |
-| cpu.lz4_flex.compress.mt (silesia/all) | — | 5.16 |
-| cpu.greedy.compress.mt (silesia/all) | — | 0.98 |
-| cpu.lz4_flex.decompress.1t (silesia/all) | — | 3.04 |
-| cpu.lz4_flex.decompress.mt (silesia/all) | — | 13.04 |
-| cpu.handwritten.decompress.mt (silesia/all) | — | 8.20 |
+| Measurement (input) | M0 `bd4fbb7-dirty` | M1 `8dc7b59-dirty` | M2 `d4cf5b9-dirty` |
+|---|---:|---:|---:|
+| cpu.memcpy (random) | 65.88 | 66.96 | 66.27 |
+| gpu.upload (random) | 9.47 | 9.95 | 9.66 |
+| gpu.readback (random) | 6.27 | 6.56 | 5.99 |
+| gpu.xor.kernel (random) | 111.93 | 86.38 | 100.60 |
+| gpu.xor.e2e (random) | 2.38 | 2.49 | 2.63 |
+| cpu.lz4_flex.compress.1t (silesia/all) | — | 0.84 | 0.84 |
+| cpu.lz4_flex.compress.mt (silesia/all) | — | 5.16 | 5.14 |
+| cpu.greedy.compress.mt (silesia/all) | — | 0.98 | 1.03 |
+| cpu.lz4_flex.decompress.1t (silesia/all) | — | 3.04 | 3.07 |
+| cpu.lz4_flex.decompress.mt (silesia/all) | — | 13.04 | 12.22 |
+| cpu.handwritten.decompress.mt (silesia/all) | — | 8.20 | 7.98 |
+| gpu.lz4.decompress.naive.kernel (silesia/all) | — | — | 1.98 |
+| gpu.lz4.decompress.naive.e2e (silesia/all) | — | — | 1.29 |
 
 What changed:
 
 - **M0** `bd4fbb7-dirty`: platform baseline: CPU memcpy, host<->GPU transfers, trivial XOR kernel
 - **M1** `8dc7b59-dirty`: CPU container + LZ4 baselines (lz4_flex 1t/mt, greedy GPU-twin encoder, hand-written decoder); Silesia added
+- **M2** `d4cf5b9-dirty`: GPU LZ4 decode, naive: one invocation per chunk, byte-serial (correctness baseline)
 

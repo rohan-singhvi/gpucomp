@@ -86,6 +86,70 @@ pub fn platform(ctx: Option<&Context>, cfg: &SuiteConfig) -> anyhow::Result<Vec<
     Ok(rows)
 }
 
+/// GPU decompression of each input (compressed by `lz4_flex`, 64 KiB chunks):
+/// kernel-only (timestamps, else submit + wait) and end to end (parse,
+/// upload, decode, readback).
+pub fn gpu_decode(
+    ctx: &Context,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+) -> anyhow::Result<Vec<Measurement>> {
+    use cpu::container::{compress, CompressOptions};
+    use gpu::decode::Lz4GpuDecoder;
+
+    let decoder = Lz4GpuDecoder::new(ctx);
+    let timer = GpuTimer::new(ctx);
+    let mut rows = Vec::new();
+    for (name, data) in inputs {
+        let file = compress(data, &CompressOptions::default())?;
+        let n = data.len() as u64;
+        let ratio = Some(n as f64 / file.len() as f64);
+        let row = |label: &str, elapsed: Duration, timing| Measurement {
+            name: label.into(),
+            input: name.clone(),
+            bytes: n,
+            gbps: gbps(n, elapsed),
+            ratio,
+            timing,
+        };
+        anyhow::ensure!(
+            decoder.decompress(ctx, &file, false)? == *data,
+            "GPU decode of {name} differs from the input"
+        );
+
+        let Some(prepared) = decoder.prepare_file(ctx, &file)? else {
+            continue; // empty input
+        };
+        let (kernel, timing) = match &timer {
+            Some(timer) => (
+                median_of(cfg.warmup, cfg.runs, || {
+                    decoder.dispatch(ctx, &prepared, Some(timer));
+                    Ok(timer.read(ctx)?)
+                })?,
+                Timing::GpuTimestamp,
+            ),
+            None => (
+                median_of(cfg.warmup, cfg.runs, || {
+                    let start = Instant::now();
+                    decoder.dispatch(ctx, &prepared, None);
+                    ctx.wait()?;
+                    Ok(start.elapsed())
+                })?,
+                Timing::WallGpu,
+            ),
+        };
+        rows.push(row("gpu.lz4.decompress.naive.kernel", kernel, timing));
+
+        let e2e = median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            decoder.decompress(ctx, &file, false)?;
+            Ok(start.elapsed())
+        })?;
+        rows.push(row("gpu.lz4.decompress.naive.e2e", e2e, Timing::WallE2e));
+    }
+    Ok(rows)
+}
+
 /// Synthetic benchmark inputs of `n` bytes each: `zeros`, `random`, `text`
 /// (pseudo-English from a fixed vocabulary) and `mixed` (thirds of each).
 pub fn synthetic_inputs(n: usize) -> Vec<(String, Vec<u8>)> {

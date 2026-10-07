@@ -1,6 +1,7 @@
 //! The `.gpcz` container format (see `FORMAT.md`): header, chunk table and
 //! validation. Payload encoding/decoding lives in the `cpu` and `gpu` crates.
 
+use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
 
 pub const MAGIC: [u8; 4] = *b"GPCZ";
@@ -309,6 +310,60 @@ impl Index {
         let last = (offset + len - 1) / size;
         Ok(first as usize..last as usize + 1)
     }
+}
+
+/// Error from [`read_index`]: I/O or format.
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Format(#[from] FormatError),
+}
+
+/// Low 32 bits of xxh3-64, the per-chunk checksum.
+pub fn checksum(bytes: &[u8]) -> u32 {
+    xxhash_rust::xxh3::xxh3_64(bytes) as u32
+}
+
+/// Reads and validates the header and chunk table, checking payload bounds
+/// against the reader's total length.
+pub fn read_index<R: Read + Seek>(reader: &mut R) -> Result<Index, ReadError> {
+    let file_len = reader.seek(SeekFrom::End(0))?;
+    reader.seek(SeekFrom::Start(0))?;
+    let mut header = [0u8; HEADER_SIZE];
+    read_exact_or_truncated(reader, &mut header, file_len)?;
+    let parsed = Header::parse(&header)?;
+    let table_len = ENTRY_SIZE as u64 * u64::from(parsed.chunk_count);
+    if HEADER_SIZE as u64 + table_len > file_len {
+        return Err(FormatError::Truncated {
+            need: HEADER_SIZE as u64 + table_len,
+            have: file_len,
+        }
+        .into());
+    }
+    let mut bytes = header.to_vec();
+    bytes.resize(HEADER_SIZE + table_len as usize, 0);
+    reader.read_exact(&mut bytes[HEADER_SIZE..])?;
+    let index = Index::parse(&bytes)?;
+    index.validate(file_len - index.data_offset())?;
+    Ok(index)
+}
+
+fn read_exact_or_truncated<R: Read>(
+    reader: &mut R,
+    buf: &mut [u8],
+    have: u64,
+) -> Result<(), ReadError> {
+    if (buf.len() as u64) > have {
+        return Err(FormatError::Truncated {
+            need: buf.len() as u64,
+            have,
+        }
+        .into());
+    }
+    reader.read_exact(buf)?;
+    Ok(())
 }
 
 #[cfg(test)]

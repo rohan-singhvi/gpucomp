@@ -1,6 +1,7 @@
 //! GPU compression and decompression through wgpu compute shaders.
 
 mod context;
+pub mod decode;
 mod dispatch;
 mod smoke;
 mod timer;

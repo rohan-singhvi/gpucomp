@@ -145,6 +145,10 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
         }
         run.measurements
             .extend(bench::suite::codecs(&inputs, &cfg)?);
+        if let Some(ctx) = &ctx {
+            run.measurements
+                .extend(bench::suite::gpu_decode(ctx, &inputs, &cfg)?);
+        }
         print!("{}", bench::report::render(std::slice::from_ref(&run)));
         if args.record {
             let path = bench::store::write_run(&args.results_dir, &run)?;
