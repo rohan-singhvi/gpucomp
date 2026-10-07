@@ -28,6 +28,15 @@ fn gpu_xor_matches_cpu_xor() {
 }
 
 #[test]
+fn gpu_xor_handles_more_words_than_one_dispatch_dimension() {
+    let Some(ctx) = context() else { return };
+    // 64 invocations × 65535 workgroups = 4_194_240 words in one dimension.
+    let input: Vec<u32> = (0..5_000_000u32).collect();
+    let key = 0x0F0F_0F0F;
+    assert!(ctx.xor_u32(&input, key).unwrap() == gpu::xor_u32_cpu(&input, key));
+}
+
+#[test]
 fn gpu_xor_of_empty_input_is_empty() {
     let Some(ctx) = context() else { return };
     assert_eq!(ctx.xor_u32(&[], 7).unwrap(), Vec::<u32>::new());

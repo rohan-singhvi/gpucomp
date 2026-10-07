@@ -13,8 +13,12 @@ struct Params {
 override WG_SIZE: u32 = 64u;
 
 @compute @workgroup_size(WG_SIZE)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
+fn main(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
+    // 2D grid (see dispatch_grid): linearise, then bounds-check.
+    let i = gid.x + gid.y * nwg.x * WG_SIZE;
     if (i >= arrayLength(&data)) {
         return;
     }

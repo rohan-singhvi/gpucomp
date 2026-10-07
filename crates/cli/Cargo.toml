@@ -10,10 +10,12 @@ path = "src/main.rs"
 
 [dependencies]
 gpu = { path = "../gpu" }
+bench = { path = "../bench" }
 clap.workspace = true
 log.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true

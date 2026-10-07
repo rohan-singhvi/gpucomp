@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-07T20:22:46Z",
+  "commit": "bd4fbb7-dirty",
+  "label": "M0",
+  "note": "platform baseline: CPU memcpy, host<->GPU transfers, trivial XOR kernel",
+  "os": "macos",
+  "adapter": "Apple M4 Pro",
+  "backend": "metal",
+  "measurements": [
+    {
+      "name": "cpu.memcpy",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 65.88417599452576,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.upload",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 9.469910494001919,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.readback",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 6.2725313319341955,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.xor.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 111.93070219732978,
+      "ratio": null,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.xor.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.3775325148840536,
+      "ratio": null,
+      "timing": "wall-e2e"
+    }
+  ]
+}

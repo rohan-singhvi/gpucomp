@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
@@ -18,6 +20,45 @@ enum Command {
         #[arg(long, value_enum)]
         backend: Option<BackendArg>,
     },
+    /// Run the benchmark suite; optionally record it and regenerate BENCHMARKS.md.
+    Bench(BenchArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct BenchArgs {
+    /// Bytes per iteration, in MiB.
+    #[arg(long, default_value_t = 256)]
+    size_mib: usize,
+    /// Measured iterations (the median is reported).
+    #[arg(long, default_value_t = 10)]
+    runs: usize,
+    /// Discarded warm-up iterations.
+    #[arg(long, default_value_t = 2)]
+    warmup: usize,
+    /// Label for this run in the history, e.g. a milestone ("M1") or change ("M5-atomicOr").
+    #[arg(long, default_value = "dev")]
+    label: String,
+    /// What changed since the previous recorded run (shown in the report's history).
+    #[arg(long, default_value = "")]
+    note: String,
+    /// Save the run as JSON under --results-dir.
+    #[arg(long)]
+    record: bool,
+    /// Regenerate --report-path from every recorded run.
+    #[arg(long)]
+    report: bool,
+    /// Skip measuring; only regenerate the report.
+    #[arg(long, requires = "report")]
+    report_only: bool,
+    /// Measure CPU baselines only.
+    #[arg(long)]
+    cpu_only: bool,
+    #[arg(long, value_enum)]
+    backend: Option<BackendArg>,
+    #[arg(long, default_value = "bench/results")]
+    results_dir: PathBuf,
+    #[arg(long, default_value = "BENCHMARKS.md")]
+    report_path: PathBuf,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -46,8 +87,75 @@ fn main() -> anyhow::Result<()> {
             })?;
             print!("{}", ctx.report());
         }
+        Command::Bench(args) => bench_command(&args)?,
     }
     Ok(())
+}
+
+fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
+    if !args.report_only {
+        let ctx = if args.cpu_only {
+            None
+        } else {
+            Some(gpu::Context::new(&gpu::ContextOptions {
+                backends: args.backend.map(BackendArg::backends),
+            })?)
+        };
+        let cfg = bench::suite::SuiteConfig {
+            bytes: args.size_mib << 20,
+            warmup: args.warmup,
+            runs: args.runs,
+        };
+        let (adapter, backend) = ctx.as_ref().map_or(("cpu-only".into(), "-".into()), |c| {
+            (c.adapter().name.clone(), c.adapter().backend.to_string())
+        });
+        let run = bench::record::Run {
+            date: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            commit: git_commit(),
+            label: args.label.clone(),
+            note: args.note.clone(),
+            os: std::env::consts::OS.into(),
+            adapter,
+            backend,
+            measurements: bench::suite::platform(ctx.as_ref(), &cfg)?,
+        };
+        print!("{}", bench::report::render(std::slice::from_ref(&run)));
+        if args.record {
+            let path = bench::store::write_run(&args.results_dir, &run)?;
+            eprintln!("recorded {}", path.display());
+        }
+    }
+    if args.report {
+        let runs = bench::store::load_runs(&args.results_dir)?;
+        std::fs::write(&args.report_path, bench::report::render(&runs))?;
+        eprintln!(
+            "wrote {} from {} run(s)",
+            args.report_path.display(),
+            runs.len()
+        );
+    }
+    Ok(())
+}
+
+/// Short HEAD commit, suffixed `-dirty` when the working tree has changes.
+fn git_commit() -> String {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let Some(head) = git(&["rev-parse", "--short", "HEAD"]) else {
+        return "unknown".into();
+    };
+    let dirty = git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+    if dirty {
+        format!("{head}-dirty")
+    } else {
+        head
+    }
 }
 
 #[cfg(test)]
@@ -71,5 +179,30 @@ mod tests {
                 backend: Some(BackendArg::Dx12)
             }
         ));
+    }
+
+    fn bench_args(extra: &[&str]) -> BenchArgs {
+        let argv = ["gpucomp", "bench"].iter().chain(extra).copied();
+        match Cli::try_parse_from(argv).unwrap().command {
+            Command::Bench(args) => args,
+            other => panic!("parsed as {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bench_defaults_measure_256_mib_without_recording() {
+        let args = bench_args(&[]);
+        assert_eq!(args.size_mib, 256);
+        assert_eq!((args.warmup, args.runs), (2, 10));
+        assert!(!args.record && !args.report && !args.report_only);
+        assert_eq!(args.results_dir, PathBuf::from("bench/results"));
+        assert_eq!(args.report_path, PathBuf::from("BENCHMARKS.md"));
+    }
+
+    #[test]
+    fn bench_report_only_requires_report() {
+        let argv = ["gpucomp", "bench", "--report-only"];
+        assert!(Cli::try_parse_from(argv).is_err());
+        assert!(bench_args(&["--report-only", "--report"]).report_only);
     }
 }

@@ -3,14 +3,14 @@
 ## 0. Instructions for the implementing agent
 
 - Work **milestone by milestone**, in order. Don't start the next milestone until the current one meets its acceptance criteria and all tests pass.
-- After each milestone: run `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, and `cargo fmt --check`. Commit with a message naming the milestone.
+- After each milestone: run `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`, and `cargo fmt --check`. Then stop and tell the user the milestone is ready, with a suggested commit message naming it. **The user does all committing and pushing; the agent never runs `git commit` or `git push`.**
 - The CPU reference implementation is the source of truth for **decoding**. Every GPU-decoded result must be byte-identical to the original input.
 - GPU **compression** output does not have to match the CPU encoder byte-for-byte; parsing choices can differ. It must, however, (a) be a valid stream that the CPU reference decoder (and, for LZ4, `lz4_flex`) decodes back to the original input, and (b) be deterministic: the same input and settings must produce the same bytes on every run.
 - If something in this plan is wrong or impossible (e.g. a wgpu API changed), choose the closest working alternative, note it in `DECISIONS.md` with a one-paragraph rationale, and continue.
 - Use the latest stable versions of `wgpu` and other crates when starting, and pin them in `Cargo.toml`. Don't rely on remembered API signatures; check the docs or the crate source for the version you pinned.
 - Must run on **macOS (Metal backend)** and **Windows (D3D12 and Vulkan backends)**. Don't use features those backends lack unless they are behind a runtime check with a fallback.
 - Development is **test-driven**: write a failing test, watch it fail on its assertion, then write the code.
-- **Benchmark continuously.** After every milestone, and after any change meant to improve speed or ratio, run `gpucomp bench --record`, commit the raw JSON it writes to `bench/results/`, and regenerate `BENCHMARKS.md` (see §7a). Commits and pushes go to `origin/main`.
+- **Benchmark continuously.** After every milestone, and after any change meant to improve speed or ratio, run `gpucomp bench --record` (which writes raw JSON to `bench/results/`) and regenerate `BENCHMARKS.md` (see §7a). Both belong in the user's next commit.
 
 ## 1. Goal and scope
 
@@ -317,7 +317,7 @@ Pick based on the M10 results. Each is independent.
 
 The goal is a running, data-backed record of what each change bought.
 
-- `gpucomp bench --record` runs the benchmark suite and writes one JSON file per run to `bench/results/<date>-<milestone>-<adapter>.json`. Each file records the git commit, the milestone label, the adapter and backend, the OS, and one row per measurement: name, input, size, direction, throughput (GB/s), compression ratio, and the timing source (`gpu-timestamp`, `wall-e2e`, `cpu`). Commit these files. They are the raw data.
+- `gpucomp bench --record` runs the benchmark suite and writes one JSON file per run to `bench/results/<date>-<milestone>-<adapter>.json`. Each file records the git commit, the milestone label, the adapter and backend, the OS, and one row per measurement: name, input, size, direction, throughput (GB/s), compression ratio, and the timing source (`gpu-timestamp`, `wall-e2e`, `cpu`). These files are the raw data and belong in version control.
 - `gpucomp bench --report` regenerates `BENCHMARKS.md` from all the JSON files. Keep it **short**: a "current best" table (one row per path: CPU baselines, GPU compress, GPU decompress, with GB/s and ratio), a "history" table (one row per run showing the headline numbers and what changed), and the platform ceilings from M0. Detail stays in the JSON.
 - Measure **as much as is cheap to measure**: for each path, kernel time and end-to-end time separately, every codec × level × filter mode that exists, CPU single- and multi-threaded baselines, and the transfer ceilings. Use the median of N runs after warm-up.
 - Small synthetic inputs run in CI-like time. Corpus runs (Silesia) are opt-in, with `--corpus`.

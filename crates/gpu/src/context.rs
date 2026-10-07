@@ -3,6 +3,8 @@
 use std::fmt::Write as _;
 use std::sync::mpsc;
 
+use wgpu::util::DeviceExt as _;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GpuError {
     #[error("no suitable GPU adapter: {0}")]
@@ -27,6 +29,7 @@ pub struct Context {
     pub queue: wgpu::Queue,
     adapter: AdapterSummary,
     adapter_limits: wgpu::Limits,
+    adapter_features: wgpu::Features,
     device_limits: wgpu::Limits,
 }
 
@@ -58,10 +61,12 @@ impl Context {
                 .to_string(),
         };
         let adapter_limits = adapter.limits();
+        let adapter_features = adapter.features();
         let required_limits = device_limits(&adapter_limits);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("gpucomp"),
+                required_features: device_features(adapter_features),
                 required_limits: required_limits.clone(),
                 ..Default::default()
             })
@@ -78,6 +83,7 @@ impl Context {
             queue,
             adapter: summary,
             adapter_limits,
+            adapter_features,
             device_limits: required_limits,
         })
     }
@@ -91,6 +97,11 @@ impl Context {
         &self.adapter_limits
     }
 
+    /// Optional features the adapter offers (the device enables only [`device_features`]).
+    pub fn adapter_features(&self) -> wgpu::Features {
+        self.adapter_features
+    }
+
     /// What the device was created with; pipelines must stay within these.
     pub fn device_limits(&self) -> &wgpu::Limits {
         &self.device_limits
@@ -101,8 +112,24 @@ impl Context {
         report(&self.adapter, &self.device_limits)
     }
 
+    /// Blocks until all submitted GPU work has finished.
+    pub fn wait(&self) -> Result<(), GpuError> {
+        self.device.poll(wgpu::PollType::wait_indefinitely())?;
+        Ok(())
+    }
+
+    /// Creates a buffer holding `bytes`, with `usage` (plus nothing else).
+    pub fn upload(&self, bytes: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("upload"),
+                contents: bytes,
+                usage,
+            })
+    }
+
     /// Copies `size` bytes from the start of `src` (which needs `COPY_SRC`) back to the host.
-    pub(crate) fn read_buffer(&self, src: &wgpu::Buffer, size: u64) -> Result<Vec<u8>, GpuError> {
+    pub fn read_buffer(&self, src: &wgpu::Buffer, size: u64) -> Result<Vec<u8>, GpuError> {
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
             size,
@@ -160,6 +187,11 @@ pub fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
         max_compute_workgroup_storage_size: adapter.max_compute_workgroup_storage_size,
         ..base
     }
+}
+
+/// Optional features to enable: timestamp queries when the adapter has them.
+pub fn device_features(adapter: wgpu::Features) -> wgpu::Features {
+    adapter & wgpu::Features::TIMESTAMP_QUERY
 }
 
 /// Human-readable adapter, backend and limits report for `gpucomp info`.
@@ -238,6 +270,16 @@ mod tests {
     fn device_limits_never_exceed_a_downlevel_adapter() {
         let adapter = wgpu::Limits::downlevel_defaults();
         assert!(device_limits(&adapter).check_limits(&adapter));
+    }
+
+    #[test]
+    fn device_features_enable_timestamps_only_when_supported() {
+        let ts = wgpu::Features::TIMESTAMP_QUERY;
+        assert_eq!(device_features(ts | wgpu::Features::SHADER_F16), ts);
+        assert_eq!(
+            device_features(wgpu::Features::empty()),
+            wgpu::Features::empty()
+        );
     }
 
     #[test]

@@ -1,8 +1,14 @@
 //! GPU compression and decompression through wgpu compute shaders.
 
 mod context;
+mod dispatch;
 mod smoke;
+mod timer;
 
-pub use context::{device_limits, report, AdapterSummary, Context, ContextOptions, GpuError};
-pub use smoke::xor_u32_cpu;
+pub use context::{
+    device_features, device_limits, report, AdapterSummary, Context, ContextOptions, GpuError,
+};
+pub use dispatch::dispatch_grid;
+pub use smoke::{xor_u32_cpu, XorKernel};
+pub use timer::GpuTimer;
 pub use wgpu;
