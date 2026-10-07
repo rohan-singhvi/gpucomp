@@ -1,5 +1,7 @@
 # Downloads the Silesia and Canterbury corpora into testdata/corpus/ (git-ignored).
-# Usage: scripts\fetch_corpus.ps1    then: gpucomp bench --corpus testdata\corpus\silesia
+# Usage: scripts\fetch_corpus.ps1 [silesia] [canterbury]   (default: both)
+#   then: gpucomp bench --corpus testdata\corpus\silesia
+param([string[]]$Names = @("silesia", "canterbury"))
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $root "testdata/corpus"
@@ -18,8 +20,13 @@ try {
         else { tar -xzf $archive -C $out }
         Write-Host "${name}: $((Get-ChildItem $out).Count) files"
     }
-    Fetch "silesia" "https://sun.aei.polsl.pl/~sdeor/corpus/silesia.zip" "zip"
-    Fetch "canterbury" "https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz" "tar.gz"
+    foreach ($name in $Names) {
+        switch ($name) {
+            "silesia" { Fetch "silesia" "https://sun.aei.polsl.pl/~sdeor/corpus/silesia.zip" "zip" }
+            "canterbury" { Fetch "canterbury" "https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz" "tar.gz" }
+            default { throw "unknown corpus: $name" }
+        }
+    }
 } finally {
     Remove-Item -Recurse -Force $tmp
 }

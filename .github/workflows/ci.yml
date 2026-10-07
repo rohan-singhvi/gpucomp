@@ -23,6 +23,16 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # Small real-world corpus for the M4 validation matrix (skipped if missing).
+      - name: Fetch Canterbury corpus
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh -File scripts/fetch_corpus.ps1 canterbury
+          else
+            scripts/fetch_corpus.sh canterbury
+          fi
+        continue-on-error: true
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # GPU integration tests skip themselves when the runner has no adapter.

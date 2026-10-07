@@ -61,3 +61,51 @@ pub fn fixtures() -> Vec<(&'static str, Vec<u8>)> {
         ),
     ]
 }
+
+/// One context per backend (Metal, D3D12, Vulkan) that has an adapter here.
+pub fn contexts() -> Vec<(&'static str, Context)> {
+    let backends = [
+        ("metal", gpu::wgpu::Backends::METAL),
+        ("dx12", gpu::wgpu::Backends::DX12),
+        ("vulkan", gpu::wgpu::Backends::VULKAN),
+    ];
+    let found: Vec<_> = backends
+        .into_iter()
+        .filter_map(|(name, backends)| {
+            Context::new(&ContextOptions {
+                backends: Some(backends),
+            })
+            .ok()
+            .map(|ctx| (name, ctx))
+        })
+        .collect();
+    if found.is_empty() {
+        eprintln!("skipping GPU test: no adapter on any backend");
+    }
+    found
+}
+
+/// Canterbury corpus files, if `scripts/fetch_corpus` has been run.
+pub fn canterbury() -> Vec<(String, Vec<u8>)> {
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus/canterbury");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        eprintln!(
+            "note: {} missing; run scripts/fetch_corpus for the full matrix",
+            dir.display()
+        );
+        return Vec::new();
+    };
+    let mut files: Vec<_> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|p| {
+            let name = format!("canterbury/{}", p.file_name().unwrap().to_string_lossy());
+            (name, std::fs::read(&p).unwrap())
+        })
+        .collect()
+}

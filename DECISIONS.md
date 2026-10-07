@@ -140,3 +140,18 @@ an entire 64 KiB literal run with byte-wise atomics. Planned next steps, in orde
 suggests), (2) cooperative literal copies in emit (M5's word-ownership scheme),
 (3) skipping emit for chunks that will be stored anyway. Ratio is on target:
 greedy twin = GPU = 1.97× vs `lz4_flex` 2.04× on Silesia (3.4% gap; target ≤ 10%).
+
+## M4 — Validation matrix is the full 3 × 3 grid, plus ranges and chunk sizes
+`crates/gpu/tests/matrix.rs` runs every encoder (CPU `lz4_flex`, CPU greedy, GPU) ×
+every decoder (CPU hand-written, CPU `lz4_flex`, GPU) on every backend that has an
+adapter. It's a superset of the plan's table, since the CPU-encoded files also go
+through `lz4_flex` and GPU-encoded ones through all three decoders. It covers chunk
+sizes of 4 KiB, 64 KiB and 1 MiB (the 1 MiB chunks exercise the 65 535-byte offset
+cap, with repeats at 40 KB and 70 KB) and four range reads per combination. Inputs
+are the M1 fixtures, a 3 MiB text, and the Canterbury corpus. CI fetches Canterbury
+(`scripts/fetch_corpus.* canterbury`), and local runs skip it with a note if it's
+missing. A second test requires GPU files to equal CPU-twin files on every backend.
+The malformed-input suite (every truncation, every single-byte corruption of a
+3-chunk file) runs against the GPU decoder on each backend.
+Apple M4 Pro / Metal: 621 combinations exact. M4 changes no code paths, so it has
+no benchmark run.

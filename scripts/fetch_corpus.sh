@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Downloads the Silesia and Canterbury corpora into testdata/corpus/ (git-ignored).
-# Usage: scripts/fetch_corpus.sh    then: gpucomp bench --corpus testdata/corpus/silesia
+# Usage: scripts/fetch_corpus.sh [silesia] [canterbury]   (default: both)
+#   then: gpucomp bench --corpus testdata/corpus/silesia
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$root/testdata/corpus"
@@ -23,5 +24,12 @@ fetch() { # name url archive-type
   echo "$name: $(ls "$dest/$name" | wc -l | tr -d ' ') files"
 }
 
-fetch silesia https://sun.aei.polsl.pl/~sdeor/corpus/silesia.zip zip
-fetch canterbury https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz tar.gz
+for name in "${@:-silesia canterbury}"; do
+  for n in $name; do
+    case $n in
+      silesia) fetch silesia https://sun.aei.polsl.pl/~sdeor/corpus/silesia.zip zip ;;
+      canterbury) fetch canterbury https://corpus.canterbury.ac.nz/resources/cantrbry.tar.gz tar.gz ;;
+      *) echo "unknown corpus: $n" >&2; exit 1 ;;
+    esac
+  done
+done
