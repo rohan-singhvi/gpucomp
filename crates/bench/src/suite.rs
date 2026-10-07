@@ -117,7 +117,7 @@ pub fn gpu_decode_configs(
     configs: &[(&str, gpu::decode::DecoderConfig)],
 ) -> anyhow::Result<Vec<Measurement>> {
     use cpu::container::{compress, CompressOptions};
-    use gpu::decode::Lz4GpuDecoder;
+    use gpu::decode::GpuDecoder;
 
     let timer = GpuTimer::new(ctx);
     let files = inputs
@@ -126,7 +126,7 @@ pub fn gpu_decode_configs(
         .collect::<Result<Vec<_>, _>>()?;
     let mut rows = Vec::new();
     for (label, config) in configs {
-        let decoder = Lz4GpuDecoder::with_config(ctx, *config)?;
+        let decoder = GpuDecoder::with_config(ctx, *config)?;
         for ((name, data), file) in inputs.iter().zip(&files) {
             let n = data.len() as u64;
             let ratio = Some(n as f64 / file.len() as f64);
@@ -183,9 +183,9 @@ pub fn gpu_encode(
     inputs: &[(String, Vec<u8>)],
     cfg: &SuiteConfig,
 ) -> anyhow::Result<Vec<Measurement>> {
-    use gpu::encode::{GpuCompressOptions, Lz4GpuEncoder};
+    use gpu::encode::{GpuCompressOptions, GpuEncoder};
 
-    let encoder = Lz4GpuEncoder::new(ctx, Default::default())?;
+    let encoder = GpuEncoder::new(ctx, Default::default())?;
     let options = GpuCompressOptions::default();
     let timer = GpuTimer::new(ctx);
     let mut rows = Vec::new();
@@ -205,7 +205,7 @@ pub fn gpu_encode(
             timing,
         };
 
-        let prepared = encoder.prepare(ctx, data, options.chunk_size)?;
+        let prepared = encoder.prepare(ctx, data, &options)?;
         let (kernel, timing) = match &timer {
             Some(timer) => (
                 median_of(cfg.warmup, cfg.runs, || {
@@ -233,6 +233,136 @@ pub fn gpu_encode(
             Ok(start.elapsed())
         })?;
         rows.push(row("gpu.lz4.compress.e2e", e2e, Timing::WallE2e));
+    }
+    Ok(rows)
+}
+
+/// GLZ (codec 2) in both directions, plain and with dependency elimination
+/// over groups of 64 sequences (`glz-g64`): CPU encoder and reference decoder
+/// (multi-threaded), and with a GPU, kernel-only and end-to-end encode and
+/// decode. 64 KiB chunks.
+pub fn glz(
+    ctx: Option<&Context>,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+) -> anyhow::Result<Vec<Measurement>> {
+    use cpu::container::{compress, decompress, CompressOptions, DecompressOptions, Encoder};
+    use gpu::decode::GpuDecoder;
+    use gpu::encode::{GpuCompressOptions, GpuEncoder};
+
+    let gpu = match ctx {
+        Some(ctx) => Some((
+            ctx,
+            GpuEncoder::new(ctx, Default::default())?,
+            GpuDecoder::new(ctx),
+            GpuTimer::new(ctx),
+        )),
+        None => None,
+    };
+    let time = |f: &dyn Fn() -> anyhow::Result<()>| {
+        median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            f()?;
+            Ok(start.elapsed())
+        })
+    };
+    let mut rows = Vec::new();
+    for (name, data) in inputs {
+        if data.is_empty() {
+            continue;
+        }
+        let n = data.len() as u64;
+        for (label, groups) in [("glz", None), ("glz-g64", Some(64))] {
+            let cpu_options = CompressOptions {
+                codec: format::Codec::Glz,
+                encoder: Encoder::Glz(cpu::glz::GlzParams {
+                    independent_groups: groups,
+                    ..Default::default()
+                }),
+                ..CompressOptions::default()
+            };
+            let file = compress(data, &cpu_options)?;
+            let mut row = |kind: &str, elapsed: Duration, timing| {
+                rows.push(Measurement {
+                    name: format!("{label}.{kind}"),
+                    input: name.clone(),
+                    bytes: n,
+                    gbps: gbps(n, elapsed),
+                    ratio: Some(n as f64 / file.len() as f64),
+                    timing,
+                });
+            };
+            let reference = DecompressOptions {
+                verify: false,
+                ..DecompressOptions::default()
+            };
+            anyhow::ensure!(
+                decompress(&file, &reference)? == *data,
+                "CPU GLZ round trip"
+            );
+            let t = time(&|| Ok(compress(data, &cpu_options).map(drop)?))?;
+            row("cpu.compress.mt", t, Timing::Cpu);
+            if groups.is_none() {
+                let t = time(&|| Ok(decompress(&file, &reference).map(drop)?))?;
+                row("cpu.decompress.mt", t, Timing::Cpu);
+            }
+
+            let Some((ctx, encoder, decoder, timer)) = &gpu else {
+                continue;
+            };
+            let gpu_options = GpuCompressOptions {
+                codec: format::Codec::Glz,
+                independent_groups: groups,
+                ..GpuCompressOptions::default()
+            };
+            anyhow::ensure!(
+                encoder.compress(ctx, data, &gpu_options)? == file,
+                "GPU GLZ file differs from the CPU twin"
+            );
+            anyhow::ensure!(
+                decoder.decompress(ctx, &file, false)? == *data,
+                "GPU GLZ decode"
+            );
+            let kernel =
+                |dispatch: &dyn Fn(Option<&GpuTimer>)| -> anyhow::Result<(Duration, Timing)> {
+                    Ok(match timer {
+                        Some(timer) => (
+                            median_of(cfg.warmup, cfg.runs, || {
+                                dispatch(Some(timer));
+                                Ok(timer.read(ctx)?)
+                            })?,
+                            Timing::GpuTimestamp,
+                        ),
+                        None => (
+                            median_of(cfg.warmup, cfg.runs, || {
+                                let start = Instant::now();
+                                dispatch(None);
+                                ctx.wait()?;
+                                Ok(start.elapsed())
+                            })?,
+                            Timing::WallGpu,
+                        ),
+                    })
+                };
+            let prepared = encoder.prepare(ctx, data, &gpu_options)?;
+            let (t, timing) = kernel(&|timer| encoder.dispatch(ctx, &prepared, timer))?;
+            drop(prepared);
+            row("gpu.compress.kernel", t, timing);
+            let t = time(&|| Ok(encoder.compress(ctx, data, &gpu_options).map(drop)?))?;
+            row("gpu.compress.e2e", t, Timing::WallE2e);
+            if let Some(prepared) = decoder.prepare_file(ctx, &file)? {
+                let (t, timing) = kernel(&|timer| decoder.dispatch(ctx, &prepared, timer))?;
+                row("gpu.decompress.kernel", t, timing);
+            }
+            let t = time(&|| Ok(decoder.decompress(ctx, &file, false).map(drop)?))?;
+            row("gpu.decompress.e2e", t, Timing::WallE2e);
+        }
+    }
+    // Names read `<device>.<codec>.<direction>.<timing>`.
+    for m in &mut rows {
+        let (codec, rest) = m.name.split_once('.').unwrap();
+        let (device, rest) = rest.split_once('.').unwrap();
+        m.name = format!("{device}.{codec}.{rest}");
     }
     Ok(rows)
 }

@@ -6,7 +6,9 @@ use wgpu::BufferUsages;
 
 use crate::{dispatch_grid, Context, GpuError};
 
-const SHADER: &str = include_str!("../../shaders/lz4_encode.wgsl");
+const COMMON_SHADER: &str = include_str!("../../shaders/encode_common.wgsl");
+const LZ4_EMIT: &str = include_str!("../../shaders/lz4_emit.wgsl");
+const GLZ_EMIT: &str = include_str!("../../shaders/glz_emit.wgsl");
 
 /// Match-finding parameters; same meaning as `cpu::lz4::encode::Params`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,20 +33,31 @@ impl Default for EncodeParams {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpuCompressOptions {
+    /// `Lz4` or `Glz`.
+    pub codec: format::Codec,
     pub chunk_size: u32,
     pub checksums: bool,
     pub level: u8,
+    /// GLZ only: dependency elimination over groups of this many sequences
+    /// (1..=`MAX_GROUP`).
+    pub independent_groups: Option<u32>,
 }
 
 impl Default for GpuCompressOptions {
     fn default() -> Self {
         GpuCompressOptions {
+            codec: format::Codec::Lz4,
             chunk_size: format::DEFAULT_CHUNK_SIZE,
             checksums: false,
             level: 1,
+            independent_groups: None,
         }
     }
 }
+
+/// Largest dependency-elimination group the GPU parse supports. The GLZ
+/// decoder resolves 64 sequences per step, so larger groups can't help it.
+pub const MAX_GROUP: u32 = 64;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GpuEncodeError {
@@ -58,7 +71,7 @@ pub enum GpuEncodeError {
     TooManyChunks(u64),
 }
 
-/// One chunk's LZ4 block, as reported by [`Lz4GpuEncoder::encode_blocks`].
+/// One chunk's LZ4 block, as reported by [`GpuEncoder::encode_blocks`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EncodedBlock {
     Compressed(Vec<u8>),
@@ -75,9 +88,10 @@ pub fn slot_size(chunk_size: u32) -> u32 {
     format::pad4(u64::from(chunk_size) + u64::from(chunk_size) / 255 + 16) as u32
 }
 
-/// Workgroup memory the encoder needs: the hash table plus the scan scratch.
+/// Workgroup memory the encoder needs: the hash table, the two scans, the
+/// parse's dependency-elimination group list and four counters.
 pub fn workgroup_bytes(params: &EncodeParams) -> u32 {
-    4 * (1 << params.hash_log) + 4 * params.block + 4
+    4 * (1 << params.hash_log) + 12 * params.block + 8 * MAX_GROUP + 16
 }
 
 /// How many chunks one dispatch may encode so that the input, match scratch
@@ -87,9 +101,10 @@ pub fn chunks_per_batch(chunk_size: u32, binding_limit: u64) -> u64 {
     (binding_limit / (4 * u64::from(chunk_size))).max(1)
 }
 
-pub struct Lz4GpuEncoder {
+pub struct GpuEncoder {
     params: EncodeParams,
-    pipeline: wgpu::ComputePipeline,
+    lz4_pipeline: wgpu::ComputePipeline,
+    glz_pipeline: wgpu::ComputePipeline,
 }
 
 /// Raw output of one or more encode dispatches: per-chunk compressed sizes and
@@ -107,7 +122,7 @@ impl Encoded {
     }
 }
 
-impl Lz4GpuEncoder {
+impl GpuEncoder {
     /// Compiles the encoder; fails if `params` need more workgroup memory or a
     /// bigger workgroup than the device allows.
     pub fn new(ctx: &Context, params: EncodeParams) -> Result<Self, GpuEncodeError> {
@@ -132,44 +147,52 @@ impl Lz4GpuEncoder {
         if !(4..=65_535).contains(&params.probe_len) {
             return unsupported(format!("probe_len {} not in 4..=65535", params.probe_len));
         }
-        let module = ctx
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("lz4 encode"),
-                source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-            });
-        let pipeline = ctx
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("lz4 encode"),
-                layout: None,
-                module: &module,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[
-                        ("WG_SIZE", f64::from(params.block)),
-                        ("HASH_LOG", f64::from(params.hash_log)),
-                    ],
-                    ..Default::default()
-                },
-                cache: None,
-            });
-        Ok(Lz4GpuEncoder { params, pipeline })
+        let pipeline = |label: &str, emit: &str, codec: u32| {
+            let source = format!("{COMMON_SHADER}\n{emit}");
+            let module = ctx
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(label),
+                    source: wgpu::ShaderSource::Wgsl(source.into()),
+                });
+            ctx.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label),
+                    layout: None,
+                    module: &module,
+                    entry_point: Some("main"),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[
+                            ("WG_SIZE", f64::from(params.block)),
+                            ("HASH_LOG", f64::from(params.hash_log)),
+                            ("CODEC", f64::from(codec)),
+                        ],
+                        ..Default::default()
+                    },
+                    cache: None,
+                })
+        };
+        Ok(GpuEncoder {
+            params,
+            lz4_pipeline: pipeline("lz4 encode", LZ4_EMIT, 0),
+            glz_pipeline: pipeline("glz encode", GLZ_EMIT, 1),
+        })
     }
 
     pub fn params(&self) -> EncodeParams {
         self.params
     }
 
-    /// Encodes every `chunk_size` chunk of `input` as an LZ4 block. For tests
-    /// and debugging.
+    /// Encodes every `chunk_size` chunk of `input` as a block of
+    /// `options.codec`. For tests and debugging.
     pub fn encode_blocks(
         &self,
         ctx: &Context,
         input: &[u8],
-        chunk_size: u32,
+        options: &GpuCompressOptions,
     ) -> Result<Vec<EncodedBlock>, GpuEncodeError> {
-        let encoded = self.encode(ctx, input, chunk_size)?;
+        let chunk_size = options.chunk_size;
+        let encoded = self.encode(ctx, input, options)?;
         Ok(input
             .chunks(chunk_size as usize)
             .enumerate()
@@ -184,7 +207,7 @@ impl Lz4GpuEncoder {
             .collect())
     }
 
-    /// Compresses `input` into a `.gpcz` LZ4 container.
+    /// Compresses `input` into a `.gpcz` container (LZ4 or GLZ).
     pub fn compress(
         &self,
         ctx: &Context,
@@ -194,7 +217,7 @@ impl Lz4GpuEncoder {
         let chunk_size = options.chunk_size;
         let chunk_count = format::chunk_count_for(input.len() as u64, chunk_size.max(1));
         let header = format::Header {
-            codec: format::Codec::Lz4,
+            codec: options.codec,
             chunk_size,
             chunk_count: u32::try_from(chunk_count)
                 .map_err(|_| GpuEncodeError::TooManyChunks(chunk_count))?,
@@ -202,8 +225,7 @@ impl Lz4GpuEncoder {
             checksums: options.checksums,
             level: options.level,
         };
-        check_chunk_size(chunk_size)?;
-        let encoded = self.encode(ctx, input, chunk_size)?;
+        let encoded = self.encode(ctx, input, options)?;
         // Same stored fallback as the CPU encoders: keep a block only if it shrank.
         let payloads: Vec<format::ChunkPayload> = input
             .chunks(chunk_size as usize)
@@ -232,9 +254,10 @@ impl Lz4GpuEncoder {
         &self,
         ctx: &Context,
         input: &[u8],
-        chunk_size: u32,
+        options: &GpuCompressOptions,
     ) -> Result<Encoded, GpuEncodeError> {
-        check_chunk_size(chunk_size)?;
+        check_options(options)?;
+        let chunk_size = options.chunk_size;
         let slot = slot_size(chunk_size) as usize;
         let chunk_count = input.len().div_ceil(chunk_size as usize);
         let mut encoded = Encoded {
@@ -248,7 +271,7 @@ impl Lz4GpuEncoder {
             .min(u64::from(u32::MAX) & !3);
         let per_batch = chunks_per_batch(chunk_size, limit) as usize * chunk_size as usize;
         for batch in input.chunks(per_batch.max(1)) {
-            self.encode_batch(ctx, batch, chunk_size, &mut encoded)?;
+            self.encode_batch(ctx, batch, options, &mut encoded)?;
         }
         Ok(encoded)
     }
@@ -257,10 +280,10 @@ impl Lz4GpuEncoder {
         &self,
         ctx: &Context,
         batch: &[u8],
-        chunk_size: u32,
+        options: &GpuCompressOptions,
         encoded: &mut Encoded,
     ) -> Result<(), GpuEncodeError> {
-        let prepared = self.prepare_batch(ctx, batch, chunk_size);
+        let prepared = self.prepare_batch(ctx, batch, options);
         self.dispatch(ctx, &prepared, None);
         let sizes: Vec<u32> = bytemuck::pod_collect_to_vec(
             &ctx.read_buffer(&prepared.sizes_buf, prepared.sizes_buf.size())?,
@@ -279,9 +302,10 @@ impl Lz4GpuEncoder {
         &self,
         ctx: &Context,
         input: &[u8],
-        chunk_size: u32,
+        options: &GpuCompressOptions,
     ) -> Result<PreparedEncode, GpuEncodeError> {
-        check_chunk_size(chunk_size)?;
+        check_options(options)?;
+        let chunk_size = options.chunk_size;
         let limit = ctx
             .device_limits()
             .max_storage_buffer_binding_size
@@ -292,11 +316,17 @@ impl Lz4GpuEncoder {
                 "{chunks} chunks don't fit one batch on this device"
             )));
         }
-        Ok(self.prepare_batch(ctx, input, chunk_size))
+        Ok(self.prepare_batch(ctx, input, options))
     }
 
-    fn prepare_batch(&self, ctx: &Context, batch: &[u8], chunk_size: u32) -> PreparedEncode {
+    fn prepare_batch(
+        &self,
+        ctx: &Context,
+        batch: &[u8],
+        options: &GpuCompressOptions,
+    ) -> PreparedEncode {
         let device = &ctx.device;
+        let chunk_size = options.chunk_size;
         let chunks = (batch.len() as u64).div_ceil(u64::from(chunk_size)).max(1);
         let slot = slot_size(chunk_size);
 
@@ -322,15 +352,25 @@ impl Lz4GpuEncoder {
             usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        let params = [chunk_size, batch.len() as u32, slot, self.params.probe_len];
+        let groups = options.independent_groups.unwrap_or(0);
+        let params = [
+            chunk_size,
+            batch.len() as u32,
+            slot,
+            self.params.probe_len,
+            groups,
+            0,
+            0,
+            0,
+        ];
         let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("encode params"),
             contents: bytemuck::cast_slice(&params),
             usage: BufferUsages::UNIFORM,
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("lz4 encode"),
-            layout: &self.pipeline.get_bind_group_layout(0),
+            label: Some("encode"),
+            layout: &self.pipeline_for(options.codec).get_bind_group_layout(0),
             entries: &[
                 (0, &input_buf),
                 (1, &scratch_buf),
@@ -344,10 +384,18 @@ impl Lz4GpuEncoder {
             }),
         });
         PreparedEncode {
+            codec: options.codec,
             chunks: chunks as u32,
             output_buf,
             sizes_buf,
             bind_group,
+        }
+    }
+
+    fn pipeline_for(&self, codec: format::Codec) -> &wgpu::ComputePipeline {
+        match codec {
+            format::Codec::Glz => &self.glz_pipeline,
+            format::Codec::Lz4 | format::Codec::Stored => &self.lz4_pipeline,
         }
     }
 
@@ -359,10 +407,10 @@ impl Lz4GpuEncoder {
         encoder.clear_buffer(&p.output_buf, 0, None);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("lz4 encode"),
+                label: Some("encode"),
                 timestamp_writes: timer.map(crate::GpuTimer::pass_writes),
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(self.pipeline_for(p.codec));
             pass.set_bind_group(0, &p.bind_group, &[]);
             let (x, y) = dispatch_grid(
                 p.chunks,
@@ -377,12 +425,31 @@ impl Lz4GpuEncoder {
     }
 }
 
-/// GPU buffers for one encode batch, ready to [`dispatch`](Lz4GpuEncoder::dispatch).
+/// GPU buffers for one encode batch, ready to [`dispatch`](GpuEncoder::dispatch).
 pub struct PreparedEncode {
+    codec: format::Codec,
     chunks: u32,
     output_buf: wgpu::Buffer,
     sizes_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+}
+
+fn check_options(options: &GpuCompressOptions) -> Result<(), GpuEncodeError> {
+    check_chunk_size(options.chunk_size)?;
+    if options.codec == format::Codec::Stored {
+        return Err(GpuEncodeError::Unsupported(
+            "the GPU encodes LZ4 or GLZ".into(),
+        ));
+    }
+    match options.independent_groups {
+        Some(_) if options.codec != format::Codec::Glz => Err(GpuEncodeError::Unsupported(
+            "independent groups need the GLZ codec".into(),
+        )),
+        Some(g) if !(1..=MAX_GROUP).contains(&g) => Err(GpuEncodeError::Unsupported(format!(
+            "independent groups of {g}; must be 1..={MAX_GROUP}"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 fn check_chunk_size(chunk_size: u32) -> Result<(), format::FormatError> {
@@ -407,15 +474,21 @@ mod tests {
     }
 
     #[test]
-    fn workgroup_memory_is_table_plus_scan() {
+    fn workgroup_memory_is_table_scans_group_list_and_counters() {
+        // table + scan (u32) + scan2 (vec2) per invocation + MAX_GROUP vec2 + 4 counters.
         let p = EncodeParams::default();
-        assert_eq!(workgroup_bytes(&p), 4 * 4096 + 4 * 64 + 4);
+        assert_eq!(workgroup_bytes(&p), 4 * 4096 + 12 * 64 + 8 * 64 + 16);
         let small = EncodeParams {
             hash_log: 10,
             block: 128,
             ..p
         };
-        assert_eq!(workgroup_bytes(&small), 4 * 1024 + 4 * 128 + 4);
+        assert_eq!(workgroup_bytes(&small), 4 * 1024 + 12 * 128 + 8 * 64 + 16);
+    }
+
+    #[test]
+    fn groups_are_capped_at_the_glz_decode_block() {
+        assert_eq!(MAX_GROUP, 64);
     }
 
     #[test]

@@ -26,6 +26,13 @@ pub enum CpuError {
     UnsupportedFilter { chunk: usize },
     #[error("input too large: {0} chunks")]
     TooManyChunks(u64),
+    #[error("invalid options: {0}")]
+    Options(&'static str),
+    #[error("chunk {chunk}: {source}")]
+    Glz {
+        chunk: usize,
+        source: crate::glz::GlzError,
+    },
 }
 
 impl From<format::ReadError> for CpuError {
@@ -44,6 +51,8 @@ pub enum Encoder {
     Lz4Flex,
     /// The hand-written greedy encoder, the GPU encoder's CPU twin.
     Greedy(Params),
+    /// The GLZ encoder (codec GLZ only).
+    Glz(crate::glz::GlzParams),
 }
 
 /// Which LZ4 block decoder decodes each chunk.
@@ -113,6 +122,15 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
         e => Err(e),
     })?;
 
+    match (options.codec, options.encoder) {
+        (Codec::Glz, Encoder::Glz(_)) | (Codec::Stored, _) => {}
+        (Codec::Lz4, Encoder::Lz4Flex | Encoder::Greedy(_)) => {}
+        (Codec::Glz, _) => return Err(CpuError::Options("the GLZ codec needs Encoder::Glz")),
+        (Codec::Lz4, Encoder::Glz(_)) => {
+            return Err(CpuError::Options("Encoder::Glz needs the GLZ codec"))
+        }
+    }
+
     // Compress every chunk independently, in parallel.
     let payloads: Vec<(Vec<u8>, bool, u32)> = input
         .par_chunks(chunk_size as usize)
@@ -128,6 +146,11 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
                 (Codec::Lz4, Encoder::Greedy(params)) => {
                     Some(crate::lz4::encode::encode_block(chunk, &params))
                 }
+                (Codec::Glz, Encoder::Glz(params)) => {
+                    Some(crate::glz::encode_block(chunk, &params))
+                }
+                // Rejected by the check above.
+                (Codec::Lz4, Encoder::Glz(_)) | (Codec::Glz, _) => unreachable!(),
             };
             match compressed {
                 Some(c) if c.len() < chunk.len() => (c, false, sum),
@@ -158,13 +181,22 @@ pub fn decompress(file: &[u8], options: &DecompressOptions) -> Result<Vec<u8>, C
         .try_for_each(|(i, (dst, entry))| {
             let start = entry.comp_offset as usize;
             let payload = &data[start..start + entry.comp_size as usize];
-            decode_chunk(i, entry, index.header.checksums, payload, dst, options)
+            decode_chunk(
+                index.header.codec,
+                i,
+                entry,
+                index.header.checksums,
+                payload,
+                dst,
+                options,
+            )
         })?;
     Ok(out)
 }
 
 /// Decodes one chunk's payload into `dst` (exactly `uncomp_size` bytes).
 fn decode_chunk(
+    codec: Codec,
     chunk: usize,
     entry: &ChunkEntry,
     has_checksums: bool,
@@ -177,6 +209,11 @@ fn decode_chunk(
     }
     if entry.stored {
         dst.copy_from_slice(payload);
+    } else if codec == Codec::Glz {
+        if options.decoder == Decoder::Lz4Flex {
+            return Err(CpuError::Options("lz4_flex can't decode GLZ files"));
+        }
+        crate::glz::decode_block(payload, dst).map_err(|source| CpuError::Glz { chunk, source })?;
     } else {
         match options.decoder {
             Decoder::HandWritten => crate::lz4::decode::decode_block(payload, dst)
@@ -237,6 +274,7 @@ pub fn decompress_range<R: Read + Seek>(
             let start = (entry.comp_offset - payload_start) as usize;
             let payload = &payloads[start..start + entry.comp_size as usize];
             decode_chunk(
+                index.header.codec,
                 chunks.start + k,
                 entry,
                 index.header.checksums,

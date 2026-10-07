@@ -19,7 +19,7 @@ chunks it overlaps.
 |-------:|-----:|---------------|---------|
 | 0      | 4    | `magic`       | `GPCZ` |
 | 4      | 2    | `version`     | `1` |
-| 6      | 2    | `codec`       | `0` = stored, `1` = LZ4 block |
+| 6      | 2    | `codec`       | `0` = stored, `1` = LZ4 block, `2` = GLZ |
 | 8      | 4    | `chunk_size`  | power of two, 4 KiB ..= 1 MiB |
 | 12     | 4    | `chunk_count` | `ceil(total_size / chunk_size)`, so `0` for an empty file |
 | 16     | 8    | `total_size`  | uncompressed size in bytes |
@@ -54,6 +54,46 @@ Payload encodings:
   prefix. Encoders obey the end-of-block rules: the last 5 bytes are literals, and the last match
   starts at least 12 bytes before the end. Match offsets are 1..=65535 and never reach before the
   start of the chunk.
+
+## GLZ block (codec 2)
+
+GLZ stores each sequence's fields in separate arrays, so a GPU can compute any
+sequence's lengths, output position and literal source with prefix sums instead of a
+serial token parse. All values are little-endian, and every array starts on a 4-byte
+boundary (zero padding).
+
+```
+u32       seq_count | WIDE_BIT        WIDE_BIT = 1 << 31: extension values are u32, else u16
+u32       ext_count                   number of extension values
+tokens    [seq_count] u8              lit nibble << 4 | match nibble        (padded to 4)
+offsets   [seq_count] u16             match offset; 0 in the last sequence  (padded to 4)
+ext       [ext_count] u16 or u32      escaped length remainders, in order   (padded to 4)
+literals  [sum of lit_len] u8         all literal bytes, in sequence order
+```
+
+- The literal nibble is `min(lit_len, 15)`, and the match nibble is `min(match_len - 4, 15)`.
+  A nibble of 15 adds the next extension value. Within a sequence, the literal's
+  extension comes before the match's. A sequence's first extension slot is the count of
+  15-nibbles in all earlier tokens, which is an exclusive prefix sum.
+- Every sequence has a match of at least 4 bytes, except the **last**, which is literals
+  only: its match nibble must be 0 and its offset 0.
+- Offsets are 1..=65535 and never reach before the start of the chunk. A match with
+  offset < length repeats its source pattern, as in LZ4.
+- The literal bytes must be consumed exactly, and the output must fill `uncomp_size`
+  exactly.
+- `seq_count` must be ≥ 1 and ≤ `uncomp_size / 4 + 1` (every sequence but the last
+  outputs ≥ 4 bytes). `ext_count` must be ≤ `2 × seq_count` and must equal the number
+  of 15-nibbles.
+
+Decoders check the header first, then each sequence in order: literals available, literals
+fit the output, final-sequence rules, offset nonzero, offset within the output so far,
+match fits the output. Last come the totals. A parallel decoder reports the error of the
+lowest failing sequence, which is what a serial decoder reports.
+
+**Dependency elimination** is an optional encoder setting, invisible in the format: within
+each group of G consecutive sequences, no match copies bytes from another match's output
+in the same group. A decoder that resolves G sequences at a time can then copy all of a
+group's matches at once.
 
 ## Filters
 

@@ -18,11 +18,17 @@ pub struct CompressArgs {
     /// Store a checksum of every chunk.
     #[arg(long)]
     pub checksum: bool,
-    /// CPU block encoder: `lz4-flex` (baseline) or `greedy` (the GPU encoder's twin).
+    /// CPU block encoder for LZ4: `lz4-flex` (baseline) or `greedy` (the GPU
+    /// encoder's twin). GLZ always uses its own greedy encoder.
     #[arg(long, value_enum, default_value_t = EncoderArg::Lz4Flex)]
     pub encoder: EncoderArg,
-    /// Compress on the GPU (LZ4 codec; output is identical to `--encoder greedy`).
-    #[arg(long, conflicts_with_all = ["encoder", "codec"])]
+    /// GLZ only: no match may copy from another match's output within each
+    /// group of this many sequences (dependency elimination).
+    #[arg(long)]
+    pub independent_groups: Option<u32>,
+    /// Compress on the GPU (LZ4 or GLZ). Output is identical to the CPU
+    /// twin: `--encoder greedy` for LZ4, the GLZ encoder for GLZ.
+    #[arg(long, conflicts_with = "encoder")]
     pub gpu: bool,
     /// GPU backend (with --gpu).
     #[arg(long, value_enum, requires = "gpu")]
@@ -57,6 +63,8 @@ pub struct DecompressArgs {
 pub enum CodecArg {
     Stored,
     Lz4,
+    /// GPU-friendly LZ77 with separate fixed-width streams.
+    Glz,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -104,6 +112,7 @@ pub fn describe(index: &Index, file_len: u64) -> String {
     let codec = match h.codec {
         Codec::Stored => "stored",
         Codec::Lz4 => "lz4",
+        Codec::Glz => "glz",
     };
     let ratio = if file_len == 0 {
         0.0
@@ -140,11 +149,17 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         let ctx = gpu::Context::new(&gpu::ContextOptions {
             backends: args.backend.map(crate::BackendArg::backends),
         })?;
-        let encoder = gpu::encode::Lz4GpuEncoder::new(&ctx, Default::default())?;
+        let encoder = gpu::encode::GpuEncoder::new(&ctx, Default::default())?;
         let options = gpu::encode::GpuCompressOptions {
+            codec: match args.codec {
+                CodecArg::Lz4 => Codec::Lz4,
+                CodecArg::Glz => Codec::Glz,
+                CodecArg::Stored => anyhow::bail!("--gpu compresses with lz4 or glz"),
+            },
             chunk_size: args.chunk_size,
             checksums: args.checksum,
             level: 1,
+            independent_groups: args.independent_groups,
         };
         std::fs::write(&args.output, encoder.compress(&ctx, &input, &options)?)?;
         return Ok(());
@@ -153,11 +168,16 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         codec: match args.codec {
             CodecArg::Stored => Codec::Stored,
             CodecArg::Lz4 => Codec::Lz4,
+            CodecArg::Glz => Codec::Glz,
         },
         chunk_size: args.chunk_size,
-        encoder: match args.encoder {
-            EncoderArg::Lz4Flex => cpu::container::Encoder::Lz4Flex,
-            EncoderArg::Greedy => cpu::container::Encoder::Greedy(Default::default()),
+        encoder: match (args.codec, args.encoder) {
+            (CodecArg::Glz, _) => cpu::container::Encoder::Glz(cpu::glz::GlzParams {
+                independent_groups: args.independent_groups,
+                ..Default::default()
+            }),
+            (_, EncoderArg::Lz4Flex) => cpu::container::Encoder::Lz4Flex,
+            (_, EncoderArg::Greedy) => cpu::container::Encoder::Greedy(Default::default()),
         },
         checksums: args.checksum,
         level: 1,
@@ -178,7 +198,7 @@ pub fn decompress(args: &DecompressArgs) -> anyhow::Result<()> {
         let ctx = gpu::Context::new(&gpu::ContextOptions {
             backends: args.backend.map(crate::BackendArg::backends),
         })?;
-        let decoder = gpu::decode::Lz4GpuDecoder::new(&ctx);
+        let decoder = gpu::decode::GpuDecoder::new(&ctx);
         let output = match (args.offset, args.length) {
             (Some(offset), Some(length)) => {
                 let mut file = std::io::BufReader::new(std::fs::File::open(&args.input)?);

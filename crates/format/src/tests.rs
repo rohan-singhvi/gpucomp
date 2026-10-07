@@ -105,6 +105,16 @@ fn header_rejects_other_versions() {
 }
 
 #[test]
+fn header_accepts_glz_codec() {
+    let h = Header {
+        codec: Codec::Glz,
+        ..header()
+    };
+    assert_eq!(h.to_bytes()[6], 2);
+    assert_eq!(Header::parse(&h.to_bytes()), Ok(h));
+}
+
+#[test]
 fn header_rejects_unknown_codec() {
     let mut b = header().to_bytes();
     b[6] = 9;
@@ -386,7 +396,7 @@ fn out_of_bounds_ranges_are_rejected() {
 proptest! {
     #[test]
     fn any_header_round_trips(
-        codec in prop_oneof![Just(Codec::Stored), Just(Codec::Lz4)],
+        codec in prop_oneof![Just(Codec::Stored), Just(Codec::Lz4), Just(Codec::Glz)],
         chunk_shift in 12u32..=20,
         total_size in 0u64..(1 << 40),
         checksums: bool,

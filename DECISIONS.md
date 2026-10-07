@@ -211,3 +211,56 @@ are copied by the whole workgroup, word by word, and owners write only headers a
 short runs. Text 0.79 → 0.95 GB/s. Silesia is unchanged (~0.7 GB/s), because the
 serial parse dominates there. The parallel parse is still the next encoder step.
 Output remains byte-identical to the CPU twin.
+
+## M6 — GLZ v1 (fixed-width fields) rejected; v2 uses tokens + an extension array
+The plan suggested fixed-width per-sequence fields. With u16 literal length, match
+length and offset (6 bytes per sequence, vs LZ4's ~3), Silesia compressed to **1.35×**
+vs LZ4's 1.97× with the same parse: short matches cost more in fields than they saved.
+GLZ v2 keeps LZ4's 4-bit nibbles in a token byte and moves 15-escaped remainders to a
+separate extension array (u16, or u32 when any value needs it). A sequence's first
+extension slot is an exclusive prefix sum of escape counts, so decoding stays fully
+parallel, and a typical sequence costs 3 bytes. Silesia: **1.93×** (LZ4 greedy
+twin 1.97×, `lz4_flex` 2.04×). Zeros: 565× (LZ4 224×), because long runs need one
+extension value instead of 255-byte continuation chains. Spec: `format/FORMAT.md`.
+
+## M6 — Dependency elimination: capped matches, not rejected ones
+With a single candidate per position, Gompresso-style rejection of matches whose source
+overlaps a group mate's output cost far more ratio than Gompresso's ≤ 10%: Silesia 1.75×
+(G = 8), 1.58× (G = 32), 1.45× (G = 128) vs 1.93×. Rejecting also made the serial parse
+quadratic in repeated regions, because each rejected candidate was fully extended first.
+The parse now **caps** such a match at the room before the first conflicting output
+(binary search over the group's sorted, disjoint outputs), and drops it only if the
+cap is below 4. Extension is bounded by the cap. G = 64: Silesia 1.55×. GPU parse
+throughput went 0.06 → 0.40 GB/s on Silesia (no-group parse: 0.56). The group list
+lives in workgroup memory, and groups are capped at 64 (the GLZ decode block). CPU and
+GPU parses stay byte-identical, which the tests check for G ∈ {none, 1, 4, 64} and in
+the matrix.
+
+## M6 — GLZ GPU decoder
+One workgroup per chunk, one invocation per sequence, 64 sequences per step: scan of
+escape counts, then lengths, then saturating scans for literal sources and output
+positions, then per-sequence validation (lowest failing index wins via `atomicMin`, so the
+status equals the serial CPU decoder's), then literals in parallel, then matches in
+dependency rounds. Each match computes once a 64-bit mask of the earlier matches
+in the block that overlap its source pattern, and copies when `mask & pending == 0`.
+(An earlier attempt waited only for the *latest* overlapping match. That's wrong,
+because an earlier overlapping match can still be pending behind a longer chain, and
+proptest caught it.) Runs ≥ 32 bytes are copied by the whole workgroup through a
+compact `atomicAdd` list, the M5 lesson. Before these two changes GLZ decode ran at
+1.84 GB/s on Silesia, slower than LZ4 cooperative.
+
+## M6 — Results (Apple M4 Pro, 256 MiB synthetic, Silesia 202 MiB, 64 KiB chunks)
+
+| | ratio | GPU decode kernel | GPU decode e2e | GPU encode kernel | CPU decode mt |
+|---|---:|---:|---:|---:|---:|
+| LZ4 (`lz4_flex` file) | 2.04× | 3.21 (coop) | 1.77 | — | 13.2 (`lz4_flex`) |
+| LZ4 (greedy twin / GPU) | 1.97× | — | — | 0.72 | — |
+| **GLZ** | 1.93× | **4.34** | **2.01** | 0.71 | 7.1 (reference) |
+| **GLZ g64** | 1.55× | **6.55** | 2.30 | 0.39 | — |
+
+GLZ beats LZ4 on GPU decode for every input except the uniform synthetic text, where
+LZ4's naive kernel still leads: text 3.0 vs LZ4 coop 1.9 and naive 7.3; mixed 8.2 vs
+4.8. That's at 2% less ratio than the GPU's own LZ4. Dependency elimination adds +51%
+decode speed for −20% ratio on Silesia, so it stays an option, not the default. End
+to end everything is still bound by 6–10 GB/s transfers. GPU compression (~0.7 GB/s)
+remains the weak spot, and the serial parse is still next.

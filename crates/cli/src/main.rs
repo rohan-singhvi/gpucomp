@@ -145,6 +145,8 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
         }
         run.measurements
             .extend(bench::suite::codecs(&inputs, &cfg)?);
+        run.measurements
+            .extend(bench::suite::glz(ctx.as_ref(), &inputs, &cfg)?);
         if let Some(ctx) = &ctx {
             run.measurements
                 .extend(bench::suite::gpu_decode(ctx, &inputs, &cfg)?);

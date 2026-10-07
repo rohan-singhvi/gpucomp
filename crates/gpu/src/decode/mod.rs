@@ -12,6 +12,10 @@ use crate::{dispatch_grid, Context, GpuError};
 
 const NAIVE_SHADER: &str = include_str!("../../shaders/lz4_decode_naive.wgsl");
 const COOP_SHADER: &str = include_str!("../../shaders/lz4_decode_coop.wgsl");
+const GLZ_SHADER: &str = include_str!("../../shaders/glz_decode.wgsl");
+/// Invocations per workgroup for GLZ (one sequence each). At most 64: the
+/// shader tracks pending matches in a 64-bit mask.
+const GLZ_WORKGROUP: u32 = 64;
 
 /// Per-chunk result codes written by the decode shader (0 = ok).
 /// They mirror `cpu::lz4::decode::DecodeError`.
@@ -23,6 +27,8 @@ pub enum ChunkStatus {
     OffsetBeforeStart = 3,
     OutputOverflow = 4,
     SizeMismatch = 5,
+    /// GLZ only: invalid sequence count, extension count or final sequence.
+    BadSequence = 6,
     /// The shader read an unknown code; shouldn't happen.
     Unknown = u32::MAX,
 }
@@ -56,6 +62,7 @@ impl ChunkStatus {
             3 => ChunkStatus::OffsetBeforeStart,
             4 => ChunkStatus::OutputOverflow,
             5 => ChunkStatus::SizeMismatch,
+            6 => ChunkStatus::BadSequence,
             _ => ChunkStatus::Unknown,
         })
     }
@@ -91,13 +98,40 @@ impl Default for DecoderConfig {
     }
 }
 
-/// GPU LZ4 decoder.
-pub struct Lz4GpuDecoder {
+/// GPU decoder for LZ4 and GLZ files (the file's codec picks the kernel).
+pub struct GpuDecoder {
     pipeline: wgpu::ComputePipeline,
+    glz_pipeline: wgpu::ComputePipeline,
     config: DecoderConfig,
 }
 
-impl Lz4GpuDecoder {
+fn compute_pipeline(
+    ctx: &Context,
+    label: &str,
+    source: &str,
+    constants: &[(&str, f64)],
+) -> wgpu::ComputePipeline {
+    let module = ctx
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+    ctx.device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: None,
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
+            },
+            cache: None,
+        })
+}
+
+impl GpuDecoder {
     /// The default decoder (see [`DecoderConfig::default`]).
     pub fn new(ctx: &Context) -> Self {
         Self::with_config(ctx, DecoderConfig::default()).expect("default decoder config is valid")
@@ -123,26 +157,25 @@ impl Lz4GpuDecoder {
         if config.kernel == DecodeKernel::Cooperative {
             constants.push(("LONG_COPY", f64::from(config.long_copy.max(1))));
         }
-        let module = ctx
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(source.into()),
-            });
-        let pipeline = ctx
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: None,
-                module: &module,
-                entry_point: Some("main"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
-                    ..Default::default()
-                },
-                cache: None,
-            });
-        Ok(Lz4GpuDecoder { pipeline, config })
+        let pipeline = compute_pipeline(ctx, label, source, &constants);
+        let glz_pipeline = compute_pipeline(
+            ctx,
+            "glz decode",
+            GLZ_SHADER,
+            &[("WG_SIZE", f64::from(GLZ_WORKGROUP))],
+        );
+        Ok(GpuDecoder {
+            pipeline,
+            glz_pipeline,
+            config,
+        })
+    }
+
+    fn pipeline_for(&self, codec: format::Codec) -> &wgpu::ComputePipeline {
+        match codec {
+            format::Codec::Glz => &self.glz_pipeline,
+            format::Codec::Stored | format::Codec::Lz4 => &self.pipeline,
+        }
     }
 
     /// Decompresses a whole `.gpcz` file held in memory.
@@ -266,7 +299,9 @@ impl Lz4GpuDecoder {
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lz4 decode (naive)"),
-            layout: &self.pipeline.get_bind_group_layout(0),
+            layout: &self
+                .pipeline_for(index.header.codec)
+                .get_bind_group_layout(0),
             entries: &[
                 (0, &src_buf),
                 (1, &desc_buf),
@@ -301,12 +336,14 @@ impl Lz4GpuDecoder {
                 label: Some("lz4 decode"),
                 timestamp_writes: timer.map(crate::GpuTimer::pass_writes),
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(self.pipeline_for(p.index.header.codec));
             pass.set_bind_group(0, &p.bind_group, &[]);
+            let chunks = p.chunks.len() as u32;
             let (x, y) = dispatch_grid(
-                match self.config.kernel {
-                    DecodeKernel::Naive => (p.chunks.len() as u32).div_ceil(self.config.workgroup),
-                    DecodeKernel::Cooperative => p.chunks.len() as u32,
+                match (p.index.header.codec, self.config.kernel) {
+                    (format::Codec::Glz, _) => chunks,
+                    (_, DecodeKernel::Naive) => chunks.div_ceil(self.config.workgroup),
+                    (_, DecodeKernel::Cooperative) => chunks,
                 },
                 ctx.device_limits().max_compute_workgroups_per_dimension,
             );
@@ -358,7 +395,7 @@ impl Lz4GpuDecoder {
     }
 }
 
-/// GPU buffers for one decode, ready to [`dispatch`](Lz4GpuDecoder::dispatch).
+/// GPU buffers for one decode, ready to [`dispatch`](GpuDecoder::dispatch).
 pub struct PreparedDecode {
     index: Index,
     chunks: Range<usize>,

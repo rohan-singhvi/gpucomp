@@ -9,7 +9,7 @@ use common::{context, fixtures, random, text, CHUNK};
 use cpu::container::{compress, CompressOptions, Encoder};
 use cpu::lz4::decode::DecodeError;
 use format::{ChunkEntry, Codec, Filter, Header, Index};
-use gpu::decode::{ChunkStatus, DecodeKernel, DecoderConfig, GpuDecodeError, Lz4GpuDecoder};
+use gpu::decode::{ChunkStatus, DecodeKernel, DecoderConfig, GpuDecodeError, GpuDecoder};
 use proptest::prelude::*;
 
 const ENCODERS: [Encoder; 2] = [
@@ -31,7 +31,7 @@ fn opts(encoder: Encoder) -> CompressOptions {
 }
 
 /// Every decoder configuration under test.
-fn decoders(ctx: &gpu::Context) -> Vec<(String, Lz4GpuDecoder)> {
+fn decoders(ctx: &gpu::Context) -> Vec<(String, GpuDecoder)> {
     let mut configs = vec![DecoderConfig {
         kernel: DecodeKernel::Naive,
         ..DecoderConfig::default()
@@ -50,12 +50,7 @@ fn decoders(ctx: &gpu::Context) -> Vec<(String, Lz4GpuDecoder)> {
     }
     configs
         .into_iter()
-        .map(|c| {
-            (
-                format!("{c:?}"),
-                Lz4GpuDecoder::with_config(ctx, c).unwrap(),
-            )
-        })
+        .map(|c| (format!("{c:?}"), GpuDecoder::with_config(ctx, c).unwrap()))
         .collect()
 }
 

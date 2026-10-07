@@ -173,3 +173,65 @@ fn gpu_compress_matches_cpu_greedy_and_round_trips() {
     gpucomp(&["decompress", &s(&gpu_packed), &s(&out), "--verify"]);
     assert!(std::fs::read(&out).unwrap() == sample());
 }
+
+#[test]
+fn glz_codec_round_trips_on_the_cpu() {
+    let (input, packed, out) = (temp("g.txt"), temp("g.gpcz"), temp("g.out"));
+    std::fs::write(&input, sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    for groups in [None, Some("32")] {
+        let mut args = vec![
+            "compress".to_string(),
+            s(&input),
+            s(&packed),
+            "--codec".into(),
+            "glz".into(),
+        ];
+        if let Some(g) = groups {
+            args.extend(["--independent-groups".into(), g.into()]);
+        }
+        gpucomp(&args.iter().map(String::as_str).collect::<Vec<_>>());
+        let info = String::from_utf8(gpucomp(&["info", &s(&packed)]).stdout).unwrap();
+        assert!(info.contains("codec:       glz"), "{info}");
+        gpucomp(&["decompress", &s(&packed), &s(&out), "--verify"]);
+        assert!(std::fs::read(&out).unwrap() == sample(), "{groups:?}");
+    }
+}
+
+#[test]
+fn gpu_glz_compress_matches_cpu_glz() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, gpu_packed, cpu_packed) = (temp("h.txt"), temp("h.gpu.gpcz"), temp("h.cpu.gpcz"));
+    std::fs::write(&input, sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    for groups in ["0", "16"] {
+        let mut gpu_args = vec![
+            "compress",
+            &*s(&input),
+            &*s(&gpu_packed),
+            "--gpu",
+            "--codec",
+            "glz",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        let mut cpu_args = vec!["compress", &*s(&input), &*s(&cpu_packed), "--codec", "glz"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        if groups != "0" {
+            for args in [&mut gpu_args, &mut cpu_args] {
+                args.extend(["--independent-groups".to_string(), groups.to_string()]);
+            }
+        }
+        gpucomp(&gpu_args.iter().map(String::as_str).collect::<Vec<_>>());
+        gpucomp(&cpu_args.iter().map(String::as_str).collect::<Vec<_>>());
+        assert!(
+            std::fs::read(&gpu_packed).unwrap() == std::fs::read(&cpu_packed).unwrap(),
+            "groups {groups}"
+        );
+    }
+}

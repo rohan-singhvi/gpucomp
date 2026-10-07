@@ -354,3 +354,92 @@ proptest! {
         }
     }
 }
+
+// ---- GLZ (codec 2) ----
+
+fn glz(groups: Option<u32>) -> CompressOptions {
+    CompressOptions {
+        codec: Codec::Glz,
+        encoder: Encoder::Glz(cpu::glz::GlzParams {
+            independent_groups: groups,
+            ..Default::default()
+        }),
+        ..opts(Encoder::Lz4Flex)
+    }
+}
+
+#[test]
+fn glz_files_round_trip_with_and_without_dependency_elimination() {
+    for groups in [None, Some(32)] {
+        for (name, input) in fixtures() {
+            let file = compress(&input, &glz(groups)).unwrap();
+            let index = Index::parse(&file).unwrap();
+            assert_eq!(index.header.codec, Codec::Glz);
+            let out = decompress(&file, &dopts(Decoder::HandWritten))
+                .unwrap_or_else(|e| panic!("{name} {groups:?}: {e}"));
+            assert!(out == input, "{name} {groups:?}");
+        }
+    }
+}
+
+#[test]
+fn glz_compresses_text() {
+    let input = text(20 * CHUNK as usize);
+    let file = compress(&input, &glz(None)).unwrap();
+    assert!(
+        file.len() < input.len() / 2,
+        "{} of {}",
+        file.len(),
+        input.len()
+    );
+    let index = Index::parse(&file).unwrap();
+    assert!(index.chunks.iter().all(|c| !c.stored));
+}
+
+#[test]
+fn glz_range_reads_match_the_original() {
+    let input = text(10 * CHUNK as usize + 99);
+    let file = compress(&input, &glz(Some(32))).unwrap();
+    let c = u64::from(CHUNK);
+    for (offset, len) in [
+        (0, 10),
+        (c - 5, 10),
+        (3 * c + 7, 2 * c),
+        (input.len() as u64 - 99, 99),
+    ] {
+        let got = range(&file, offset, len).unwrap();
+        assert!(
+            got == input[offset as usize..(offset + len) as usize],
+            "{offset}+{len}"
+        );
+    }
+}
+
+#[test]
+fn mismatched_codec_and_encoder_are_rejected() {
+    let bad = [
+        CompressOptions {
+            codec: Codec::Glz,
+            ..opts(Encoder::Lz4Flex)
+        },
+        CompressOptions {
+            codec: Codec::Lz4,
+            ..glz(None)
+        },
+    ];
+    for options in bad {
+        assert!(
+            matches!(compress(b"abc", &options), Err(CpuError::Options(_))),
+            "{options:?}"
+        );
+    }
+}
+
+#[test]
+fn lz4_flex_decoder_refuses_glz_files() {
+    let file = compress(&text(10_000), &glz(None)).unwrap();
+    assert!(matches!(
+        decompress(&file, &dopts(Decoder::Lz4Flex)),
+        Err(CpuError::Options(_))
+    ));
+}

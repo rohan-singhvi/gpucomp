@@ -105,3 +105,55 @@ fn gpu_encode_suite_times_kernel_and_end_to_end_per_input() {
         assert!(m.ratio.unwrap() > 1.5, "{m:?}");
     }
 }
+
+#[test]
+fn glz_suite_measures_both_directions_with_and_without_groups() {
+    let Some(ctx) = context() else { return };
+    let inputs = vec![(
+        "text".to_string(),
+        bench::suite::synthetic_inputs(SMALL.bytes).remove(2).1,
+    )];
+    let rows = bench::suite::glz(Some(&ctx), &inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "cpu.glz.compress.mt",
+            "cpu.glz.decompress.mt",
+            "gpu.glz.compress.kernel",
+            "gpu.glz.compress.e2e",
+            "gpu.glz.decompress.kernel",
+            "gpu.glz.decompress.e2e",
+            "cpu.glz-g64.compress.mt",
+            "gpu.glz-g64.compress.kernel",
+            "gpu.glz-g64.compress.e2e",
+            "gpu.glz-g64.decompress.kernel",
+            "gpu.glz-g64.decompress.e2e",
+        ]
+    );
+    for m in &rows {
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+        assert!(m.ratio.unwrap() > 1.3, "{m:?}");
+    }
+}
+
+#[test]
+fn glz_suite_without_gpu_measures_the_cpu_paths() {
+    let inputs = vec![(
+        "text".to_string(),
+        bench::suite::synthetic_inputs(1 << 16).remove(2).1,
+    )];
+    let names: Vec<_> = bench::suite::glz(None, &inputs, &SMALL)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "cpu.glz.compress.mt",
+            "cpu.glz.decompress.mt",
+            "cpu.glz-g64.compress.mt"
+        ]
+    );
+}

@@ -47,6 +47,8 @@ pub enum FormatError {
 pub enum Codec {
     Stored = 0,
     Lz4 = 1,
+    /// GPU-friendly LZ77 with separate fixed-width streams (milestone M6).
+    Glz = 2,
 }
 
 /// A reversible per-chunk transform applied before compression (§4a of the plan).
@@ -167,6 +169,7 @@ impl Header {
         let codec = match u16_at(bytes, 6) {
             0 => Codec::Stored,
             1 => Codec::Lz4,
+            2 => Codec::Glz,
             id => return Err(FormatError::UnknownCodec(id)),
         };
         let flags = u32_at(bytes, 24);
