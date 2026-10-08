@@ -41,13 +41,7 @@ fn main(
                     let offset = p - (entry - 1u);
                     if (offset <= MAX_OFFSET) {
                         let limit = min(p + params.probe_len, match_limit);
-                        var end = p;
-                        loop {
-                            if (end >= limit || in_byte(start + end - offset) != in_byte(start + end)) {
-                                break;
-                            }
-                            end++;
-                        }
+                        let end = extend(start, p, offset, limit);
                         if (end - p >= MIN_MATCH) {
                             m = ((end - p) << 16u) | offset;
                         }

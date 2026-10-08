@@ -188,7 +188,13 @@ fn filters_suite_without_gpu_compares_none_and_auto_and_counts_wins() {
     let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
     let expected: Vec<String> = ["lz4", "glz"]
         .iter()
-        .flat_map(|codec| FILTER_CPU_ROWS.map(|r| format!("cpu.{codec}.{r}")))
+        .flat_map(|codec| {
+            FILTER_CPU_ROWS
+                .iter()
+                .chain(&["compress.exhaustive.mt"])
+                .map(|r| format!("cpu.{codec}.{r}"))
+                .collect::<Vec<_>>()
+        })
         .collect();
     assert_eq!(names, expected);
     for codec in ["lz4", "glz"] {
@@ -239,6 +245,8 @@ fn filters_suite_with_gpu_times_filtered_decode() {
                 .iter()
                 .map(|r| format!("cpu.{codec}.{r}")),
         );
+        expected.push(format!("cpu.{codec}.compress.exhaustive.mt"));
+        expected.push(format!("gpu.{codec}.compress.exhaustive.e2e"));
     }
     assert_eq!(names, expected);
     for m in rows.iter().filter(|m| m.name.starts_with("gpu.")) {

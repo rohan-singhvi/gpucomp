@@ -18,6 +18,8 @@ const PACK_SHADER: &str = include_str!("../../shaders/encode_pack.wgsl");
 const PARAMS_SIZE: u64 = 32;
 /// Pack entry flag: this chunk isn't packed by this pass (encode_pack.wgsl).
 const SKIP_BIT: u32 = 0x4000_0000;
+/// Invocations per emit workgroup (independent of the match-finding block).
+pub const EMIT_WG: u32 = 64;
 /// Chunks per parse workgroup (one invocation each); matches the shader.
 const PARSE_WG: u32 = 64;
 
@@ -34,8 +36,10 @@ pub struct EncodeParams {
 
 impl Default for EncodeParams {
     fn default() -> Self {
+        // Level 1: block 128 trades 1.2% ratio (Silesia 1.943x vs 1.966x at
+        // 64) for ~24% kernel throughput; see DECISIONS.md.
         EncodeParams {
-            block: 64,
+            block: 128,
             hash_log: 12,
             probe_len: 16,
         }
@@ -61,8 +65,18 @@ pub struct GpuCompressOptions {
 pub enum FilterMode {
     #[default]
     None,
-    /// Try [`filter_candidates`]`(level)` and keep the smallest block.
+    /// Candidates compete on each chunk's leading sample ([`sample_len`]);
+    /// the winner encodes the whole chunk. Same rule as the CPU's `Auto`.
     Auto,
+    /// Try [`filter_candidates`]`(level)` on whole chunks and keep the
+    /// smallest block.
+    Exhaustive,
+}
+
+/// Bytes of each chunk's leading sample for [`FilterMode::Auto`]: an eighth
+/// of the chunk, at least 4 KiB. Must equal `cpu::filter::sample_len`.
+pub fn sample_len(chunk_size: u32) -> u32 {
+    (chunk_size / 8).max(format::MIN_CHUNK_SIZE)
 }
 
 /// Filters tried per chunk at `level`, in tie-break order. Must equal
@@ -137,7 +151,7 @@ pub fn slot_size(chunk_size: u32) -> u32 {
 /// Workgroup memory the encoder needs: the larger of the match-finding
 /// kernel's hash table and the emit kernel's scans (the parse uses none).
 pub fn workgroup_bytes(params: &EncodeParams) -> u32 {
-    (4 << params.hash_log).max(12 * params.block + 16)
+    (4 << params.hash_log).max(12 * EMIT_WG + 16)
 }
 
 /// How many chunks one dispatch may encode so that the input, match scratch
@@ -392,7 +406,7 @@ impl GpuEncoder {
                 &format!("{name} emit"),
                 &encode_layout,
                 &[COMMON_SHADER, EMIT_SHARED, emit],
-                &[wg],
+                &[("WG_SIZE", f64::from(EMIT_WG))],
             ),
         };
         Ok(GpuEncoder {
@@ -511,17 +525,24 @@ impl GpuEncoder {
         // so batches shrink to keep memory in bounds.
         let candidates = match options.filters {
             FilterMode::None => 1,
-            FilterMode::Auto => filter_candidates(options.level).len() as u64,
+            FilterMode::Auto | FilterMode::Exhaustive => {
+                filter_candidates(options.level).len() as u64
+            }
         };
         let per_batch =
             (self.batch_chunks(ctx, chunk_size) / candidates).max(1) as usize * chunk_size as usize;
         for batch in input.chunks(per_batch) {
             let base = (out.len() - table_len) as u64;
-            let (layout, filters) = if options.filters == FilterMode::Auto {
+            let (layout, filters) = if options.filters != FilterMode::None {
                 if options.checksums {
                     checksums.extend(batch.chunks(chunk_size as usize).map(format::checksum));
                 }
-                self.encode_filtered_batch(ctx, &mut cache, batch, options, &mut out)?
+                match options.filters {
+                    FilterMode::Auto => {
+                        self.encode_sampled_batch(ctx, &mut cache, batch, options, &mut out)?
+                    }
+                    _ => self.encode_filtered_batch(ctx, &mut cache, batch, options, &mut out)?,
+                }
             } else {
                 let (prepared, sizes) =
                     self.encode_batch(ctx, &mut cache, batch, options, || {
@@ -739,30 +760,32 @@ impl GpuEncoder {
         Ok(())
     }
 
-    /// Encodes one batch under every filter candidate of `options.level`,
-    /// keeps each chunk's smallest block (ties to the earlier candidate; a
-    /// chunk whose best block doesn't shrink it is stored raw, unfiltered) and
-    /// packs the winners into `out`. Returns the layout and each chunk's filter.
-    /// Same rules as the CPU container's selection, so files are identical.
-    fn encode_filtered_batch(
+    /// Encodes `input` (one batch) under every filter candidate of
+    /// `options.level`: the unfiltered one in the cached buffers, the others
+    /// from a GPU-filtered copy of the input into their own output slots.
+    /// Returns the prepared batch, each candidate's (filtered input, slots)
+    /// (`None` = the cached ones) and each candidate's per-chunk block sizes.
+    #[allow(clippy::type_complexity)]
+    fn run_candidates(
         &self,
         ctx: &Context,
         cache: &mut BufferCache,
-        batch: &[u8],
+        input: &[u8],
         options: &GpuCompressOptions,
-        out: &mut Vec<u8>,
-    ) -> Result<(PayloadLayout, Vec<format::Filter>), GpuEncodeError> {
+    ) -> Result<
+        (
+            PreparedEncode,
+            Vec<Option<(wgpu::Buffer, wgpu::Buffer)>>,
+            Vec<Vec<u32>>,
+        ),
+        GpuEncodeError,
+    > {
         use crate::filter::{Direction, FilterJob};
-        let candidates = filter_candidates(options.level);
         let chunk_size = options.chunk_size as usize;
-        let p = self.prepare_batch(ctx, cache, batch, options)?;
-        let chunk_lens: Vec<u32> = batch.chunks(chunk_size).map(|c| c.len() as u32).collect();
-
-        // Encode every candidate: the unfiltered one in the cached buffers,
-        // the others from a GPU-filtered copy of the input into their own slots.
-        let mut runs: Vec<Option<(wgpu::Buffer, wgpu::Buffer)>> = Vec::new();
-        let mut sizes: Vec<Vec<u32>> = Vec::new();
-        for &filter in candidates {
+        let p = self.prepare_batch(ctx, cache, input, options)?;
+        let mut runs = Vec::new();
+        let mut sizes = Vec::new();
+        for &filter in filter_candidates(options.level) {
             let mut encoder = ctx
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -770,29 +793,16 @@ impl GpuEncoder {
                 self.record_encode(ctx, &mut encoder, &p, None);
                 None
             } else {
-                let filtered = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("encode filtered input"),
-                    size: p.input_size,
-                    usage: BufferUsages::STORAGE,
-                    mapped_at_creation: false,
-                });
-                let output = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("encode candidate output"),
-                    size: p.output_size,
-                    usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                let jobs: Vec<FilterJob> = chunk_lens
-                    .iter()
+                let filtered = self.candidate_buffer(ctx, "encode filtered input", p.input_size);
+                let output = self.candidate_buffer(ctx, "encode candidate output", p.output_size);
+                let jobs: Vec<FilterJob> = input
+                    .chunks(chunk_size)
                     .enumerate()
-                    .map(|(i, &len)| {
-                        let offset = (i * chunk_size) as u32;
-                        FilterJob {
-                            filter,
-                            src_offset: offset,
-                            dst_offset: offset,
-                            len,
-                        }
+                    .map(|(i, chunk)| FilterJob {
+                        filter,
+                        src_offset: (i * chunk_size) as u32,
+                        dst_offset: (i * chunk_size) as u32,
+                        len: chunk.len() as u32,
                     })
                     .collect();
                 let pass = self.filters.prepare(
@@ -813,6 +823,121 @@ impl GpuEncoder {
             ));
             runs.push(run);
         }
+        Ok((p, runs, sizes))
+    }
+
+    fn candidate_buffer(&self, ctx: &Context, label: &str, size: u64) -> wgpu::Buffer {
+        ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// `FilterMode::Auto`: candidates compete on each chunk's leading sample
+    /// (encoded as chunks of [`sample_len`]); the batch is then filtered per
+    /// chunk with its winner and encoded once. Same rule as the CPU's `Auto`.
+    fn encode_sampled_batch(
+        &self,
+        ctx: &Context,
+        cache: &mut BufferCache,
+        batch: &[u8],
+        options: &GpuCompressOptions,
+        out: &mut Vec<u8>,
+    ) -> Result<(PayloadLayout, Vec<format::Filter>), GpuEncodeError> {
+        use crate::filter::{Direction, FilterJob};
+        let candidates = filter_candidates(options.level);
+        let chunk_size = options.chunk_size as usize;
+        let sample = sample_len(options.chunk_size) as usize;
+        let samples: Vec<u8> = batch
+            .chunks(chunk_size)
+            .flat_map(|chunk| &chunk[..sample.min(chunk.len())])
+            .copied()
+            .collect();
+        let sample_options = GpuCompressOptions {
+            chunk_size: sample as u32,
+            ..*options
+        };
+        let (_, _, sizes) = self.run_candidates(ctx, cache, &samples, &sample_options)?;
+        let winners: Vec<format::Filter> = (0..sizes[0].len())
+            .map(|c| {
+                let mut k_best = 0;
+                for k in 1..candidates.len() {
+                    if sizes[k][c] < sizes[k_best][c] {
+                        k_best = k;
+                    }
+                }
+                candidates[k_best]
+            })
+            .collect();
+
+        // The whole batch, each chunk filtered with its winner, encoded once.
+        let p = self.prepare_batch(ctx, cache, batch, options)?;
+        let filtered = self.candidate_buffer(ctx, "encode filtered input", p.input_size);
+        let jobs: Vec<FilterJob> = batch
+            .chunks(chunk_size)
+            .zip(&winners)
+            .enumerate()
+            .map(|(i, (chunk, &filter))| FilterJob {
+                filter,
+                src_offset: (i * chunk_size) as u32,
+                dst_offset: (i * chunk_size) as u32,
+                len: chunk.len() as u32,
+            })
+            .collect();
+        let pass = self
+            .filters
+            .prepare(ctx, Direction::Forward, &p.input_buf, &filtered, &jobs)?;
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        // Unfiltered chunks (skipped by the filter pass) keep the input bytes.
+        encoder.copy_buffer_to_buffer(&p.input_buf, 0, &filtered, 0, p.input_size);
+        if !pass.is_empty() {
+            self.filters.record(ctx, &mut encoder, &pass, None);
+        }
+        let bind_group = self.bind_candidate(ctx, &p, &filtered, &p.output_buf);
+        self.record_encode_with(ctx, &mut encoder, &p, &bind_group, &p.output_buf, None);
+        ctx.queue.submit([encoder.finish()]);
+        let sizes: Vec<u32> =
+            bytemuck::pod_collect_to_vec(&ctx.read_buffer(&p.sizes_buf, u64::from(p.chunks) * 4)?);
+        let layout = layout_payloads(&sizes, batch.len(), options.chunk_size);
+        // Stored chunks come from the unfiltered input; the rest from the slots.
+        self.pack(ctx, cache, &p, &layout, out)?;
+        let filters = layout
+            .entries
+            .iter()
+            .zip(winners)
+            .map(|(&[_, len], filter)| {
+                if len & format::STORED_BIT != 0 {
+                    format::Filter::None
+                } else {
+                    filter
+                }
+            })
+            .collect();
+        Ok((layout, filters))
+    }
+
+    /// `FilterMode::Exhaustive`: encodes one batch under every candidate,
+    /// keeps each chunk's smallest block (ties to the earlier candidate; a
+    /// chunk whose best block doesn't shrink it is stored raw, unfiltered) and
+    /// packs the winners into `out`. Same rule as the CPU's `Exhaustive`.
+    fn encode_filtered_batch(
+        &self,
+        ctx: &Context,
+        cache: &mut BufferCache,
+        batch: &[u8],
+        options: &GpuCompressOptions,
+        out: &mut Vec<u8>,
+    ) -> Result<(PayloadLayout, Vec<format::Filter>), GpuEncodeError> {
+        let candidates = filter_candidates(options.level);
+        let chunk_lens: Vec<u32> = batch
+            .chunks(options.chunk_size as usize)
+            .map(|c| c.len() as u32)
+            .collect();
+        let (p, runs, sizes) = self.run_candidates(ctx, cache, batch, options)?;
 
         // Choose: strictly smallest block, earlier candidate on ties.
         let mut winner = vec![0usize; chunk_lens.len()];
@@ -942,7 +1067,8 @@ impl GpuEncoder {
             &mut c.input,
             "encode input",
             input_size,
-            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            // COPY_SRC: sampled filter selection copies it into a filtered buffer.
+            BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
         );
         let upload = ensure(
             &mut c.upload,
@@ -1336,12 +1462,13 @@ mod tests {
         // vec2 per invocation) and counters; the parse holds nothing.
         let p = EncodeParams::default();
         assert_eq!(workgroup_bytes(&p), 4 * 4096);
+        // The emit kernel's workgroup is EMIT_WG whatever the match block.
         let small_table = EncodeParams {
-            hash_log: 8,
+            hash_log: 7,
             block: 256,
             ..p
         };
-        assert_eq!(workgroup_bytes(&small_table), 12 * 256 + 16);
+        assert_eq!(workgroup_bytes(&small_table), 12 * EMIT_WG + 16);
     }
 
     #[test]

@@ -69,6 +69,30 @@ fn in_word(i: u32) -> u32 {
     return (lo >> shift) | (input[(i >> 2u) + 1u] << (32u - shift));
 }
 
+// Extends a match: the first position >= `end` (chunk-relative, up to `limit`)
+// where input[start + e - offset] != input[start + e]. Compares a word at a
+// time (XOR, then trailing zero bits / 8 = equal leading bytes), then bytes.
+fn extend(start: u32, end_in: u32, offset: u32, limit: u32) -> u32 {
+    var end = end_in;
+    loop {
+        if (end + 4u > limit) {
+            break;
+        }
+        let diff = in_word(start + end - offset) ^ in_word(start + end);
+        if (diff != 0u) {
+            return end + countTrailingZeros(diff) / 8u;
+        }
+        end += 4u;
+    }
+    loop {
+        if (end >= limit || in_byte(start + end - offset) != in_byte(start + end)) {
+            break;
+        }
+        end++;
+    }
+    return end;
+}
+
 fn put_byte(pos: u32, b: u32) {
     atomicOr(&output[pos >> 2u], b << ((pos & 3u) * 8u));
 }

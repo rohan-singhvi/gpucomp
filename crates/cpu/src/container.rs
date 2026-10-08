@@ -66,9 +66,12 @@ pub enum FilterMode {
     /// Every chunk is compressed unfiltered.
     #[default]
     None,
+    /// Candidates compete on each chunk's leading sample
+    /// ([`crate::filter::sample_len`]); the winner encodes the whole chunk.
+    Auto,
     /// Every chunk is compressed under each of the level's candidate filters
     /// ([`crate::filter::candidates`]) and the smallest payload wins.
-    Auto,
+    Exhaustive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +148,9 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
 
     // The stored codec never filters: a stored chunk is stored unfiltered.
     let candidates: &[Filter] = match (options.filters, options.codec) {
-        (FilterMode::Auto, Codec::Lz4 | Codec::Glz) => crate::filter::candidates(options.level),
+        (FilterMode::Auto | FilterMode::Exhaustive, Codec::Lz4 | Codec::Glz) => {
+            crate::filter::candidates(options.level)
+        }
         _ => &[Filter::None],
     };
 
@@ -158,7 +163,18 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
             } else {
                 0
             };
-            match select(chunk, candidates, |block| encode_block(options, block)) {
+            let encode = |block: &[u8]| encode_block(options, block);
+            let best = match options.filters {
+                // Candidates compete on the leading sample; the winner then
+                // encodes the whole chunk.
+                FilterMode::Auto if candidates.len() > 1 => {
+                    let sample = crate::filter::sample_len(chunk_size) as usize;
+                    select(&chunk[..sample.min(chunk.len())], candidates, encode)
+                        .and_then(|(_, filter)| select(chunk, &[filter], encode))
+                }
+                _ => select(chunk, candidates, encode),
+            };
+            match best {
                 Some((c, filter)) if c.len() < chunk.len() => (c, false, sum, filter),
                 _ => (chunk.to_vec(), true, sum, Filter::None),
             }

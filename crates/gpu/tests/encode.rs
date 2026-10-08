@@ -454,3 +454,42 @@ fn filtered_files_split_into_many_batches_equal_the_cpu() {
         assert!(gpu_file == cpu_file, "{name}");
     }
 }
+
+#[test]
+fn gpu_filter_modes_equal_the_cpu_at_64k_chunks() {
+    let Some(ctx) = context() else { return };
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+    let big = 64 << 10;
+    let mut inputs: Vec<(&str, Vec<u8>)> = common::numeric();
+    inputs.push(("text", text(5 * big + 333)));
+    inputs.push((
+        "text then numbers",
+        [text(8192), common::numeric().remove(1).1].concat(),
+    ));
+    for (gpu_mode, cpu_mode) in [
+        (FilterMode::Auto, CpuFilterMode::Auto),
+        (FilterMode::Exhaustive, CpuFilterMode::Exhaustive),
+    ] {
+        for codec in [Codec::Lz4, Codec::Glz] {
+            for level in [1, 2] {
+                let gpu = GpuCompressOptions {
+                    chunk_size: big as u32,
+                    filters: gpu_mode,
+                    ..gpu_auto(codec, level)
+                };
+                let cpu = CompressOptions {
+                    chunk_size: big as u32,
+                    filters: cpu_mode,
+                    ..cpu_auto(codec, level)
+                };
+                for (name, input) in &inputs {
+                    assert!(
+                        encoder.compress(&ctx, input, &gpu).unwrap()
+                            == cpu_compress(input, &cpu).unwrap(),
+                        "{name} {gpu_mode:?} {codec:?} level {level}"
+                    );
+                }
+            }
+        }
+    }
+}

@@ -30,6 +30,13 @@ pub fn candidates(level: u8) -> &'static [Filter] {
     }
 }
 
+/// Bytes of each chunk's leading sample used by `FilterMode::Auto`: an
+/// eighth of the chunk, at least 4 KiB (so chunks up to 4 KiB are sampled
+/// whole). Always a valid chunk size, so a GPU can encode samples as chunks.
+pub fn sample_len(chunk_size: u32) -> u32 {
+    (chunk_size / 8).max(format::MIN_CHUNK_SIZE)
+}
+
 /// Reads a little-endian `w`-byte element as a u64.
 fn load(bytes: &[u8]) -> u64 {
     let mut b = [0u8; 8];

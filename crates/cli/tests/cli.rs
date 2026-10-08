@@ -292,7 +292,7 @@ fn gpu_filter_selection_matches_the_cpu() {
     let (input, gpu_packed, cpu_packed) = (temp("g.bin"), temp("g.gpu.gpcz"), temp("g.cpu.gpcz"));
     std::fs::write(&input, numeric_sample()).unwrap();
     let s = |p: &PathBuf| p.to_str().unwrap().to_string();
-    for codec in ["lz4", "glz"] {
+    for (codec, mode) in [("lz4", "auto"), ("glz", "auto"), ("lz4", "exhaustive")] {
         gpucomp(&[
             "compress",
             &s(&input),
@@ -301,7 +301,7 @@ fn gpu_filter_selection_matches_the_cpu() {
             "--codec",
             codec,
             "--filters",
-            "auto",
+            mode,
         ]);
         let mut cpu = vec![
             "compress",
@@ -310,7 +310,7 @@ fn gpu_filter_selection_matches_the_cpu() {
             "--codec",
             codec,
             "--filters",
-            "auto",
+            mode,
         ]
         .into_iter()
         .map(String::from)
@@ -321,7 +321,7 @@ fn gpu_filter_selection_matches_the_cpu() {
         gpucomp(&cpu.iter().map(String::as_str).collect::<Vec<_>>());
         assert!(
             std::fs::read(&gpu_packed).unwrap() == std::fs::read(&cpu_packed).unwrap(),
-            "{codec}"
+            "{codec} {mode}"
         );
     }
 }

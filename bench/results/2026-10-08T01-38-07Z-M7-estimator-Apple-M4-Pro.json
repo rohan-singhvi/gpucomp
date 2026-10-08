@@ -1,0 +1,6443 @@
+{
+  "date": "2026-10-08T01:38:07Z",
+  "commit": "c9ef2f9-dirty",
+  "label": "M7-estimator",
+  "note": "Filter Auto = sampled trial encoding (1/8 of each chunk); old behaviour kept as Exhaustive",
+  "os": "macos",
+  "adapter": "Apple M4 Pro",
+  "backend": "metal",
+  "measurements": [
+    {
+      "name": "cpu.memcpy",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 65.6833224324186,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.upload",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 9.913491687708202,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.readback",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 6.522683182394308,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.xor.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 105.10653003578396,
+      "ratio": null,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.xor.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.5563308523311687,
+      "ratio": null,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 13.609843829417766,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 100.17108035391097,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 1.3434478189057737,
+      "ratio": 156.035192797753,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 18.596394327823596,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 15.69671772006637,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 6.476025874240898,
+      "ratio": 224.43235144607647,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 4.305698543485075,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 8.424659751784057,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.6366336788193236,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 16.4716120056055,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 16.406197031836225,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 16.029745941185173,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 0.636550755065982,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 4.957253051756692,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 0.846041857876209,
+      "ratio": 1.8160622778915667,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.823262639157473,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 13.121508723355406,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 5.113809252295624,
+      "ratio": 2.1039527643165576,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 1.613954839439589,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 8.915844515056902,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 1.343598699936637,
+      "ratio": 1.926231186385899,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 6.319737467013221,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 16.549615346248796,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 8.138739046519241,
+      "ratio": 2.026795591290098,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.5491773772313328,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 2.3730039770290605,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.6154634215032253,
+      "ratio": 1.4904923849583844,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 4.002663351157077,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 23.95168044517345,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 5.568693206404154,
+      "ratio": 1.5378055485313935,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.8533955494289668,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 3.88917873114493,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.0082188752197534,
+      "ratio": 1.8162265449411508,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 3.181519779494546,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 13.13121400294206,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 7.475533619226273,
+      "ratio": 1.9021240458460331,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.8743663614070031,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 2.126647605417206,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.8089939459518756,
+      "ratio": 1.7016554105485062,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 3.9550035700119004,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 24.731893656392472,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 10.280489929917213,
+      "ratio": 1.7885228175336356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.5754055102355395,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 11.213918201946777,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.0710789845234603,
+      "ratio": 5.042634061682441,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 3.8970980228003866,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 13.51871273166801,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 9.710976878960688,
+      "ratio": 5.599617395982975,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.696051051805309,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.7472129812282706,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.764637275947887,
+      "ratio": 1.3837227818617417,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 2.9938577222281157,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 10.625932892211981,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 5.992153562648776,
+      "ratio": 1.3920586347933201,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.7759362669095128,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 2.2742826630010016,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.9311437935650648,
+      "ratio": 1.6545452039980681,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 3.171619686796674,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 20.848054141318933,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 12.200419274024487,
+      "ratio": 1.7758949657100316,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.4985005947298652,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 2.5132387557135853,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.5646068332298352,
+      "ratio": 1.7885698031040875,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 3.0180522020134304,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 10.77741024790378,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 4.0282877229410285,
+      "ratio": 2.0139871658196045,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.9004448797157771,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 4.9422533796944075,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.889757188416042,
+      "ratio": 2.43286164810883,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 3.2596006783995635,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 11.105714099205303,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 6.453042634211902,
+      "ratio": 2.652354740661812,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.8840801320230024,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 2.2063480763064014,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.0716499265636317,
+      "ratio": 1.0903677027344805,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 3.281361748492449,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 10.2861389944413,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 9.450584736640455,
+      "ratio": 1.056909137758356,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.6094644260097329,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 3.0811856886412765,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.8103964925349123,
+      "ratio": 1.9118827367728255,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 2.983391717338898,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 13.082495508865357,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 5.731816294656095,
+      "ratio": 1.9896908616677182,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 3.5122452616701967,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 3.1514466344365935,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.1912759013284866,
+      "ratio": 1.0223708777566676,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 31.978264150943396,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 68.28337523367499,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 57.74609880749574,
+      "ratio": 1.0027343082559828,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.0975794558672969,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 6.247529462366596,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.6967012370523977,
+      "ratio": 3.3755768808145925,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 3.326852172267767,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 10.361579840077539,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 6.296431541526,
+      "ratio": 4.064567345858693,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.1t",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.82768300707835,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.compress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 5.282602956363224,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.greedy.compress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.0485089167291732,
+      "ratio": 1.9432718168244345,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.1t",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 3.090357442754514,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4_flex.decompress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 12.616690134359661,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.handwritten.decompress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 7.987352658002173,
+      "ratio": 2.0355020286198457,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 1.3947419085752297,
+      "ratio": 364.07308710559437,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 6.560627527655662,
+      "ratio": 364.07308710559437,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.903902974735904,
+      "ratio": 364.07308710559437,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.29904712611506,
+      "ratio": 364.07308710559437,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 34.91133977070285,
+      "ratio": 364.07308710559437,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.4642285574703156,
+      "ratio": 364.07308710559437,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 1.4249644514613082,
+      "ratio": 364.07308710559437,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.901604539396491,
+      "ratio": 364.07308710559437,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.284048661130738,
+      "ratio": 364.07308710559437,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 34.95064017365726,
+      "ratio": 364.07308710559437,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.422769118498558,
+      "ratio": 364.07308710559437,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.7647049590484274,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 17.110674165217436,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 6.399058976274355,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 3.82716867259713,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 55.33516041675642,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.8684256199324722,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.719988117937495,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 6.39787698622002,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 3.810906014090256,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 54.815378052608054,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.9624162186447616,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 1.0200691824879977,
+      "ratio": 1.8151879626359777,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 4.600894618687549,
+      "ratio": 1.8151879626359777,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.400854655760725,
+      "ratio": 1.8151879626359777,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.036958940316624,
+      "ratio": 1.8151879626359777,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 3.2427002674922685,
+      "ratio": 1.8151879626359777,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 1.7063408065871717,
+      "ratio": 1.8151879626359777,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 0.6743636940236628,
+      "ratio": 1.6312495831261522,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.077418214861119,
+      "ratio": 1.6312495831261522,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 1.7995399135947452,
+      "ratio": 1.6312495831261522,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 4.64555997727299,
+      "ratio": 1.6312495831261522,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.03316938260779,
+      "ratio": 1.6312495831261522,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 1.3997050088966254,
+      "ratio": 1.9304445960213816,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 7.5056834901135465,
+      "ratio": 1.9304445960213816,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 3.4553449539531194,
+      "ratio": 1.9304445960213816,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.7850973520781324,
+      "ratio": 1.9304445960213816,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 8.730519422335814,
+      "ratio": 1.9304445960213816,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.645548229966803,
+      "ratio": 1.9304445960213816,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 1.1471888706607485,
+      "ratio": 1.8562526887560327,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.7042170341155787,
+      "ratio": 1.8562526887560327,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.269885728716937,
+      "ratio": 1.8562526887560327,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 12.00547652919573,
+      "ratio": 1.8562526887560327,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.7044764325985846,
+      "ratio": 1.8562526887560327,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.7614115977215425,
+      "ratio": 1.4878014957939918,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 4.143272415964397,
+      "ratio": 1.4878014957939918,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.35533275096918243,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.3481970624413135,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 2.728414692319924,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 1.6415985945232405,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.6187740407965032,
+      "ratio": 1.4241186974467026,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.18973493298398217,
+      "ratio": 1.4241186974467026,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.1874330671453994,
+      "ratio": 1.4241186974467026,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 3.478997224296756,
+      "ratio": 1.4241186974467026,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 1.8742573957016435,
+      "ratio": 1.4241186974467026,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.1792415646109653,
+      "ratio": 1.7929440018639162,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 5.653851537122342,
+      "ratio": 1.7929440018639162,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.8887497379496851,
+      "ratio": 1.7929440018639162,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.8304065640218979,
+      "ratio": 1.7929440018639162,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 3.7456473345932304,
+      "ratio": 1.7929440018639162,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.8795098686369949,
+      "ratio": 1.7929440018639162,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.8901149954540609,
+      "ratio": 1.4089909837525771,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.5277197609725943,
+      "ratio": 1.4089909837525771,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.5015416091107695,
+      "ratio": 1.4089909837525771,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 6.0630152316145995,
+      "ratio": 1.4089909837525771,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 2.1932600235261543,
+      "ratio": 1.4089909837525771,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 1.00426622810481,
+      "ratio": 1.6866773895161928,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 7.686172148182867,
+      "ratio": 1.6866773895161928,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.17327875112329372,
+      "ratio": 1.6866773895161928,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.17144017436594408,
+      "ratio": 1.6866773895161928,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 2.637221388163275,
+      "ratio": 1.6866773895161928,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 1.6479249633287192,
+      "ratio": 1.6866773895161928,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.7833221066134572,
+      "ratio": 1.469974122842194,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.12003983893274463,
+      "ratio": 1.469974122842194,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.11916569608490524,
+      "ratio": 1.469974122842194,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 3.3039728274376605,
+      "ratio": 1.469974122842194,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 1.8037021017096573,
+      "ratio": 1.469974122842194,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.1238332007536112,
+      "ratio": 4.704717779567552,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 9.240456043353806,
+      "ratio": 4.704717779567552,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.7851671070054169,
+      "ratio": 4.704717779567552,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.7568659699567918,
+      "ratio": 4.704717779567552,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 4.512272726844836,
+      "ratio": 4.704717779567552,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 2.281438220576582,
+      "ratio": 4.704717779567552,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.9389080951200092,
+      "ratio": 2.1742523543018173,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.41074482106713867,
+      "ratio": 2.1742523543018173,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.39730591724805225,
+      "ratio": 2.1742523543018173,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 5.942388130753828,
+      "ratio": 2.1742523543018173,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 2.39087540378844,
+      "ratio": 2.1742523543018173,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.9004524661704185,
+      "ratio": 1.3660099720944774,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 4.936317711776826,
+      "ratio": 1.3660099720944774,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.13944811142898234,
+      "ratio": 1.3660099720944774,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.13731064382956004,
+      "ratio": 1.3660099720944774,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.549638130991216,
+      "ratio": 1.3660099720944774,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.0729748362813931,
+      "ratio": 1.3660099720944774,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.7041572135290108,
+      "ratio": 1.2277461981367257,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.07817479643928472,
+      "ratio": 1.2277461981367257,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.07719416983881265,
+      "ratio": 1.2277461981367257,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 2.666629679459617,
+      "ratio": 1.2277461981367257,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.515606042428254,
+      "ratio": 1.2277461981367257,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.1357726671786776,
+      "ratio": 1.6096854838400771,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 8.914544615662019,
+      "ratio": 1.6096854838400771,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.26471336413406304,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.2614987135576604,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 4.670063519669428,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 2.3101063332704217,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.9510608866831933,
+      "ratio": 1.5398094277274534,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.16063464874340222,
+      "ratio": 1.5398094277274534,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.15895837801518153,
+      "ratio": 1.5398094277274534,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 5.620462557496469,
+      "ratio": 1.5398094277274534,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 2.5565738910012676,
+      "ratio": 1.5398094277274534,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.7348469736415643,
+      "ratio": 1.777387344379422,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 3.6363248285322363,
+      "ratio": 1.777387344379422,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.29732366164351404,
+      "ratio": 1.777387344379422,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.28898076707817955,
+      "ratio": 1.777387344379422,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.6866774612091282,
+      "ratio": 1.777387344379422,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.1695794372071289,
+      "ratio": 1.777387344379422,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.5965403156517525,
+      "ratio": 1.6113507409993717,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.1363560450479317,
+      "ratio": 1.6113507409993717,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.13456942285224144,
+      "ratio": 1.6113507409993717,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 2.3103540238572426,
+      "ratio": 1.6113507409993717,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.460533626180463,
+      "ratio": 1.6113507409993717,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.0083638136914566,
+      "ratio": 2.3770515249329454,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 5.864830722175685,
+      "ratio": 2.3770515249329454,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.3737600722720898,
+      "ratio": 2.3770515249329454,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.3636682149630862,
+      "ratio": 2.3770515249329454,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 3.5643955709666333,
+      "ratio": 2.3770515249329454,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.9091177460987558,
+      "ratio": 2.3770515249329454,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.8204176709059824,
+      "ratio": 1.8118902614923675,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.26477917713924737,
+      "ratio": 1.8118902614923675,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.2590881185594828,
+      "ratio": 1.8118902614923675,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 5.198688682366386,
+      "ratio": 1.8118902614923675,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 2.3051641078744765,
+      "ratio": 1.8118902614923675,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.176571254740514,
+      "ratio": 1.0617506781670047,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 6.4227422806047985,
+      "ratio": 1.0617506781670047,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.1746557686919362,
+      "ratio": 1.0617506781670047,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.17130542926183892,
+      "ratio": 1.0617506781670047,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 3.1285349439171695,
+      "ratio": 1.0617506781670047,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.612162898180856,
+      "ratio": 1.0617506781670047,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.0243612559624797,
+      "ratio": 1.0409510909975122,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.09170614221678826,
+      "ratio": 1.0409510909975122,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.09037009481431407,
+      "ratio": 1.0409510909975122,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 4.245041218544628,
+      "ratio": 1.0409510909975122,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.939303503341928,
+      "ratio": 1.0409510909975122,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.9087714621226847,
+      "ratio": 1.8849042633267263,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 4.433661483740327,
+      "ratio": 1.8849042633267263,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.0197317628021845,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.9395376378405568,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 3.1021709440951253,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.6858314204484899,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.7185147049605044,
+      "ratio": 1.6020611745291973,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.5838395699494147,
+      "ratio": 1.6020611745291973,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.5556807373023046,
+      "ratio": 1.6020611745291973,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 4.402996021355517,
+      "ratio": 1.6020611745291973,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.9891147495553738,
+      "ratio": 1.6020611745291973,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.4603049217809494,
+      "ratio": 1.014215368530102,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 20.98773809907101,
+      "ratio": 1.014215368530102,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.22167082490418188,
+      "ratio": 1.014215368530102,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.21712246274773175,
+      "ratio": 1.014215368530102,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 5.62154302143078,
+      "ratio": 1.014215368530102,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 2.2906192957450666,
+      "ratio": 1.014215368530102,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.2567114036730702,
+      "ratio": 1.0116176351212618,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.13596519017476036,
+      "ratio": 1.0116176351212618,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.1344345272660607,
+      "ratio": 1.0116176351212618,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 6.155996405592688,
+      "ratio": 1.0116176351212618,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 2.378553098136254,
+      "ratio": 1.0116176351212618,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.8356951493760053,
+      "ratio": 3.2525897655580653,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 5.500204253199882,
+      "ratio": 3.2525897655580653,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.11819156608822241,
+      "ratio": 3.2525897655580653,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.1171031892987707,
+      "ratio": 3.2525897655580653,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.560334037028042,
+      "ratio": 3.2525897655580653,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.1181522774596075,
+      "ratio": 3.2525897655580653,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.7022156139611281,
+      "ratio": 2.1789187911200973,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.07036380181731294,
+      "ratio": 2.1789187911200973,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.06970397782306437,
+      "ratio": 2.1789187911200973,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 2.138165881780221,
+      "ratio": 2.1789187911200973,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.3485979730965645,
+      "ratio": 2.1789187911200973,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.120986579737385,
+      "ratio": 1.9084630719916642,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.decompress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 6.721376556275177,
+      "ratio": 1.9084630719916642,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.953894978925515,
+      "ratio": 1.9084630719916642,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.compress.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.7184328225495251,
+      "ratio": 1.9084630719916642,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.decompress.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 4.626661256270287,
+      "ratio": 1.9084630719916642,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 2.0608975281510724,
+      "ratio": 1.9084630719916642,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz-g64.compress.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.8906696817232301,
+      "ratio": 1.5474245204572732,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.4023793390197945,
+      "ratio": 1.5474245204572732,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.compress.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.271686635592759,
+      "ratio": 1.5474245204572732,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 6.534427636849141,
+      "ratio": 1.5474245204572732,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz-g64.decompress.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 2.2485539835871644,
+      "ratio": 1.5474245204572732,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 30.059961478163494,
+      "ratio": 224.43235144607647,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.4341142714244866,
+      "ratio": 224.43235144607647,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 44.40818703369498,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.873417039559425,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 7.211221305903794,
+      "ratio": 2.1039527643165576,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.570175072156225,
+      "ratio": 2.1039527643165576,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 8.291810697512657,
+      "ratio": 2.026795591290098,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.610019025731194,
+      "ratio": 2.026795591290098,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.3077363563604981,
+      "ratio": 1.5378055485313935,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.2878734112862227,
+      "ratio": 1.5378055485313935,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.49785173449452286,
+      "ratio": 1.9021240458460331,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.4411386513864973,
+      "ratio": 1.9021240458460331,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.11246347399759203,
+      "ratio": 1.7885228175336356,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.10945194855930851,
+      "ratio": 1.7885228175336356,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.6613568743008914,
+      "ratio": 5.599617395982975,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.5812103808517026,
+      "ratio": 5.599617395982975,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.09547546102717715,
+      "ratio": 1.3920586347933201,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.09276977753892417,
+      "ratio": 1.3920586347933201,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.2766368549984684,
+      "ratio": 1.7758949657100316,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.2577692609649485,
+      "ratio": 1.7758949657100316,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.19303186405425163,
+      "ratio": 2.0139871658196045,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.18383022382998415,
+      "ratio": 2.0139871658196045,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.21103172895018474,
+      "ratio": 2.652354740661812,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.20098139352872918,
+      "ratio": 2.652354740661812,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.15937163664902593,
+      "ratio": 1.056909137758356,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.15110046556263157,
+      "ratio": 1.056909137758356,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.1047736588778043,
+      "ratio": 1.9896908616677182,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.8720681811216489,
+      "ratio": 1.9896908616677182,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.09254885824820414,
+      "ratio": 1.0027343082559828,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.09000688372779302,
+      "ratio": 1.0027343082559828,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.08404765115394447,
+      "ratio": 4.064567345858693,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.0821883977064903,
+      "ratio": 4.064567345858693,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.9788179905208625,
+      "ratio": 2.0355020286198457,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.naive.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.3211808895395858,
+      "ratio": 2.0355020286198457,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 33.50731234201904,
+      "ratio": 224.43235144607647,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.527428129530151,
+      "ratio": 224.43235144607647,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 53.89932518283995,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 2.9492460161844534,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 1.8987065758476729,
+      "ratio": 2.1039527643165576,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 1.2738007209243811,
+      "ratio": 2.1039527643165576,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 4.923413090833098,
+      "ratio": 2.026795591290098,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.155301651270513,
+      "ratio": 2.026795591290098,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.9522331890129131,
+      "ratio": 1.5378055485313935,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.781071523157696,
+      "ratio": 1.5378055485313935,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 2.452843425629522,
+      "ratio": 1.9021240458460331,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.5593240049774908,
+      "ratio": 1.9021240458460331,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 1.0482204599377452,
+      "ratio": 1.7885228175336356,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.8607155309619502,
+      "ratio": 1.7885228175336356,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 3.621404762192574,
+      "ratio": 5.599617395982975,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 2.152238601859484,
+      "ratio": 5.599617395982975,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.6599088191508314,
+      "ratio": 1.3920586347933201,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.550895288837152,
+      "ratio": 1.3920586347933201,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.569501968630452,
+      "ratio": 1.7758949657100316,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.1269105760731488,
+      "ratio": 1.7758949657100316,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.5923469003781,
+      "ratio": 2.0139871658196045,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.5067434897068906,
+      "ratio": 2.0139871658196045,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.7253315927551789,
+      "ratio": 2.652354740661812,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.216953448421527,
+      "ratio": 2.652354740661812,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.358174458594181,
+      "ratio": 1.056909137758356,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.9657750491181375,
+      "ratio": 1.056909137758356,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 2.159298113450864,
+      "ratio": 1.9896908616677182,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.3923306043001256,
+      "ratio": 1.9896908616677182,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 3.284775029904793,
+      "ratio": 1.0027343082559828,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.800356449433915,
+      "ratio": 1.0027343082559828,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.5916806858310247,
+      "ratio": 4.064567345858693,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.5201195949682306,
+      "ratio": 4.064567345858693,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 3.194035778654822,
+      "ratio": 2.0355020286198457,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.coop.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.7327299952247002,
+      "ratio": 2.0355020286198457,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.8881695026778775,
+      "ratio": 156.035192797753,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "zeros",
+      "bytes": 268435456,
+      "gbps": 4.263028685091296,
+      "ratio": 156.035192797753,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 6.3856822796196395,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "random",
+      "bytes": 268435456,
+      "gbps": 3.7388517438708373,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.3880365492494127,
+      "ratio": 1.8160622778915667,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "text",
+      "bytes": 268435456,
+      "gbps": 2.0323243617938087,
+      "ratio": 1.8160622778915667,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 3.467967921658049,
+      "ratio": 1.926231186385899,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "mixed",
+      "bytes": 268435456,
+      "gbps": 2.7760115203739466,
+      "ratio": 1.926231186385899,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.35509805932003297,
+      "ratio": 1.4904923849583844,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.34642506977226506,
+      "ratio": 1.4904923849583844,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.8946965012489301,
+      "ratio": 1.8162265449411508,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.830867640732241,
+      "ratio": 1.8162265449411508,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.17343944466891917,
+      "ratio": 1.7016554105485062,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.17202726441672564,
+      "ratio": 1.7016554105485062,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.7873915810926775,
+      "ratio": 5.042634061682441,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.7575544867896628,
+      "ratio": 5.042634061682441,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.13973382400360934,
+      "ratio": 1.3837227818617417,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.13708308945693706,
+      "ratio": 1.3837227818617417,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.2653080099960542,
+      "ratio": 1.6545452039980681,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.2616229358416442,
+      "ratio": 1.6545452039980681,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.2948838915050799,
+      "ratio": 1.7885698031040875,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.28789096775810663,
+      "ratio": 1.7885698031040875,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.3732999711227427,
+      "ratio": 2.43286164810883,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.3654832048132601,
+      "ratio": 2.43286164810883,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.17465743444551546,
+      "ratio": 1.0903677027344805,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.17087697559178391,
+      "ratio": 1.0903677027344805,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.0174731571704811,
+      "ratio": 1.9118827367728255,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.9336389396277249,
+      "ratio": 1.9118827367728255,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.22174200125149587,
+      "ratio": 1.0223708777566676,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.21804776052457192,
+      "ratio": 1.0223708777566676,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.11843046401062357,
+      "ratio": 3.3755768808145925,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.1176073282271031,
+      "ratio": 3.3755768808145925,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.9515332179716622,
+      "ratio": 1.9432718168244345,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.compress.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.7221164831500124,
+      "ratio": 1.9432718168244345,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 2.187315770589585,
+      "ratio": 1.0491278576457443,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 1.0208304776007182,
+      "ratio": 1.386569437529444,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 6.977159578429368,
+      "ratio": 1.0491278576457443,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 10.93417878727705,
+      "ratio": 1.386569437529444,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 2.5389634821087013,
+      "ratio": 1.386569437529444,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 1.4372054556330287,
+      "ratio": 1.386569437529444,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.7094228199549228,
+      "ratio": 1.386569437529444,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.8720686764863249,
+      "ratio": 1.386569437529444,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 1.8585964292174448,
+      "ratio": 1.038487563881568,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 1.2562553087208892,
+      "ratio": 1.3855118224291714,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 13.615208146702647,
+      "ratio": 1.038487563881568,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 12.410629770601501,
+      "ratio": 1.3855118224291714,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 2.5033503394123606,
+      "ratio": 1.3855118224291714,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 1.4456799869091688,
+      "ratio": 1.3855118224291714,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.6292993304518278,
+      "ratio": 1.3855118224291714,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "f32-points",
+      "bytes": 268435456,
+      "gbps": 0.8855571033126833,
+      "ratio": 1.3855118224291714,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 2.0679200916081615,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.7841324885949499,
+      "ratio": 2.6281049151289064,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 54.455833307637256,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 5.903610729147414,
+      "ratio": 2.6281049151289064,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 2.2500845137130825,
+      "ratio": 2.6281049151289064,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 1.3965927513007876,
+      "ratio": 2.6281049151289064,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.4503997994247352,
+      "ratio": 2.6281049151289064,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.8470092940996429,
+      "ratio": 2.6281049151289064,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 1.7616054416600857,
+      "ratio": 0.9996349207718194,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.9328341217120946,
+      "ratio": 2.637460926716725,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 53.04851440302218,
+      "ratio": 0.9996349207718194,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 9.378818367673652,
+      "ratio": 2.637460926716725,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 2.694026113748357,
+      "ratio": 2.637460926716725,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 1.4076773886943141,
+      "ratio": 2.637460926716725,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.452072364928704,
+      "ratio": 2.637460926716725,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "sorted-u32",
+      "bytes": 268435456,
+      "gbps": 0.8525005882953862,
+      "ratio": 2.637460926716725,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 2.476200971112649,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.8100540453464791,
+      "ratio": 1.0703318665503396,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 54.606989625838956,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 3.7917803844535447,
+      "ratio": 1.0703318665503396,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 1.6448639418237243,
+      "ratio": 1.0703318665503396,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 1.480628708846303,
+      "ratio": 1.0703318665503396,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.636981845211788,
+      "ratio": 1.0703318665503396,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.9999586286376057,
+      "ratio": 1.0703318665503396,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 2.1046986271289834,
+      "ratio": 0.9996338040018442,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 1.0744274892419545,
+      "ratio": 1.06776289846321,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 54.19083839555743,
+      "ratio": 0.9996338040018442,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 6.776448539620832,
+      "ratio": 1.06776289846321,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 1.9939381145679753,
+      "ratio": 1.06776289846321,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 1.4870759451029232,
+      "ratio": 1.06776289846321,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.996826171875,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.003173828125,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 0.6460023499924494,
+      "ratio": 1.0678501954735178,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "i16-audio",
+      "bytes": 268435456,
+      "gbps": 1.0179075585958979,
+      "ratio": 1.0678501954735178,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 1.3908334102016164,
+      "ratio": 1.5568545002857876,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.7050634070073678,
+      "ratio": 2.5493919914382133,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 2.1128290263104557,
+      "ratio": 1.5568545002857876,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 3.8486266669295164,
+      "ratio": 2.5493919914382133,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 1.874541380248238,
+      "ratio": 2.5493919914382133,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 1.328605435968016,
+      "ratio": 2.5493919914382133,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.464233914681898,
+      "ratio": 2.5493919914382133,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.934548600371759,
+      "ratio": 2.5493919914382133,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 1.6024032300612019,
+      "ratio": 1.5563736737638523,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.8415044150465831,
+      "ratio": 2.4934632888999397,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 4.6429418997003795,
+      "ratio": 1.5563736737638523,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 5.341399080640593,
+      "ratio": 2.4934632888999397,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 2.1885548027834476,
+      "ratio": 2.4934632888999397,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 1.3357064766878155,
+      "ratio": 2.4934632888999397,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.49594075578116775,
+      "ratio": 2.4934632888999397,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "u64-timestamps",
+      "bytes": 268435456,
+      "gbps": 0.9285378478903903,
+      "ratio": 2.4934632888999397,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.7509918781925613,
+      "ratio": 1.4904923849583844,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.6001087001768041,
+      "ratio": 1.4904923849583844,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.8252018506641079,
+      "ratio": 1.4904923849583844,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.824997328912819,
+      "ratio": 1.4904923849583844,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.6749787224123128,
+      "ratio": 1.4904923849583844,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.23367065076950438,
+      "ratio": 1.4904923849583844,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.40330583940883774,
+      "ratio": 1.4904923849583844,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.09086847372009638,
+      "ratio": 1.4904923849583844,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.7648087225199225,
+      "ratio": 1.4878014957939918,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.6300529914926168,
+      "ratio": 1.4878014957939918,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 2.716869147904821,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 2.7471663674438376,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 1.6258760116416051,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.2337931461601982,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.4048879178501201,
+      "ratio": 1.4878014957939918,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/dickens",
+      "bytes": 10192446,
+      "gbps": 0.09069511910496733,
+      "ratio": 1.4878014957939918,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.132732841646671,
+      "ratio": 1.8162265449411508,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.7307552827212478,
+      "ratio": 1.812640290744495,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 2.1874877216550885,
+      "ratio": 1.8162265449411508,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 2.3266085347032304,
+      "ratio": 1.812640290744495,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.390185318488689,
+      "ratio": 1.812640290744495,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.5355196549554362,
+      "ratio": 1.812640290744495,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.9271099744245525,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.06265984654731457,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.008951406649616368,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.0012787723785166241,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.3965531999391038,
+      "ratio": 1.8261652443722765,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.26197743522852746,
+      "ratio": 1.8261652443722765,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.0601412363134504,
+      "ratio": 1.7929440018639162,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.7606879667598216,
+      "ratio": 1.7895830611017047,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 3.740774771317889,
+      "ratio": 1.7929440018639162,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 3.959287588453149,
+      "ratio": 1.7895830611017047,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 1.8589759642685084,
+      "ratio": 1.7895830611017047,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.5446353400713939,
+      "ratio": 1.7895830611017047,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.928388746803069,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.06265984654731457,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.008951406649616368,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.3696218032965814,
+      "ratio": 1.8030765929338928,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/mozilla",
+      "bytes": 51220480,
+      "gbps": 0.2617522971589461,
+      "ratio": 1.8030765929338928,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.9732859349395645,
+      "ratio": 1.7016554105485062,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.61244566618157,
+      "ratio": 1.8951049376380382,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.8788881327724751,
+      "ratio": 1.7016554105485062,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.9466024874204879,
+      "ratio": 1.8951049376380382,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.7559506899346804,
+      "ratio": 1.8951049376380382,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.1127437768164053,
+      "ratio": 1.8951049376380382,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.3202614379084967,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.6666666666666666,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.013071895424836602,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.37794100216020676,
+      "ratio": 1.922295827870749,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.057181259408566575,
+      "ratio": 1.922295827870749,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.9581878914581566,
+      "ratio": 1.6866773895161928,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.7464498845276655,
+      "ratio": 1.8676112711176112,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 2.4682796964658067,
+      "ratio": 1.6866773895161928,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 2.5358299884482567,
+      "ratio": 1.8676112711176112,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 1.5381085327953394,
+      "ratio": 1.8676112711176112,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.11248670825288036,
+      "ratio": 1.8676112711176112,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.3137254901960784,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.673202614379085,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.013071895424836602,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.357692141564317,
+      "ratio": 1.8963376317090799,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/mr",
+      "bytes": 9970564,
+      "gbps": 0.057048821742695544,
+      "ratio": 1.8963376317090799,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.1566157141566948,
+      "ratio": 5.042634061682441,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.7411178142807641,
+      "ratio": 5.042634061682441,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 3.275011417440461,
+      "ratio": 5.042634061682441,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 3.2823197778151463,
+      "ratio": 5.042634061682441,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.5843273277989405,
+      "ratio": 5.042634061682441,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.5195464346848458,
+      "ratio": 5.042634061682441,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.3721344128167723,
+      "ratio": 5.042634061682441,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.2531330905863977,
+      "ratio": 5.042634061682441,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.198013772137682,
+      "ratio": 4.704717779567552,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.8211258969022848,
+      "ratio": 4.704717779567552,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 4.526068760854537,
+      "ratio": 4.704717779567552,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 4.518818170921731,
+      "ratio": 4.704717779567552,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 2.126074690111283,
+      "ratio": 4.704717779567552,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.515453000106214,
+      "ratio": 4.704717779567552,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.3518522563520455,
+      "ratio": 4.704717779567552,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/nci",
+      "bytes": 33553445,
+      "gbps": 0.25228256945227556,
+      "ratio": 4.704717779567552,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.9427051729485157,
+      "ratio": 1.3837227818617417,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.6874310090316363,
+      "ratio": 1.3894755480713723,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.5863430367599497,
+      "ratio": 1.3837227818617417,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.5831231678447562,
+      "ratio": 1.3894755480713723,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.49873205062458725,
+      "ratio": 1.3894755480713723,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.1004817173814831,
+      "ratio": 1.3894755480713723,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.925531914893617,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.0425531914893617,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.031914893617021274,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.45260833900424857,
+      "ratio": 1.3987277249557797,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.04393325843679691,
+      "ratio": 1.3987277249557797,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.7570958600873414,
+      "ratio": 1.3660099720944774,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.663188485285749,
+      "ratio": 1.3716699248013013,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.526464424713065,
+      "ratio": 1.3660099720944774,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.5113707941131094,
+      "ratio": 1.3716699248013013,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 1.0157371607862404,
+      "ratio": 1.3716699248013013,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.10074426432675218,
+      "ratio": 1.3716699248013013,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.925531914893617,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.0425531914893617,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.031914893617021274,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.39773834107687783,
+      "ratio": 1.3806373893302861,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/ooffice",
+      "bytes": 6152192,
+      "gbps": 0.04405928120184926,
+      "ratio": 1.3806373893302861,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.0915981970207074,
+      "ratio": 1.6545452039980681,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.7838475405293973,
+      "ratio": 1.6545452039980681,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.4008178499175121,
+      "ratio": 1.6545452039980681,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.4031441932342847,
+      "ratio": 1.6545452039980681,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.0180982064516704,
+      "ratio": 1.6545452039980681,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.18508594718535665,
+      "ratio": 1.6545452039980681,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.416188756056353,
+      "ratio": 1.6545452039980681,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.08494854400363375,
+      "ratio": 1.6545452039980681,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.0384898899543085,
+      "ratio": 1.6096854838400771,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.781505313488293,
+      "ratio": 1.6096854838400771,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 3.856704742908886,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 4.6694775771476404,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 2.086063681746805,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.18459848050886643,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.42177933307681187,
+      "ratio": 1.6096854838400771,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/osdb",
+      "bytes": 10085684,
+      "gbps": 0.08469070762932256,
+      "ratio": 1.6096854838400771,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.7143867192582419,
+      "ratio": 1.7885698031040875,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.4953528543399047,
+      "ratio": 1.7885698031040875,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.5477168128398694,
+      "ratio": 1.7885698031040875,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.5450609011119248,
+      "ratio": 1.7885698031040875,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.46620300098394185,
+      "ratio": 1.7885698031040875,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.19002673081634397,
+      "ratio": 1.7885698031040875,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.32193838014211296,
+      "ratio": 1.7885698031040875,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.06312760796494674,
+      "ratio": 1.7885698031040875,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.6326634356978366,
+      "ratio": 1.777387344379422,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.4758955172970935,
+      "ratio": 1.777387344379422,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.6747606330285985,
+      "ratio": 1.777387344379422,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.6859265673780228,
+      "ratio": 1.777387344379422,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.1757610767350997,
+      "ratio": 1.777387344379422,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.19309900292331963,
+      "ratio": 1.777387344379422,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.3221078890989172,
+      "ratio": 1.777387344379422,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/reymont",
+      "bytes": 6627202,
+      "gbps": 0.06319740072922637,
+      "ratio": 1.777387344379422,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.9828201612957883,
+      "ratio": 2.43286164810883,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.6969642552599328,
+      "ratio": 2.4318156545431546,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.7066076228958273,
+      "ratio": 2.43286164810883,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.7621395432745437,
+      "ratio": 2.4318156545431546,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.184620959288359,
+      "ratio": 2.4318156545431546,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.2574786320584897,
+      "ratio": 2.4318156545431546,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.9454545454545454,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.015151515151515152,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.03939393939393939,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.3952120632160776,
+      "ratio": 2.442266547784616,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.11884084719821801,
+      "ratio": 2.442266547784616,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.9635104057509528,
+      "ratio": 2.3770515249329454,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.7238456390062427,
+      "ratio": 2.3796328521143826,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 3.506263723727242,
+      "ratio": 2.3770515249329454,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 3.421328323627662,
+      "ratio": 2.3796328521143826,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 1.7650215411801733,
+      "ratio": 2.3796328521143826,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.2565305775736135,
+      "ratio": 2.3796328521143826,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.9484848484848485,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.012121212121212121,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.03939393939393939,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.36726826937559653,
+      "ratio": 2.3860912648103665,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/samba",
+      "bytes": 21606400,
+      "gbps": 0.11898250551756975,
+      "ratio": 2.3860912648103665,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.1248302930987282,
+      "ratio": 1.0903677027344805,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.9006947773706763,
+      "ratio": 1.0903677027344805,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.8460510100832747,
+      "ratio": 1.0903677027344805,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.8487762172284645,
+      "ratio": 1.0903677027344805,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.6626801984108346,
+      "ratio": 1.0903677027344805,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.13645848508310202,
+      "ratio": 1.0903677027344805,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.6318893637874061,
+      "ratio": 1.0903677027344805,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.0720777833823248,
+      "ratio": 1.0903677027344805,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.1075087443011042,
+      "ratio": 1.0617506781670047,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.920677182848256,
+      "ratio": 1.0617090192087073,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 3.074350510883675,
+      "ratio": 1.0617506781670047,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 3.0222477828899112,
+      "ratio": 1.0617090192087073,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 1.499568343479071,
+      "ratio": 1.0617090192087073,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.13362450876675308,
+      "ratio": 1.0617090192087073,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.990990990990991,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.009009009009009009,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.5642447655428964,
+      "ratio": 1.0617506781670047,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/sao",
+      "bytes": 7251944,
+      "gbps": 0.07252983642675341,
+      "ratio": 1.0617506781670047,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.9600445487574201,
+      "ratio": 1.9118827367728255,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.6647884869014451,
+      "ratio": 1.9118827367728255,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.8646812961622572,
+      "ratio": 1.9118827367728255,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.8889818474829534,
+      "ratio": 1.9118827367728255,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.2235932148364579,
+      "ratio": 1.9118827367728255,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.6178020935890671,
+      "ratio": 1.9118827367728255,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.4010934947904152,
+      "ratio": 1.9118827367728255,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.267770015692098,
+      "ratio": 1.9118827367728255,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.8944004487243447,
+      "ratio": 1.8849042633267263,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.671415027956258,
+      "ratio": 1.8849042633267263,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 3.1002763639605004,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 3.098249105675795,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.6460630249049664,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.6092910742707904,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.3510693036719662,
+      "ratio": 1.8849042633267263,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/webster",
+      "bytes": 41458703,
+      "gbps": 0.2666387101017692,
+      "ratio": 1.8849042633267263,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.5782056604093346,
+      "ratio": 1.0223708777566676,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.8658964282732824,
+      "ratio": 1.343547855204079,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.6346847360379135,
+      "ratio": 1.0223708777566676,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.208914787901665,
+      "ratio": 1.343547855204079,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.86252359684342,
+      "ratio": 1.343547855204079,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.2061036672572178,
+      "ratio": 1.343547855204079,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.49263824901536185,
+      "ratio": 1.343547855204079,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.07686482814784665,
+      "ratio": 1.343547855204079,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.3333012368323713,
+      "ratio": 1.014215368530102,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.880791371856592,
+      "ratio": 1.3420261138152878,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 4.337098801573881,
+      "ratio": 1.014215368530102,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 2.895155892930779,
+      "ratio": 1.3420261138152878,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.5061746256398263,
+      "ratio": 1.3420261138152878,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.20499476375857148,
+      "ratio": 1.3420261138152878,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 1.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.4793189948952898,
+      "ratio": 1.3420261138152878,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/x-ray",
+      "bytes": 8474240,
+      "gbps": 0.07674333060570471,
+      "ratio": 1.3420261138152878,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.7703011640521512,
+      "ratio": 3.3755768808145925,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.5946205951990545,
+      "ratio": 3.36514683736836,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.5458335779839936,
+      "ratio": 3.3755768808145925,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.5427036128460812,
+      "ratio": 3.36514683736836,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.47879969010876733,
+      "ratio": 3.36514683736836,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.08781976693608315,
+      "ratio": 3.36514683736836,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.975609756097561,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.024390243902439025,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.31419489937619854,
+      "ratio": 3.3866123992305917,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.03710150309716077,
+      "ratio": 3.3866123992305917,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.8481878768644874,
+      "ratio": 3.2525897655580653,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.636440747791208,
+      "ratio": 3.241834885531924,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.550227345099943,
+      "ratio": 3.2525897655580653,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.5288884719267017,
+      "ratio": 3.241834885531924,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 1.113774027191749,
+      "ratio": 3.241834885531924,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.0873534887449986,
+      "ratio": 3.241834885531924,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.975609756097561,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.024390243902439025,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.28355199201152015,
+      "ratio": 3.2619505015024326,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/xml",
+      "bytes": 5345280,
+      "gbps": 0.03709798389230924,
+      "ratio": 3.2619505015024326,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.compress.none.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.0812787156955348,
+      "ratio": 1.9432718168244345,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.auto.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.6805017838134545,
+      "ratio": 1.992974384399621,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.none.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 2.7141129852056927,
+      "ratio": 1.9432718168244345,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 2.722133678003953,
+      "ratio": 1.992974384399621,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.lz4.decompress.auto.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.5274955876818828,
+      "ratio": 1.992974384399621,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.lz4.compress.auto.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.0732174521801934,
+      "ratio": 1.992974384399621,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.none",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.8824984539270253,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.shuffle-4",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.10173160173160173,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.delta-4",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.015151515151515152,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.auto.wins.stored",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.0006184291898577613,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.lz4.compress.exhaustive.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.39101529030945226,
+      "ratio": 2.0014505655963055,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.lz4.compress.exhaustive.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.5717021338770012,
+      "ratio": 2.0014505655963055,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.compress.none.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.0934783070126481,
+      "ratio": 1.9084630719916642,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.auto.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.7726633534253157,
+      "ratio": 1.9572148164499938,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.decompress.none.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 4.652875571670976,
+      "ratio": 1.9084630719916642,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.kernel",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 4.5246322553489495,
+      "ratio": 1.9572148164499938,
+      "timing": "wall-gpu"
+    },
+    {
+      "name": "gpu.glz.decompress.auto.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.9028793637958463,
+      "ratio": 1.9572148164499938,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "gpu.glz.compress.auto.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 1.076608666885847,
+      "ratio": 1.9572148164499938,
+      "timing": "wall-e2e"
+    },
+    {
+      "name": "cpu.glz.auto.wins.none",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.8828076685219542,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.shuffle-4",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.10235003092145949,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.delta-4",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.014842300556586271,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.auto.wins.stored",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.0,
+      "ratio": null,
+      "timing": "cpu"
+    },
+    {
+      "name": "cpu.glz.compress.exhaustive.mt",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.3782287624331582,
+      "ratio": 1.9653940328924258,
+      "timing": "cpu"
+    },
+    {
+      "name": "gpu.glz.compress.exhaustive.e2e",
+      "input": "silesia/all",
+      "bytes": 211938580,
+      "gbps": 0.5747744102447974,
+      "ratio": 1.9653940328924258,
+      "timing": "wall-e2e"
+    }
+  ]
+}

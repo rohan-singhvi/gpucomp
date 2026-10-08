@@ -369,3 +369,59 @@ combinations on Metal), and in the CLI (`compress --gpu --filters auto`, previou
 refused). The CLI still always uses level 1; `--level` belongs to M9. A possible
 optimisation: chunks where the unfiltered block already wins clearly could skip the
 other candidates, which needs the estimator the plan mentions.
+
+## Faster match finding: word compares, block 128, fixed emit workgroup
+Per-kernel profile of the split encoder (Silesia, 212 MB, block 64): match finding
+76 ms (45%), parse 80 ms (47%), emit 13 ms (8%).
+1. **Word-wise match extension** (`extend` in `encode_common.wgsl`, used by match finding
+   and the parse): XOR two 4-byte words and count equal leading bytes with
+   `countTrailingZeros / 8`, then finish byte-wise near the limit. Same lengths,
+   byte-identical output. Match finding 76 → 58 ms, parse 80 → 61 ms; kernel 1.25 →
+   1.60 GB/s.
+2. **The emit kernel's workgroup is fixed at `EMIT_WG = 64`** instead of following
+   `block`. Its scans got slower with bigger workgroups and masked the gain.
+3. **Level-1 match-finding block 64 → 128**, for both the GPU encoder and its CPU twin
+   (`EncodeParams::default`, `lz4::encode::Params::default`). Silesia kernel time and ratio:
+
+   | block | kernel | GB/s | ratio |
+   |---:|---:|---:|---:|
+   | 64 | 134 ms | 1.59 | 1.966× |
+   | **128** | **108 ms** | **1.97** | **1.943×** |
+   | 256 | 101 ms | 2.09 | 1.904× |
+
+   Bigger blocks hide in-block repeats from each other (positions only see earlier
+   blocks), so ratio drops. 128 trades 1.2% ratio for +24% throughput; 256 adds only 6%
+   more for another 2% of ratio. Block 64 stays available for higher levels (M9). Tests
+   that hand-compute block-64 behaviour now pin `block: 64`. The agent-written filter
+   test's "≥ 20% smaller" threshold became "≥ 15%" (GLZ at block 128 is 19.9% on its
+   small f32 input).
+
+Recorded run (M7-matchfind): Silesia GPU compress end to end 1.16 → 1.67 GB/s (LZ4),
+1.16 → 1.72 (GLZ); kernel 1.25 → 1.95; ratio 1.97× → 1.94×. **The parse (~60 ms)
+is now the largest kernel.** It runs one lane per chunk, and 64 KiB chunks give only
+~3,200 lanes, too few to hide memory latency. The idea that fits next is a speculative
+segmented parse: several lanes per chunk, each starting at a segment boundary. The
+greedy parse re-synchronises with the true path within a few sequences, so the
+results can be stitched exactly. Not done yet.
+
+## Filter estimator: sampled trial encoding (`FilterMode::Auto`)
+Exhaustive filter selection costs one full encode per candidate (3× at level 1).
+Instead of a new heuristic, `Auto` trial-encodes only each chunk's leading
+**sample**: `sample_len = max(4 KiB, chunk_size / 8)`, filtered as a buffer of its
+own. Candidates compete on sample block size (strictly smaller wins, ties to the
+earlier candidate). The winner encodes the whole chunk, which is stored raw and
+unfiltered if that doesn't shrink it. It reuses the real encoders, so nothing needs
+tuning, and it's deterministic and identical on CPU and GPU (`cpu::filter::sample_len`
+== `gpu::encode::sample_len`). With chunks ≤ 4 KiB the sample is the whole chunk, so
+`Auto` equals `Exhaustive` (tested). The old behaviour is kept as
+`FilterMode::Exhaustive` / `--filters exhaustive`. On the GPU, the samples are
+gathered on the host (1/8 of the batch) and encoded as chunks of `sample_len` under
+each candidate. The batch is then copied once into a filtered buffer, the winning
+filters are applied per chunk (unfiltered chunks keep the copy), and it's encoded and
+packed once.
+
+Recorded (M7-estimator), Silesia LZ4: Auto 1.99× at 1.07 GB/s GPU end to end vs
+Exhaustive 2.00× at 0.57 (unfiltered: 1.94× at 1.72). CPU: 0.68 vs 0.39 GB/s. GLZ is
+similar. Numeric inputs: Auto's ratio equals Exhaustive's to two decimals. Sampling
+can be misled when a chunk's start isn't representative (a test builds such a chunk).
+On real data that cost Silesia 0.5%.

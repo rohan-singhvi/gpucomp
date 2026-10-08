@@ -90,13 +90,7 @@ fn parse(chunk: u32) {
             }
         }
         let limit = min(match_limit, p + min(cap, n));
-        var end = p + min(m >> 16u, cap);
-        loop {
-            if (end >= limit || in_byte(start + end - offset) != in_byte(start + end)) {
-                break;
-            }
-            end++;
-        }
+        let end = extend(start, p + min(m >> 16u, cap), offset, limit);
         if (params.groups > 0u) {
             group_buf[gbase + group_len] = vec2<u32>(p, end);
             group_len++;

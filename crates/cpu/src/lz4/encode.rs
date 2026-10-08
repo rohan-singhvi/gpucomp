@@ -26,8 +26,9 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
+        // Same as the GPU encoder's level-1 default (gpu::encode::EncodeParams).
         Params {
-            block: 64,
+            block: 128,
             hash_log: 12,
             probe_len: 16,
         }
@@ -198,6 +199,15 @@ mod tests {
             .collect()
     }
 
+    /// These tests hand-compute block-64 behaviour (positions 0..64 form the
+    /// first match-finding block), independent of the default block size.
+    fn block64() -> Params {
+        Params {
+            block: 64,
+            ..Params::default()
+        }
+    }
+
     fn decode(block: &[u8], n: usize) -> Vec<u8> {
         let mut out = vec![0; n];
         decode_block(block, &mut out).unwrap();
@@ -218,7 +228,7 @@ mod tests {
         let mut input = random(64, 1);
         input.extend_from_within(0..64);
         input.extend(random(32, 2));
-        let m = find_matches(&input, &Params::default());
+        let m = find_matches(&input, &block64());
         assert_eq!(
             m[64],
             Match {
@@ -242,14 +252,14 @@ mod tests {
     #[test]
     fn latest_position_wins_a_bucket() {
         // Zeros: every position hashes alike; the candidate for block 2 is position 63.
-        let m = find_matches(&[0u8; 200], &Params::default());
+        let m = find_matches(&[0u8; 200], &block64());
         assert_eq!(m[64].offset, 1);
         assert_eq!(m[100].offset, 37);
     }
 
     #[test]
     fn matches_are_capped_at_probe_len() {
-        let m = find_matches(&[0u8; 1000], &Params::default());
+        let m = find_matches(&[0u8; 1000], &block64());
         assert!(m.iter().all(|m| m.len <= 16));
         assert_eq!(m[100].len, 16);
     }
@@ -297,7 +307,7 @@ mod tests {
     #[test]
     fn parse_takes_matches_greedily_and_extends_capped_ones() {
         let input = [0u8; 1000];
-        let seqs = parse(&input, &find_matches(&input, &Params::default()));
+        let seqs = parse(&input, &find_matches(&input, &block64()));
         assert_eq!(
             seqs,
             [

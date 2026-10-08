@@ -42,7 +42,10 @@ pub struct CompressArgs {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum FiltersArg {
     None,
+    /// Choose each chunk's filter by trial-encoding its leading sample.
     Auto,
+    /// Try every candidate filter on whole chunks (slower, sometimes smaller).
+    Exhaustive,
 }
 
 #[derive(clap::Args, Debug)]
@@ -173,6 +176,7 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
             filters: match args.filters {
                 FiltersArg::None => gpu::encode::FilterMode::None,
                 FiltersArg::Auto => gpu::encode::FilterMode::Auto,
+                FiltersArg::Exhaustive => gpu::encode::FilterMode::Exhaustive,
             },
         };
         std::fs::write(&args.output, encoder.compress(&ctx, &input, &options)?)?;
@@ -198,6 +202,7 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         filters: match args.filters {
             FiltersArg::None => cpu::container::FilterMode::None,
             FiltersArg::Auto => cpu::container::FilterMode::Auto,
+            FiltersArg::Exhaustive => cpu::container::FilterMode::Exhaustive,
         },
     };
     std::fs::write(&args.output, cpu::container::compress(&input, &options)?)?;

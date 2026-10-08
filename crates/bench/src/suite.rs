@@ -715,6 +715,37 @@ pub fn filters(
                     Timing::Cpu,
                 );
             }
+
+            // Exhaustive selection (every candidate on whole chunks), for
+            // comparison with Auto's sampled selection.
+            let exhaustive = options(FilterMode::Exhaustive);
+            let file = compress(data, &exhaustive)?;
+            let ratio = Some(n as f64 / file.len() as f64);
+            let t = time(&|| Ok(compress(data, &exhaustive).map(drop)?))?;
+            row(
+                format!("cpu.{codec_name}.compress.exhaustive.mt"),
+                gbps(n, t),
+                ratio,
+                Timing::Cpu,
+            );
+            if let Some((ctx, _, _, gpu_encoder)) = &gpu {
+                let gpu_options = gpu::encode::GpuCompressOptions {
+                    codec,
+                    filters: gpu::encode::FilterMode::Exhaustive,
+                    ..Default::default()
+                };
+                anyhow::ensure!(
+                    gpu_encoder.compress(ctx, data, &gpu_options)? == file,
+                    "GPU {codec_name} exhaustive file of {name} differs from the CPU's"
+                );
+                let t = time(&|| Ok(gpu_encoder.compress(ctx, data, &gpu_options).map(drop)?))?;
+                row(
+                    format!("gpu.{codec_name}.compress.exhaustive.e2e"),
+                    gbps(n, t),
+                    ratio,
+                    Timing::WallE2e,
+                );
+            }
         }
     }
     Ok(rows)
