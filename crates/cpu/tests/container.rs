@@ -195,16 +195,31 @@ fn verify_detects_a_corrupted_stored_chunk() {
 }
 
 #[test]
-fn filtered_chunks_are_rejected_until_filters_exist() {
-    let file = compress(&text(10_000), &opts(Encoder::Lz4Flex)).unwrap();
+fn checksums_cover_the_unfiltered_bytes() {
+    // Relabelling a chunk's filter makes decoding apply that inverse filter:
+    // the result no longer matches the checksum of the original chunk.
+    let input = text(10_000);
+    let file = compress(&input, &opts(Encoder::Lz4Flex)).unwrap();
     let mut index = Index::parse(&file).unwrap();
-    index.chunks[1].filter = Filter::Shuffle { width: 4 };
+    let shuffle = Filter::Shuffle { width: 4 };
+    index.chunks[1].filter = shuffle;
     let header_len = index.data_offset() as usize;
     let patched = [index.to_bytes(), file[header_len..].to_vec()].concat();
     assert!(matches!(
         decompress(&patched, &dopts(Decoder::HandWritten)),
-        Err(CpuError::UnsupportedFilter { chunk: 1 })
+        Err(CpuError::Checksum { chunk: 1 })
     ));
+    let unverified = DecompressOptions {
+        verify: false,
+        ..dopts(Decoder::HandWritten)
+    };
+    let out = decompress(&patched, &unverified).unwrap();
+    let c = CHUNK as usize;
+    assert_eq!(
+        out[c..2 * c],
+        cpu::filter::inverse(shuffle, &input[c..2 * c])
+    );
+    assert_eq!(out[..c], input[..c]);
 }
 
 #[test]

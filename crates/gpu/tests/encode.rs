@@ -248,6 +248,83 @@ fn gpu_glz_containers_match_cpu_and_decode_everywhere() {
     }
 }
 
+/// The CPU twin's container for the same settings as `options`.
+fn cpu_file(input: &[u8], options: &GpuCompressOptions) -> Vec<u8> {
+    let twin_params = twin(EncodeParams::default());
+    let encoder = match options.codec {
+        Codec::Glz => Encoder::Glz(cpu::glz::GlzParams {
+            lz: twin_params,
+            independent_groups: options.independent_groups,
+        }),
+        _ => Encoder::Greedy(twin_params),
+    };
+    cpu_compress(
+        input,
+        &CompressOptions {
+            codec: options.codec,
+            chunk_size: options.chunk_size,
+            encoder,
+            checksums: options.checksums,
+            ..CompressOptions::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn inputs_split_into_many_batches_match_the_cpu_container() {
+    let Some(ctx) = context() else { return };
+    for batch in [1, 3] {
+        let encoder = GpuEncoder::new(&ctx, EncodeParams::default())
+            .unwrap()
+            .with_max_batch_chunks(batch);
+        for options in [gpu_opts(), glz_opts(None), glz_opts(Some(4))] {
+            for (name, input) in fixtures() {
+                assert!(
+                    encoder.compress(&ctx, &input, &options).unwrap() == cpu_file(&input, &options),
+                    "{name}, {batch}-chunk batches, {options:?}"
+                );
+            }
+            let input = [text(5 * 4096 + 9), random(4 * 4096, 3)].concat();
+            let blocks = encoder.encode_blocks(&ctx, &input, &options).unwrap();
+            let unbatched = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+            assert!(blocks == unbatched.encode_blocks(&ctx, &input, &options).unwrap());
+        }
+    }
+}
+
+#[test]
+fn reused_buffers_never_leak_into_later_files() {
+    let Some(ctx) = context() else { return };
+    // One encoder for everything: big then small inputs, different chunk
+    // sizes, codecs and checksum settings, so cached buffers hold stale data.
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+    let calls = [
+        (random(300_000, 9), gpu_opts()),
+        (text(9_000), gpu_opts()),
+        (vec![3; 70_000], glz_opts(Some(64))),
+        (text(5_000), glz_opts(None)),
+        (
+            [random(40_000, 5), text(40_000)].concat(),
+            GpuCompressOptions {
+                chunk_size: 16_384,
+                checksums: false,
+                ..gpu_opts()
+            },
+        ),
+        (random(4_097, 11), gpu_opts()),
+        (text(1 << 20), glz_opts(Some(4))),
+        (vec![1], gpu_opts()),
+        (vec![], glz_opts(None)),
+    ];
+    for (i, (input, options)) in calls.iter().enumerate() {
+        assert!(
+            encoder.compress(&ctx, input, options).unwrap() == cpu_file(input, options),
+            "call {i}: {options:?}"
+        );
+    }
+}
+
 #[test]
 fn independent_groups_need_glz_and_a_sane_size() {
     let Some(ctx) = context() else { return };
@@ -299,5 +376,81 @@ proptest! {
         for (block, chunk) in blocks.iter().zip(input.chunks(1 << chunk_shift)) {
             prop_assert!(*block == expected(encode_block(chunk, &twin(params)), chunk.len()));
         }
+    }
+}
+
+// ---- M7: filter selection on the GPU ----
+
+use cpu::container::FilterMode as CpuFilterMode;
+use gpu::encode::{filter_candidates, FilterMode};
+
+fn cpu_auto(codec: Codec, level: u8) -> CompressOptions {
+    CompressOptions {
+        codec,
+        chunk_size: CHUNK,
+        encoder: match codec {
+            Codec::Glz => Encoder::Glz(cpu_glz(None)),
+            _ => Encoder::Greedy(twin(EncodeParams::default())),
+        },
+        checksums: true,
+        level,
+        filters: CpuFilterMode::Auto,
+    }
+}
+
+fn gpu_auto(codec: Codec, level: u8) -> GpuCompressOptions {
+    GpuCompressOptions {
+        codec,
+        level,
+        filters: FilterMode::Auto,
+        ..gpu_opts()
+    }
+}
+
+#[test]
+fn gpu_filter_candidates_match_the_cpu() {
+    for level in 0..=3 {
+        assert_eq!(
+            filter_candidates(level),
+            cpu::filter::candidates(level),
+            "level {level}"
+        );
+    }
+}
+
+#[test]
+fn gpu_auto_filtered_files_equal_cpu_auto_files() {
+    let Some(ctx) = context() else { return };
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+    let inputs: Vec<(&str, Vec<u8>)> = common::numeric().into_iter().chain(fixtures()).collect();
+    for codec in [Codec::Lz4, Codec::Glz] {
+        for level in [1, 2] {
+            for (name, input) in &inputs {
+                let gpu_file = encoder
+                    .compress(&ctx, input, &gpu_auto(codec, level))
+                    .unwrap();
+                let cpu_file = cpu_compress(input, &cpu_auto(codec, level)).unwrap();
+                assert!(
+                    gpu_file == cpu_file,
+                    "{name} {codec:?} level {level}: GPU and CPU filtered files differ"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn filtered_files_split_into_many_batches_equal_the_cpu() {
+    let Some(ctx) = context() else { return };
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default())
+        .unwrap()
+        .with_max_batch_chunks(2);
+    for (name, input) in common::numeric() {
+        let input = &input[..input.len().min(9 * CHUNK as usize + 77)];
+        let gpu_file = encoder
+            .compress(&ctx, input, &gpu_auto(Codec::Lz4, 1))
+            .unwrap();
+        let cpu_file = cpu_compress(input, &cpu_auto(Codec::Lz4, 1)).unwrap();
+        assert!(gpu_file == cpu_file, "{name}");
     }
 }

@@ -22,8 +22,6 @@ pub enum CpuError {
     Lz4Flex { chunk: usize, message: String },
     #[error("chunk {chunk}: checksum mismatch")]
     Checksum { chunk: usize },
-    #[error("chunk {chunk}: filter not supported by this decoder")]
-    UnsupportedFilter { chunk: usize },
     #[error("input too large: {0} chunks")]
     TooManyChunks(u64),
     #[error("invalid options: {0}")]
@@ -62,13 +60,26 @@ pub enum Decoder {
     Lz4Flex,
 }
 
+/// Whether the encoder tries filters on each chunk (plan §4a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilterMode {
+    /// Every chunk is compressed unfiltered.
+    #[default]
+    None,
+    /// Every chunk is compressed under each of the level's candidate filters
+    /// ([`crate::filter::candidates`]) and the smallest payload wins.
+    Auto,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompressOptions {
     pub codec: Codec,
     pub chunk_size: u32,
     pub encoder: Encoder,
     pub checksums: bool,
+    /// Compression level; with [`FilterMode::Auto`] it picks the filter candidates.
     pub level: u8,
+    pub filters: FilterMode,
 }
 
 impl Default for CompressOptions {
@@ -79,6 +90,7 @@ impl Default for CompressOptions {
             encoder: Encoder::Lz4Flex,
             checksums: false,
             level: 1,
+            filters: FilterMode::None,
         }
     }
 }
@@ -131,8 +143,14 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
         }
     }
 
+    // The stored codec never filters: a stored chunk is stored unfiltered.
+    let candidates: &[Filter] = match (options.filters, options.codec) {
+        (FilterMode::Auto, Codec::Lz4 | Codec::Glz) => crate::filter::candidates(options.level),
+        _ => &[Filter::None],
+    };
+
     // Compress every chunk independently, in parallel.
-    let payloads: Vec<(Vec<u8>, bool, u32)> = input
+    let payloads: Vec<(Vec<u8>, bool, u32, Filter)> = input
         .par_chunks(chunk_size as usize)
         .map(|chunk| {
             let sum = if options.checksums {
@@ -140,34 +158,64 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
             } else {
                 0
             };
-            let compressed = match (options.codec, options.encoder) {
-                (Codec::Stored, _) => None,
-                (Codec::Lz4, Encoder::Lz4Flex) => Some(lz4_flex::block::compress(chunk)),
-                (Codec::Lz4, Encoder::Greedy(params)) => {
-                    Some(crate::lz4::encode::encode_block(chunk, &params))
-                }
-                (Codec::Glz, Encoder::Glz(params)) => {
-                    Some(crate::glz::encode_block(chunk, &params))
-                }
-                // Rejected by the check above.
-                (Codec::Lz4, Encoder::Glz(_)) | (Codec::Glz, _) => unreachable!(),
-            };
-            match compressed {
-                Some(c) if c.len() < chunk.len() => (c, false, sum),
-                _ => (chunk.to_vec(), true, sum),
+            match select(chunk, candidates, |block| encode_block(options, block)) {
+                Some((c, filter)) if c.len() < chunk.len() => (c, false, sum, filter),
+                _ => (chunk.to_vec(), true, sum, Filter::None),
             }
         })
         .collect();
 
+    let filters: Vec<Filter> = payloads.iter().map(|p| p.3).collect();
     let payloads: Vec<format::ChunkPayload> = payloads
         .iter()
-        .map(|(bytes, stored, checksum)| format::ChunkPayload {
+        .map(|(bytes, stored, checksum, _)| format::ChunkPayload {
             bytes,
             stored: *stored,
             checksum: *checksum,
         })
         .collect();
-    Ok(format::assemble(header, &payloads))
+    Ok(format::assemble_filtered(header, &payloads, &filters))
+}
+
+/// Encodes one (possibly filtered) chunk with the configured block encoder;
+/// `None` for the stored codec.
+fn encode_block(options: &CompressOptions, block: &[u8]) -> Option<Vec<u8>> {
+    match (options.codec, options.encoder) {
+        (Codec::Stored, _) => None,
+        (Codec::Lz4, Encoder::Lz4Flex) => Some(lz4_flex::block::compress(block)),
+        (Codec::Lz4, Encoder::Greedy(params)) => {
+            Some(crate::lz4::encode::encode_block(block, &params))
+        }
+        (Codec::Glz, Encoder::Glz(params)) => Some(crate::glz::encode_block(block, &params)),
+        // Rejected by `compress` before any chunk is encoded.
+        (Codec::Lz4, Encoder::Glz(_)) | (Codec::Glz, _) => unreachable!(),
+    }
+}
+
+/// Encodes `chunk` under every candidate filter and returns the smallest
+/// block with its filter. Candidates are in tie-break order, and a later
+/// candidate wins only if it is strictly smaller. `None` if `encode` returns
+/// `None` (stored codec).
+fn select(
+    chunk: &[u8],
+    candidates: &[Filter],
+    encode: impl Fn(&[u8]) -> Option<Vec<u8>>,
+) -> Option<(Vec<u8>, Filter)> {
+    let mut best: Option<(Vec<u8>, Filter)> = None;
+    let mut scratch = Vec::new();
+    for &filter in candidates {
+        let block = if filter == Filter::None {
+            encode(chunk)?
+        } else {
+            scratch.resize(chunk.len(), 0);
+            crate::filter::forward_into(filter, chunk, &mut scratch);
+            encode(&scratch)?
+        };
+        if best.as_ref().is_none_or(|(b, _)| block.len() < b.len()) {
+            best = Some((block, filter));
+        }
+    }
+    best
 }
 
 pub fn decompress(file: &[u8], options: &DecompressOptions) -> Result<Vec<u8>, CpuError> {
@@ -204,9 +252,6 @@ fn decode_chunk(
     dst: &mut [u8],
     options: &DecompressOptions,
 ) -> Result<(), CpuError> {
-    if entry.filter != Filter::None {
-        return Err(CpuError::UnsupportedFilter { chunk });
-    }
     if entry.stored {
         dst.copy_from_slice(payload);
     } else if codec == Codec::Glz {
@@ -234,6 +279,8 @@ fn decode_chunk(
             }
         }
     }
+    // Checksums cover the original (unfiltered) bytes.
+    crate::filter::inverse_in_place(entry.filter, dst);
     if options.verify && has_checksums && checksum(dst) != entry.checksum {
         return Err(CpuError::Checksum { chunk });
     }

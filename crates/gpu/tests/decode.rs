@@ -134,19 +134,31 @@ fn checksum_mismatch_is_reported() {
 }
 
 #[test]
-fn filtered_chunks_are_rejected() {
+fn checksums_cover_the_unfiltered_bytes() {
+    // Relabelling a chunk's filter makes the decoder apply that inverse: the
+    // checksum (of the original chunk) no longer matches, and without
+    // verification the output equals the CPU decoder's.
     let Some(ctx) = context() else { return };
     let file = compress(&text(10_000), &opts(Encoder::Lz4Flex)).unwrap();
     let mut index = Index::parse(&file).unwrap();
     index.chunks[2].filter = Filter::Delta { width: 2 };
     let rest = &file[index.data_offset() as usize..];
     let patched = [index.to_bytes(), rest.to_vec()].concat();
+    let unverified = cpu::container::DecompressOptions {
+        verify: false,
+        ..Default::default()
+    };
+    let expected = cpu::container::decompress(&patched, &unverified).unwrap();
     for (cfg, decoder) in decoders(&ctx) {
         assert!(
             matches!(
                 decoder.decompress(&ctx, &patched, true),
-                Err(GpuDecodeError::UnsupportedFilter { chunk: 2 })
+                Err(GpuDecodeError::Checksum { chunk: 2 })
             ),
+            "{cfg}"
+        );
+        assert!(
+            decoder.decompress(&ctx, &patched, false).unwrap() == expected,
             "{cfg}"
         );
     }

@@ -97,9 +97,29 @@ group's matches at once.
 
 ## Filters
 
-Filters are reserved in v1 and land in milestone M7: byte-shuffle and delta over `filter_width`-byte
-elements, with the trailing `n % width` bytes untouched. Until a decoder implements a filter, it
-must reject chunks that use it.
+A chunk's filter is a reversible transform of its uncompressed bytes. The encoder filters the
+chunk, then compresses (or stores) the result. A decoder decodes the payload (stored or
+compressed) to `uncomp_size` bytes, then applies the inverse filter. With `w = filter_width` and
+`n = uncomp_size`, there are `m = n / w` whole elements, and the trailing `n % w` bytes are never
+changed by either direction.
+
+- **none (0):** identity; `filter_width` must be 0.
+- **byte-shuffle (1):** byte `j` of element `i` moves to position `j * m + i` (all first bytes,
+  then all second bytes, ...). The inverse moves it back.
+- **delta (2):** elements are little-endian `w`-byte unsigned integers. Element `i > 0` becomes
+  `elem[i] - elem[i - 1]` modulo `2^(8w)`; element 0 is unchanged. The inverse is a running sum
+  modulo `2^(8w)`.
+
+Checksums are always of the original, **unfiltered** chunk, so they also catch a wrong filter.
+The format allows a filter on a stored chunk (its raw payload is then the filtered bytes), but
+the encoders here never write one: a chunk that no candidate shrinks is stored unfiltered.
+
+Encoders choose filters per chunk (M7, CPU encoder with `FilterMode::Auto`): the chunk is
+compressed under each candidate of the level's set and the smallest block wins; ties go to the
+earlier candidate in the order none < shuffle < delta, then smaller width. Level 1 tries
+`{none, shuffle-4, delta-4}`; level 2 and above try `{none, shuffle-2, shuffle-4, shuffle-8,
+delta-2, delta-4, delta-8}`. If the winning block is not smaller than the chunk, the chunk is
+stored raw with filter none. The choice is an encoder setting; decoders only read the table.
 
 ## Validation
 

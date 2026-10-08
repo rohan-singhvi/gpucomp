@@ -140,9 +140,11 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
         };
         let mut run = run;
         let mut inputs = bench::suite::synthetic_inputs(cfg.bytes);
-        if let Some(dir) = &args.corpus {
-            inputs.extend(corpus_inputs(dir)?);
-        }
+        let corpus = match &args.corpus {
+            Some(dir) => corpus_inputs(dir)?,
+            None => Vec::new(),
+        };
+        inputs.extend(corpus.iter().cloned());
         run.measurements
             .extend(bench::suite::codecs(&inputs, &cfg)?);
         run.measurements
@@ -153,6 +155,10 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
             run.measurements
                 .extend(bench::suite::gpu_encode(ctx, &inputs, &cfg)?);
         }
+        let filter_inputs = filter_suite_inputs(cfg.bytes, &corpus);
+        drop(corpus);
+        run.measurements
+            .extend(bench::suite::filters(ctx.as_ref(), &filter_inputs, &cfg)?);
         print!("{}", bench::report::render(std::slice::from_ref(&run)));
         if args.record {
             let path = bench::store::write_run(&args.results_dir, &run)?;
@@ -169,6 +175,13 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// Inputs for the M7 filters suite: numeric data of `bytes` each, then the corpus.
+fn filter_suite_inputs(bytes: usize, corpus: &[(String, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
+    let mut inputs = bench::suite::numeric_inputs(bytes);
+    inputs.extend(corpus.iter().cloned());
+    inputs
 }
 
 /// Every regular file in `dir` (sorted by name) as `<dir name>/<file>`, plus
@@ -277,6 +290,24 @@ mod tests {
             ]
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn filter_suite_inputs_are_the_numeric_inputs_then_the_corpus() {
+        let corpus = vec![("silesia/all".to_string(), b"abc".to_vec())];
+        let inputs = filter_suite_inputs(1000, &corpus);
+        let names: Vec<_> = inputs.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "f32-points",
+                "sorted-u32",
+                "i16-audio",
+                "u64-timestamps",
+                "silesia/all"
+            ]
+        );
+        assert_eq!(inputs[0].1.len(), 1000);
     }
 
     #[test]

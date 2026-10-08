@@ -157,3 +157,91 @@ fn glz_suite_without_gpu_measures_the_cpu_paths() {
         ]
     );
 }
+
+const FILTER_CPU_ROWS: [&str; 6] = [
+    "compress.none.mt",
+    "compress.auto.mt",
+    "auto.wins.none",
+    "auto.wins.shuffle-4",
+    "auto.wins.delta-4",
+    "auto.wins.stored",
+];
+
+#[test]
+fn numeric_inputs_are_named_deterministic_and_exact_length() {
+    let inputs = bench::suite::numeric_inputs(100_003);
+    let names: Vec<_> = inputs.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        ["f32-points", "sorted-u32", "i16-audio", "u64-timestamps"]
+    );
+    for (name, data) in &inputs {
+        assert_eq!(data.len(), 100_003, "{name}");
+    }
+    assert_eq!(inputs, bench::suite::numeric_inputs(100_003));
+}
+
+#[test]
+fn filters_suite_without_gpu_compares_none_and_auto_and_counts_wins() {
+    let inputs = vec![bench::suite::numeric_inputs(1 << 18).remove(1)];
+    let rows = bench::suite::filters(None, &inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    let expected: Vec<String> = ["lz4", "glz"]
+        .iter()
+        .flat_map(|codec| FILTER_CPU_ROWS.map(|r| format!("cpu.{codec}.{r}")))
+        .collect();
+    assert_eq!(names, expected);
+    for codec in ["lz4", "glz"] {
+        let get = |r: &str| {
+            rows.iter()
+                .find(|m| m.name == format!("cpu.{codec}.{r}"))
+                .unwrap()
+        };
+        let (none, auto) = (get("compress.none.mt"), get("compress.auto.mt"));
+        assert!(none.gbps > 0.0 && auto.gbps > 0.0);
+        // Sorted integers: filters must pay off.
+        assert!(
+            auto.ratio.unwrap() > 1.2 * none.ratio.unwrap(),
+            "{codec}: {auto:?} vs {none:?}"
+        );
+        let shares: f64 = FILTER_CPU_ROWS[2..].iter().map(|r| get(r).gbps).sum();
+        assert!(
+            (shares - 1.0).abs() < 1e-9,
+            "{codec}: shares sum to {shares}"
+        );
+        assert!(get("auto.wins.none").gbps < 0.5, "{codec}");
+    }
+}
+
+#[test]
+fn filters_suite_with_gpu_times_filtered_decode() {
+    let Some(ctx) = context() else { return };
+    let inputs = vec![bench::suite::numeric_inputs(SMALL.bytes).remove(0)];
+    let rows = bench::suite::filters(Some(&ctx), &inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    let mut expected = Vec::new();
+    for codec in ["lz4", "glz"] {
+        expected.extend(
+            FILTER_CPU_ROWS[..2]
+                .iter()
+                .map(|r| format!("cpu.{codec}.{r}")),
+        );
+        for r in [
+            "decompress.none.kernel",
+            "decompress.auto.kernel",
+            "decompress.auto.e2e",
+            "compress.auto.e2e",
+        ] {
+            expected.push(format!("gpu.{codec}.{r}"));
+        }
+        expected.extend(
+            FILTER_CPU_ROWS[2..]
+                .iter()
+                .map(|r| format!("cpu.{codec}.{r}")),
+        );
+    }
+    assert_eq!(names, expected);
+    for m in rows.iter().filter(|m| m.name.starts_with("gpu.")) {
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+    }
+}

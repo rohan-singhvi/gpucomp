@@ -4,6 +4,7 @@ mod context;
 pub mod decode;
 mod dispatch;
 pub mod encode;
+pub mod filter;
 mod smoke;
 mod timer;
 

@@ -109,3 +109,51 @@ pub fn canterbury() -> Vec<(String, Vec<u8>)> {
         })
         .collect()
 }
+
+/// Numeric inputs that filters help (M7): sorted u32s, smooth f32 xyz points,
+/// i16 sine + noise and u64 timestamps, each with a ragged tail.
+pub fn numeric() -> Vec<(&'static str, Vec<u8>)> {
+    let mut s = 0x2545_F491_4F6C_DD1Du64;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    let mut v = 7u32;
+    let sorted: Vec<u8> = (0..9000)
+        .flat_map(|_| {
+            v = v.wrapping_add((next() % 40) as u32);
+            v.to_le_bytes()
+        })
+        .chain([1, 2, 3])
+        .collect();
+    let points: Vec<u8> = (0..4001)
+        .flat_map(|i| {
+            let t = i as f32 * 0.002;
+            [t.sin() * 50.0, t.cos() * 50.0, t]
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+        })
+        .collect();
+    let audio: Vec<u8> = (0..20_001)
+        .flat_map(|i| {
+            let x = (i as f32 * 0.03).sin() * 8000.0 + (next() % 64) as f32;
+            (x as i16).to_le_bytes()
+        })
+        .collect();
+    let mut t = 1_700_000_000_000u64;
+    let stamps: Vec<u8> = (0..5000u64)
+        .flat_map(|i| {
+            t += 1000 + (i * 7919) % 17;
+            t.to_le_bytes()
+        })
+        .chain([9; 5])
+        .collect();
+    vec![
+        ("sorted u32", sorted),
+        ("f32 points", points),
+        ("i16 audio", audio),
+        ("u64 timestamps", stamps),
+    ]
+}

@@ -351,6 +351,36 @@ fn assemble_lays_out_padded_payloads_after_the_table() {
     assert_eq!(idx.chunks[1].uncomp_size, 5);
 }
 
+#[test]
+fn assemble_filtered_records_each_chunks_filter() {
+    let h = Header {
+        total_size: 4096 + 5,
+        chunk_count: 2,
+        ..header()
+    };
+    let payloads = [
+        ChunkPayload {
+            bytes: &[1, 2, 3, 4],
+            stored: false,
+            checksum: 7,
+        },
+        ChunkPayload {
+            bytes: &[9; 5],
+            stored: true,
+            checksum: 8,
+        },
+    ];
+    let filters = [Filter::Delta { width: 8 }, Filter::None];
+    let file = assemble_filtered(h, &payloads, &filters);
+    let idx = Index::parse(&file).unwrap();
+    assert_eq!(idx.chunks[0].filter, Filter::Delta { width: 8 });
+    assert_eq!(idx.chunks[1].filter, Filter::None);
+    // Everything else matches the unfiltered layout.
+    let mut plain = Index::parse(&assemble(h, &payloads)).unwrap();
+    plain.chunks[0].filter = Filter::Delta { width: 8 };
+    assert_eq!(idx, plain);
+}
+
 // ---- random access ----
 
 #[test]

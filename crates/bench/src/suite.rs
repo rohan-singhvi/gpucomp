@@ -492,6 +492,234 @@ pub fn codecs(inputs: &[(String, Vec<u8>)], cfg: &SuiteConfig) -> anyhow::Result
     Ok(rows)
 }
 
+/// Numeric benchmark inputs of exactly `n` bytes each, the data filters are
+/// for (M7): `f32-points` (xyz of a smooth curve), `sorted-u32` (small random
+/// gaps), `i16-audio` (two sines plus noise) and `u64-timestamps` (≈1 ms
+/// steps with jitter). Deterministic.
+pub fn numeric_inputs(n: usize) -> Vec<(String, Vec<u8>)> {
+    let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    let fill = |mut elem: Box<dyn FnMut(u64) -> Vec<u8> + '_>| {
+        let mut out = Vec::with_capacity(n + 16);
+        let mut i = 0u64;
+        while out.len() < n {
+            out.extend(elem(i));
+            i += 1;
+        }
+        out.truncate(n);
+        out
+    };
+    let points = fill(Box::new(|i| {
+        let t = i as f32 * 1e-4;
+        [
+            (t * 3.0).sin() * 250.0,
+            (t * 2.0).cos() * 250.0,
+            t * 10.0 + (t * 7.0).sin(),
+        ]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect()
+    }));
+    let mut value = 1_000u32;
+    let sorted = fill(Box::new(|_| {
+        value = value.wrapping_add((next() % 64) as u32);
+        value.to_le_bytes().to_vec()
+    }));
+    let audio = fill(Box::new(|i| {
+        let t = i as f32 / 44_100.0;
+        let x = (t * 440.0 * std::f32::consts::TAU).sin() * 9000.0
+            + (t * 97.0 * std::f32::consts::TAU).sin() * 3000.0
+            + (next() % 256) as f32
+            - 128.0;
+        (x as i16).to_le_bytes().to_vec()
+    }));
+    let mut stamp = 1_700_000_000_000_000u64;
+    let stamps = fill(Box::new(|_| {
+        stamp += 1_000 + next() % 16;
+        stamp.to_le_bytes().to_vec()
+    }));
+    vec![
+        ("f32-points".into(), points),
+        ("sorted-u32".into(), sorted),
+        ("i16-audio".into(), audio),
+        ("u64-timestamps".into(), stamps),
+    ]
+}
+
+/// M7 filters: for each input and codec (`lz4` = the greedy twin, `glz`),
+/// CPU multi-threaded compression with filters `none` and `auto` (level 1:
+/// none, shuffle-4, delta-4), each row carrying that file's ratio. With a GPU,
+/// decode of both files (kernel; `auto` also end to end), so the kernels'
+/// difference shows the inverse-filter stage's cost. Last, rows
+/// `cpu.<codec>.auto.wins.<filter>` whose value (in the GB/s column) is the
+/// *share of chunks* that filter won, with `stored` for chunks no candidate
+/// shrank. 64 KiB chunks.
+pub fn filters(
+    ctx: Option<&Context>,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+) -> anyhow::Result<Vec<Measurement>> {
+    use cpu::container::{compress, decompress, CompressOptions, Encoder, FilterMode};
+    use format::{Codec, Filter, Index};
+    use gpu::decode::GpuDecoder;
+
+    let gpu = match ctx {
+        Some(ctx) => Some((
+            ctx,
+            GpuDecoder::new(ctx),
+            GpuTimer::new(ctx),
+            gpu::encode::GpuEncoder::new(ctx, Default::default())?,
+        )),
+        None => None,
+    };
+    let time = |f: &dyn Fn() -> anyhow::Result<()>| {
+        median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            f()?;
+            Ok(start.elapsed())
+        })
+    };
+    let mut rows = Vec::new();
+    for (name, data) in inputs {
+        if data.is_empty() {
+            continue;
+        }
+        let n = data.len() as u64;
+        for (codec_name, codec, encoder) in [
+            ("lz4", Codec::Lz4, Encoder::Greedy(Default::default())),
+            ("glz", Codec::Glz, Encoder::Glz(Default::default())),
+        ] {
+            let options = |filters| CompressOptions {
+                codec,
+                encoder,
+                filters,
+                ..CompressOptions::default()
+            };
+            let mut row = |label: String, value: f64, ratio: Option<f64>, timing| {
+                rows.push(Measurement {
+                    name: label,
+                    input: name.clone(),
+                    bytes: n,
+                    gbps: value,
+                    ratio,
+                    timing,
+                });
+            };
+            let mut files = Vec::new();
+            for (mode_name, mode) in [("none", FilterMode::None), ("auto", FilterMode::Auto)] {
+                let file = compress(data, &options(mode))?;
+                anyhow::ensure!(
+                    decompress(&file, &Default::default())? == *data,
+                    "CPU {codec_name} {mode_name} round trip of {name}"
+                );
+                let t = time(&|| Ok(compress(data, &options(mode)).map(drop)?))?;
+                let ratio = Some(n as f64 / file.len() as f64);
+                row(
+                    format!("cpu.{codec_name}.compress.{mode_name}.mt"),
+                    gbps(n, t),
+                    ratio,
+                    Timing::Cpu,
+                );
+                files.push((mode_name, file));
+            }
+
+            if let Some((ctx, decoder, timer, gpu_encoder)) = &gpu {
+                for (mode_name, file) in &files {
+                    anyhow::ensure!(
+                        decoder.decompress(ctx, file, false)? == *data,
+                        "GPU {codec_name} {mode_name} decode of {name}"
+                    );
+                    let ratio = Some(n as f64 / file.len() as f64);
+                    if let Some(prepared) = decoder.prepare_file(ctx, file)? {
+                        let (t, timing) = match timer {
+                            Some(timer) => (
+                                median_of(cfg.warmup, cfg.runs, || {
+                                    decoder.dispatch(ctx, &prepared, Some(timer));
+                                    Ok(timer.read(ctx)?)
+                                })?,
+                                Timing::GpuTimestamp,
+                            ),
+                            None => (
+                                time(&|| {
+                                    decoder.dispatch(ctx, &prepared, None);
+                                    Ok(ctx.wait()?)
+                                })?,
+                                Timing::WallGpu,
+                            ),
+                        };
+                        row(
+                            format!("gpu.{codec_name}.decompress.{mode_name}.kernel"),
+                            gbps(n, t),
+                            ratio,
+                            timing,
+                        );
+                    }
+                    if *mode_name == "auto" {
+                        let t = time(&|| Ok(decoder.decompress(ctx, file, false).map(drop)?))?;
+                        row(
+                            format!("gpu.{codec_name}.decompress.auto.e2e"),
+                            gbps(n, t),
+                            ratio,
+                            Timing::WallE2e,
+                        );
+                        // GPU filter selection; its file must equal the CPU's.
+                        let gpu_options = gpu::encode::GpuCompressOptions {
+                            codec,
+                            filters: gpu::encode::FilterMode::Auto,
+                            ..Default::default()
+                        };
+                        anyhow::ensure!(
+                            gpu_encoder.compress(ctx, data, &gpu_options)? == *file,
+                            "GPU {codec_name} auto file of {name} differs from the CPU's"
+                        );
+                        let t = time(&|| {
+                            Ok(gpu_encoder.compress(ctx, data, &gpu_options).map(drop)?)
+                        })?;
+                        row(
+                            format!("gpu.{codec_name}.compress.auto.e2e"),
+                            gbps(n, t),
+                            ratio,
+                            Timing::WallE2e,
+                        );
+                    }
+                }
+            }
+
+            let index = Index::parse(&files[1].1)?;
+            let total = index.chunks.len() as f64;
+            for (bucket, wins) in [
+                ("none", Filter::None),
+                ("shuffle-4", Filter::Shuffle { width: 4 }),
+                ("delta-4", Filter::Delta { width: 4 }),
+            ]
+            .map(|(bucket, f)| {
+                let count = index
+                    .chunks
+                    .iter()
+                    .filter(|c| !c.stored && c.filter == f)
+                    .count();
+                (bucket, count)
+            })
+            .into_iter()
+            .chain([("stored", index.chunks.iter().filter(|c| c.stored).count())])
+            {
+                row(
+                    format!("cpu.{codec_name}.auto.wins.{bucket}"),
+                    wins as f64 / total,
+                    None,
+                    Timing::Cpu,
+                );
+            }
+        }
+    }
+    Ok(rows)
+}
+
 /// Deterministic incompressible bytes (xorshift64).
 pub fn pseudo_random(n: usize) -> Vec<u8> {
     let mut state = 0x9E37_79B9_7F4A_7C15u64;

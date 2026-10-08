@@ -33,6 +33,16 @@ pub struct CompressArgs {
     /// GPU backend (with --gpu).
     #[arg(long, value_enum, requires = "gpu")]
     pub backend: Option<crate::BackendArg>,
+    /// Per-chunk filters: `auto` tries none, shuffle-4 and delta-4 on every
+    /// chunk and keeps the smallest (CPU only for now).
+    #[arg(long, value_enum, default_value_t = FiltersArg::None)]
+    pub filters: FiltersArg,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum FiltersArg {
+    None,
+    Auto,
 }
 
 #[derive(clap::Args, Debug)]
@@ -160,6 +170,10 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
             checksums: args.checksum,
             level: 1,
             independent_groups: args.independent_groups,
+            filters: match args.filters {
+                FiltersArg::None => gpu::encode::FilterMode::None,
+                FiltersArg::Auto => gpu::encode::FilterMode::Auto,
+            },
         };
         std::fs::write(&args.output, encoder.compress(&ctx, &input, &options)?)?;
         return Ok(());
@@ -181,6 +195,10 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         },
         checksums: args.checksum,
         level: 1,
+        filters: match args.filters {
+            FiltersArg::None => cpu::container::FilterMode::None,
+            FiltersArg::Auto => cpu::container::FilterMode::Auto,
+        },
     };
     std::fs::write(&args.output, cpu::container::compress(&input, &options)?)?;
     Ok(())

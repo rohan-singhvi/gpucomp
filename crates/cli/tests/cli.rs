@@ -235,3 +235,93 @@ fn gpu_glz_compress_matches_cpu_glz() {
         );
     }
 }
+
+/// Sorted u32s: delta- and shuffle-friendly.
+fn numeric_sample() -> Vec<u8> {
+    (0..60_000u32)
+        .flat_map(|i| (i * 37 + (i * i) % 11).to_le_bytes())
+        .collect()
+}
+
+#[test]
+fn filters_auto_round_trips_and_info_reports_the_filters() {
+    let (input, packed, output) = (temp("f.bin"), temp("f.gpcz"), temp("f.out"));
+    std::fs::write(&input, numeric_sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    for codec in ["lz4", "glz"] {
+        gpucomp(&[
+            "compress",
+            &s(&input),
+            &s(&packed),
+            "--codec",
+            codec,
+            "--filters",
+            "auto",
+            "--checksum",
+        ]);
+        let info = String::from_utf8(gpucomp(&["info", &s(&packed)]).stdout).unwrap();
+        let filters = info.lines().find(|l| l.starts_with("filters:")).unwrap();
+        assert!(
+            filters.contains("delta-") || filters.contains("shuffle-"),
+            "{codec}: {info}"
+        );
+        gpucomp(&["decompress", &s(&packed), &s(&output), "--verify"]);
+        assert!(
+            std::fs::read(&output).unwrap() == numeric_sample(),
+            "{codec}"
+        );
+        if has_gpu() {
+            gpucomp(&["decompress", &s(&packed), &s(&output), "--gpu", "--verify"]);
+            assert!(
+                std::fs::read(&output).unwrap() == numeric_sample(),
+                "{codec} gpu"
+            );
+        }
+    }
+    // `none` (the default) writes no filters.
+    gpucomp(&["compress", &s(&input), &s(&packed), "--filters", "none"]);
+    let info = String::from_utf8(gpucomp(&["info", &s(&packed)]).stdout).unwrap();
+    assert!(info.contains("filters:     none "), "{info}");
+}
+
+#[test]
+fn gpu_filter_selection_matches_the_cpu() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, gpu_packed, cpu_packed) = (temp("g.bin"), temp("g.gpu.gpcz"), temp("g.cpu.gpcz"));
+    std::fs::write(&input, numeric_sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    for codec in ["lz4", "glz"] {
+        gpucomp(&[
+            "compress",
+            &s(&input),
+            &s(&gpu_packed),
+            "--gpu",
+            "--codec",
+            codec,
+            "--filters",
+            "auto",
+        ]);
+        let mut cpu = vec![
+            "compress",
+            &*s(&input),
+            &*s(&cpu_packed),
+            "--codec",
+            codec,
+            "--filters",
+            "auto",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        if codec == "lz4" {
+            cpu.extend(["--encoder".to_string(), "greedy".to_string()]);
+        }
+        gpucomp(&cpu.iter().map(String::as_str).collect::<Vec<_>>());
+        assert!(
+            std::fs::read(&gpu_packed).unwrap() == std::fs::read(&cpu_packed).unwrap(),
+            "{codec}"
+        );
+    }
+}

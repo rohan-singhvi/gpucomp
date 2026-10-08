@@ -8,6 +8,7 @@ use std::ops::Range;
 use format::{Filter, Index};
 use wgpu::BufferUsages;
 
+use crate::filter::{Direction, FilterJob, FilterKernels, FilterPass};
 use crate::{dispatch_grid, Context, GpuError};
 
 const NAIVE_SHADER: &str = include_str!("../../shaders/lz4_decode_naive.wgsl");
@@ -47,8 +48,8 @@ pub enum GpuDecodeError {
     Chunk { chunk: usize, status: ChunkStatus },
     #[error("chunk {chunk}: checksum mismatch")]
     Checksum { chunk: usize },
-    #[error("chunk {chunk}: filter not supported by this decoder")]
-    UnsupportedFilter { chunk: usize },
+    #[error(transparent)]
+    Filter(#[from] crate::filter::FilterError),
     #[error("decoder configuration not supported: {0}")]
     Unsupported(String),
 }
@@ -102,6 +103,7 @@ impl Default for DecoderConfig {
 pub struct GpuDecoder {
     pipeline: wgpu::ComputePipeline,
     glz_pipeline: wgpu::ComputePipeline,
+    filters: FilterKernels,
     config: DecoderConfig,
 }
 
@@ -167,6 +169,7 @@ impl GpuDecoder {
         Ok(GpuDecoder {
             pipeline,
             glz_pipeline,
+            filters: FilterKernels::new(ctx),
             config,
         })
     }
@@ -265,13 +268,6 @@ impl GpuDecoder {
         plan: &plan::DecodePlan,
         src: &[u8],
     ) -> Result<Option<PreparedDecode>, GpuDecodeError> {
-        for (chunk, entry) in index.chunks[chunks.clone()].iter().enumerate() {
-            if entry.filter != Filter::None {
-                return Err(GpuDecodeError::UnsupportedFilter {
-                    chunk: chunks.start + chunk,
-                });
-            }
-        }
         if plan.chunks.is_empty() {
             return Ok(None);
         }
@@ -313,6 +309,7 @@ impl GpuDecoder {
                 resource: buffer.as_entire_binding(),
             }),
         });
+        let unfilter = self.prepare_unfilter(ctx, &index, chunks.clone(), plan, &dst_buf)?;
         Ok(Some(PreparedDecode {
             index,
             chunks,
@@ -320,6 +317,59 @@ impl GpuDecoder {
             dst_buf,
             status_buf,
             bind_group,
+            unfilter,
+        }))
+    }
+
+    /// For chunks with a filter: the decoded (still filtered) bytes are copied
+    /// to a compact scratch buffer, then the inverse filter writes them back
+    /// into the output. `None` if no chunk is filtered.
+    fn prepare_unfilter(
+        &self,
+        ctx: &Context,
+        index: &Index,
+        chunks: Range<usize>,
+        plan: &plan::DecodePlan,
+        dst_buf: &wgpu::Buffer,
+    ) -> Result<Option<Unfilter>, GpuDecodeError> {
+        let mut jobs = Vec::new();
+        let mut copies: Vec<(u64, u64, u64)> = Vec::new(); // (output, scratch, bytes)
+        let mut scratch_len = 0u64;
+        for (entry, desc) in index.chunks[chunks].iter().zip(&plan.chunks) {
+            if entry.filter == Filter::None {
+                continue;
+            }
+            let bytes = format::pad4(u64::from(desc.uncomp_size));
+            jobs.push(FilterJob {
+                filter: entry.filter,
+                src_offset: scratch_len as u32,
+                dst_offset: desc.dst_offset,
+                len: desc.uncomp_size,
+            });
+            let from = u64::from(desc.dst_offset);
+            match copies.last_mut() {
+                // Adjacent chunks go in one copy.
+                Some((at, _, n)) if *at + *n == from => *n += bytes,
+                _ => copies.push((from, scratch_len, bytes)),
+            }
+            scratch_len += bytes;
+        }
+        if jobs.is_empty() {
+            return Ok(None);
+        }
+        let scratch = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("unfilter scratch"),
+            size: scratch_len,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let pass = self
+            .filters
+            .prepare(ctx, Direction::Inverse, &scratch, dst_buf, &jobs)?;
+        Ok(Some(Unfilter {
+            scratch,
+            copies,
+            pass,
         }))
     }
 
@@ -331,10 +381,16 @@ impl GpuDecoder {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.clear_buffer(&p.dst_buf, 0, None);
+        // With an unfilter stage, the timer spans decode, copies and filters.
+        let decode_writes = match (timer, &p.unfilter) {
+            (Some(t), Some(_)) => Some(t.begin_writes()),
+            (Some(t), None) => Some(t.pass_writes()),
+            (None, _) => None,
+        };
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("lz4 decode"),
-                timestamp_writes: timer.map(crate::GpuTimer::pass_writes),
+                timestamp_writes: decode_writes,
             });
             pass.set_pipeline(self.pipeline_for(p.index.header.codec));
             pass.set_bind_group(0, &p.bind_group, &[]);
@@ -348,6 +404,13 @@ impl GpuDecoder {
                 ctx.device_limits().max_compute_workgroups_per_dimension,
             );
             pass.dispatch_workgroups(x, y, 1);
+        }
+        if let Some(u) = &p.unfilter {
+            for &(from, to, bytes) in &u.copies {
+                encoder.copy_buffer_to_buffer(&p.dst_buf, from, &u.scratch, to, bytes);
+            }
+            let writes = timer.map(crate::GpuTimer::end_writes);
+            self.filters.record(ctx, &mut encoder, &u.pass, writes);
         }
         if let Some(timer) = timer {
             timer.resolve(&mut encoder);
@@ -403,6 +466,15 @@ pub struct PreparedDecode {
     dst_buf: wgpu::Buffer,
     status_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    unfilter: Option<Unfilter>,
+}
+
+/// The inverse-filter stage of a decode (see `GpuDecoder::prepare_unfilter`).
+struct Unfilter {
+    scratch: wgpu::Buffer,
+    /// `(output offset, scratch offset, bytes)` copies, all 4-aligned.
+    copies: Vec<(u64, u64, u64)>,
+    pass: FilterPass,
 }
 
 impl PreparedDecode {

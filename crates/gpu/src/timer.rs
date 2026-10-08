@@ -72,6 +72,23 @@ impl GpuTimer {
     }
 
     /// Records the resolve of both timestamps; call after the timed pass ends.
+    /// Like [`pass_writes`](Self::pass_writes), but only the start: for the
+    /// first of several passes timed as one span.
+    pub fn begin_writes(&self) -> wgpu::ComputePassTimestampWrites<'_> {
+        wgpu::ComputePassTimestampWrites {
+            end_of_pass_write_index: None,
+            ..self.pass_writes()
+        }
+    }
+
+    /// Only the end: for the last of several passes timed as one span.
+    pub fn end_writes(&self) -> wgpu::ComputePassTimestampWrites<'_> {
+        wgpu::ComputePassTimestampWrites {
+            beginning_of_pass_write_index: None,
+            ..self.pass_writes()
+        }
+    }
+
     pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.resolve_query_set(&self.query_set, 0..2, &self.resolve, 0);
     }

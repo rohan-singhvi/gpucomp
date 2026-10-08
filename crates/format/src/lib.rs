@@ -325,18 +325,25 @@ pub struct ChunkPayload<'a> {
 }
 
 /// Writes a complete file: header, chunk table, then the payloads in order,
-/// each padded to 4 bytes. Filters are `None` (until M7).
+/// each padded to 4 bytes. Every chunk's filter is `None`.
 pub fn assemble(header: Header, payloads: &[ChunkPayload]) -> Vec<u8> {
+    assemble_filtered(header, payloads, &vec![Filter::None; payloads.len()])
+}
+
+/// [`assemble`] with each chunk's filter recorded in the table
+/// (`filters[i]` for payload `i`; the two slices have the same length).
+pub fn assemble_filtered(header: Header, payloads: &[ChunkPayload], filters: &[Filter]) -> Vec<u8> {
+    assert_eq!(payloads.len(), filters.len(), "one filter per payload");
     let mut chunks = Vec::with_capacity(payloads.len());
     let mut offset = 0u64;
-    for (i, p) in payloads.iter().enumerate() {
+    for (i, (p, &filter)) in payloads.iter().zip(filters).enumerate() {
         chunks.push(ChunkEntry {
             comp_offset: offset,
             comp_size: p.bytes.len() as u32,
             stored: p.stored,
             uncomp_size: header.uncomp_size_of(i as u32),
             checksum: p.checksum,
-            filter: Filter::None,
+            filter,
         });
         offset = pad4(offset + p.bytes.len() as u64);
     }

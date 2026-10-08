@@ -2,15 +2,17 @@
 //! decoder that reads its codec, on every available GPU backend, at several
 //! chunk sizes, must reproduce the input exactly, for whole files and byte
 //! ranges. Also runs the malformed-input suite against the GPU decoder on each
-//! backend.
+//! backend. M7 adds the CPU encoders with automatic filter selection (`*Auto`,
+//! levels 1 and 2) and numeric inputs that filters help.
 
 mod common;
 
 use std::io::Cursor;
 
-use common::{canterbury, contexts, fixtures, random, text};
+use common::{canterbury, contexts, fixtures, numeric, random, text};
 use cpu::container::{
     compress, decompress, decompress_range, CompressOptions, Decoder, DecompressOptions, Encoder,
+    FilterMode,
 };
 use format::Codec;
 use gpu::decode::GpuDecoder;
@@ -26,12 +28,26 @@ enum Enc {
     CpuGlzGroups,
     GpuGlz,
     GpuGlzGroups,
+    /// CPU encoders with `FilterMode::Auto` at level 1 (none, shuffle-4,
+    /// delta-4) or level 2 (adds widths 2 and 8).
+    CpuLz4FlexAuto,
+    CpuGreedyAuto2,
+    CpuGlzAuto,
+    CpuGlzGroupsAuto2,
+    /// GPU encoders with filter selection at level 2, twins of the CPU ones.
+    GpuAuto2,
+    GpuGlzGroupsAuto2,
 }
 
 impl Enc {
     fn codec(self) -> Codec {
         match self {
-            Enc::CpuLz4Flex | Enc::CpuGreedy | Enc::Gpu => Codec::Lz4,
+            Enc::CpuLz4Flex
+            | Enc::CpuGreedy
+            | Enc::Gpu
+            | Enc::CpuLz4FlexAuto
+            | Enc::CpuGreedyAuto2
+            | Enc::GpuAuto2 => Codec::Lz4,
             _ => Codec::Glz,
         }
     }
@@ -47,7 +63,7 @@ enum Dec {
     Gpu,
 }
 
-const ENCODERS: [Enc; 7] = [
+const ENCODERS: [Enc; 13] = [
     Enc::CpuLz4Flex,
     Enc::CpuGreedy,
     Enc::Gpu,
@@ -55,6 +71,12 @@ const ENCODERS: [Enc; 7] = [
     Enc::CpuGlzGroups,
     Enc::GpuGlz,
     Enc::GpuGlzGroups,
+    Enc::CpuLz4FlexAuto,
+    Enc::CpuGreedyAuto2,
+    Enc::CpuGlzAuto,
+    Enc::CpuGlzGroupsAuto2,
+    Enc::GpuAuto2,
+    Enc::GpuGlzGroupsAuto2,
 ];
 const DECODERS: [Dec; 3] = [Dec::CpuHandWritten, Dec::CpuLz4Flex, Dec::Gpu];
 
@@ -78,6 +100,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
         [&far[..], &far[..]].concat(),
     ));
     inputs.push(("long text".into(), text(3 << 20)));
+    inputs.extend(numeric().into_iter().map(|(n, d)| (n.to_string(), d)));
     inputs.extend(canterbury());
     inputs
 }
@@ -97,13 +120,18 @@ impl Paths<'_> {
             checksums: true,
             ..CompressOptions::default()
         };
+        let auto = |codec, encoder, level| CompressOptions {
+            level,
+            filters: FilterMode::Auto,
+            ..cpu(codec, encoder)
+        };
         let glz = |groups| {
             Encoder::Glz(cpu::glz::GlzParams {
                 independent_groups: groups,
                 ..Default::default()
             })
         };
-        let gpu = |codec, independent_groups| {
+        let gpu_with = |codec, independent_groups, level, filters| {
             self.encoder
                 .compress(
                     self.ctx,
@@ -113,10 +141,14 @@ impl Paths<'_> {
                         chunk_size,
                         checksums: true,
                         independent_groups,
-                        ..GpuCompressOptions::default()
+                        level,
+                        filters,
                     },
                 )
                 .unwrap()
+        };
+        let gpu = |codec, independent_groups| {
+            gpu_with(codec, independent_groups, 1, gpu::encode::FilterMode::None)
         };
         match enc {
             Enc::CpuLz4Flex => compress(input, &cpu(Codec::Lz4, Encoder::Lz4Flex)).unwrap(),
@@ -128,6 +160,20 @@ impl Paths<'_> {
             Enc::Gpu => gpu(Codec::Lz4, None),
             Enc::GpuGlz => gpu(Codec::Glz, None),
             Enc::GpuGlzGroups => gpu(Codec::Glz, Some(GROUPS)),
+            Enc::GpuAuto2 => gpu_with(Codec::Lz4, None, 2, gpu::encode::FilterMode::Auto),
+            Enc::GpuGlzGroupsAuto2 => {
+                gpu_with(Codec::Glz, Some(GROUPS), 2, gpu::encode::FilterMode::Auto)
+            }
+            Enc::CpuLz4FlexAuto => compress(input, &auto(Codec::Lz4, Encoder::Lz4Flex, 1)).unwrap(),
+            Enc::CpuGreedyAuto2 => compress(
+                input,
+                &auto(Codec::Lz4, Encoder::Greedy(Default::default()), 2),
+            )
+            .unwrap(),
+            Enc::CpuGlzAuto => compress(input, &auto(Codec::Glz, glz(None), 1)).unwrap(),
+            Enc::CpuGlzGroupsAuto2 => {
+                compress(input, &auto(Codec::Glz, glz(Some(GROUPS)), 2)).unwrap()
+            }
         }
     }
 
@@ -237,6 +283,8 @@ fn gpu_files_equal_their_cpu_twins_on_every_backend() {
                     (Enc::Gpu, Enc::CpuGreedy),
                     (Enc::GpuGlz, Enc::CpuGlz),
                     (Enc::GpuGlzGroups, Enc::CpuGlzGroups),
+                    (Enc::GpuAuto2, Enc::CpuGreedyAuto2),
+                    (Enc::GpuGlzGroupsAuto2, Enc::CpuGlzGroupsAuto2),
                 ] {
                     assert!(
                         paths.compress(gpu, input, chunk_size)

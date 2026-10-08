@@ -295,3 +295,77 @@ Host work is now as large as the kernel: allocating a 4×-input scratch buffer p
 reading back whole output slots (≈ 1.0× input, though the result is ~0.5×), and packing
 on the CPU. Next: GPU-side packing so only compressed bytes are read back, reusable
 buffers, then faster match finding (word-wise compares, larger workgroups).
+
+## M7 — Filters: CPU selection, GPU inverse, forward GPU kernels for the encoder
+Built by a parallel agent in a separate copy of the repo, then merged and re-verified
+(249 tests, clippy and fmt clean).
+- **Selection** (`FilterMode::Auto`): each chunk is compressed under the level's
+  candidates (level ≤ 1: none, shuffle-4, delta-4; level ≥ 2 adds widths 2 and 8), and
+  the strictly smallest block wins, so ties go to the lower (filter id, width). If no
+  candidate's block is smaller than the chunk, the chunk is stored raw **unfiltered**.
+  Checksums cover the unfiltered bytes. Decoders apply the inverse after any payload,
+  stored ones included: a filter on a stored chunk is legal but never written. With
+  `Auto`, `CompressOptions.level` now chooses the candidate set (it used to be only
+  informational).
+- **Format plumbing**: `format::assemble_filtered(header, payloads, filters)`; `assemble`
+  wraps it with all `None`. `ChunkPayload` is unchanged, so the GPU encoder kept
+  compiling during the parallel work. It switches to `assemble_filtered` when GPU
+  selection lands.
+- **GPU**: `gpu::filter::FilterKernels` runs forward or inverse shuffle and delta over
+  (src range → dst range) jobs, one 256-invocation workgroup per job, each output word
+  written by one owner. Delta's inverse is a workgroup prefix scan. The decoder decodes
+  as before, copies filtered chunks into a compact scratch buffer (adjacent chunks
+  merged into one copy), and runs the inverse back into the output. Shuffle can't be
+  done in place.
+- **Results** (agent's run, noisy GPU): sorted u32 1.00 → 2.66×, u64 timestamps
+  1.58 → 3.04×, f32 points 1.00 → 1.44×, i16 audio 1.00 → 1.06×, Silesia 1.97 → 2.03×
+  (+3%). Shuffle-4 wins every numeric chunk and ~10% of Silesia's; delta-4 wins ~1%.
+  Alone, delta leaves random low bytes between zero runs too short for LZ to match;
+  delta *then* shuffle is the obvious M11 follow-up. Trying 3 candidates cuts CPU
+  compression throughput by about 2.7–4.6× (Silesia 0.95 → 0.35 GB/s), so the plan's
+  cheap estimator is worth trying at level 1. The GPU inverse runs at 21–67 GB/s alone
+  and doesn't measurably change Silesia's decode time.
+
+## GPU-side packing and reusable encoder buffers
+Built by a parallel agent in a separate copy, then merged and re-verified. End-to-end
+GPU compression (0.69 GB/s on Silesia) was half the kernel speed (1.25). Every call
+allocated all buffers (including 4 bytes of scratch per input byte), read back every
+output slot (≈ 1.0× the input, although the result is ≈ 0.5×), and packed on the CPU.
+`compress` now reads back only the per-chunk sizes after encoding. The host lays out
+the payloads with the CPU rule (stored when the block doesn't shrink the chunk, every
+payload padded to 4 bytes). A fourth kernel, `encode_pack.wgsl`, copies each block from
+its slot (or the raw input for stored chunks) into one contiguous, zero-padded data
+section, and only that is read back. Offsets are u32 within a batch on the GPU and
+u64 across batches on the host. Checksums are computed while the GPU encodes. Buffers
+are cached in the encoder and grow on demand. Bindings use exact sizes, so shaders
+see the same array lengths as with fresh buffers. Output slots are cleared each encode,
+and every scratch, info and size entry is written before it's read. The input goes
+through a reused mapped staging buffer, because `Queue::write_buffer` allocates a fresh
+one per call and filling it page-faults (about 20 ms → 3.5 ms for 212 MB).
+`GpuEncoder::with_max_batch_chunks` caps batch size (the test seam for multi-batch
+files, and a memory bound). Output is byte-identical. Agent's numbers (shared GPU):
+Silesia end to end 0.68 → about 1.2 GB/s for LZ4 and GLZ, kernel unchanged. What
+remains is about 4 ms upload, 2 ms pack and 6 ms copying into the result `Vec`, so the
+kernels are the bottleneck again. Open: the encoder keeps its largest batch's buffers
+(about 7.5× the batch) for its lifetime, and batches don't yet overlap (M8).
+
+## M7 — GPU filter selection (integrated after both parallel tasks)
+`GpuCompressOptions { filters: FilterMode::Auto, level }` uses `filter_candidates(level)`,
+which is identical to `cpu::filter::candidates` (a test checks it). Per batch:
+1. Upload once and encode the unfiltered candidate in the cached buffers.
+2. For each other candidate, run `FilterKernels` forward from the input buffer into a
+   filtered copy, then run the three encode kernels on it into that candidate's own
+   output slots (one submission per candidate). Read back only each candidate's sizes.
+3. On the host, choose per chunk the strictly smallest block, earlier candidate on ties.
+   A chunk whose best block doesn't shrink it is stored raw and unfiltered.
+4. Pack one pass per candidate that won any chunk (stored chunks go with the unfiltered
+   pass). The pack shader skips entries with `SKIP_BIT`. All passes write one data
+   section, which is read back once.
+
+Batches shrink by the number of candidates, since each keeps its own slots. Files are
+byte-identical to the CPU's `FilterMode::Auto` files: LZ4 and GLZ, levels 1 and 2,
+numeric and M1 inputs, multi-batch, in the matrix (now 13 encoders, 2,592 exact
+combinations on Metal), and in the CLI (`compress --gpu --filters auto`, previously
+refused). The CLI still always uses level 1; `--level` belongs to M9. A possible
+optimisation: chunks where the unfiltered block already wins clearly could skip the
+other candidates, which needs the estimator the plan mentions.
