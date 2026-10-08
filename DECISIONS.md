@@ -425,3 +425,75 @@ Exhaustive 2.00× at 0.57 (unfiltered: 1.94× at 1.72). CPU: 0.68 vs 0.39 GB/s. 
 similar. Numeric inputs: Auto's ratio equals Exhaustive's to two decimals. Sampling
 can be misled when a chunk's start isn't representative (a test builds such a chunk).
 On real data that cost Silesia 0.5%.
+
+## M8 — Large files and streaming
+**Chunk table reserved up front, not a footer.** The input length is known before
+compressing (`compress_stream(reader, len, …)`), so `chunk_count` is too. The
+streaming encoder writes a placeholder header and table, streams each batch's data
+after them, then seeks back and writes the real table. Format v1 is unchanged and the
+table stays O(1) to locate for range reads. A footer table was rejected: it would need
+a format change, and either a trailing pointer or a read from the end of the file. The
+cost is that output must be seekable (a file, not a pipe).
+
+**Memory model.** Batches are sized by a GPU memory budget (`with_memory_budget`,
+`--gpu-memory`, default 3 GiB, see below) as well as by the binding limit.
+- Encoder: `encoder_bytes_per_chunk` = 8 × chunk (input, match scratch, filtered
+  copy, staging) + one output slot + 32, plus the group table for GLZ g-modes, plus
+  per-candidate sample buffers (`Auto`) or full candidate copies (`Exhaustive`).
+  Batch = min(binding limit, budget / bytes per chunk).
+- Decoder: `batch_bytes` = padded payloads + 3 × output (output, inverse-filter
+  scratch, readback staging) + 20 B per chunk. Batches are planned at **budget / 2**
+  because two are in flight.
+
+**Decoder pipelining is 2-deep.** Batch i+1 is uploaded and dispatched before batch i
+is read back, so upload, kernel and readback overlap across batches. `decompress`,
+`decompress_range` and `decompress_stream` share one loop. **The encoder is not
+pipelined yet.** Each batch waits for its sizes, then for its packed data, before the
+next starts. That's a candidate follow-up.
+
+**4 GiB round trip** (`cargo test --release -p gpu --test stream -- --ignored`):
+passed in 13.8 s, process peak RSS 483 MB, with a 512 MiB GPU budget.
+
+**Finding: small budgets hurt compression, not decompression.** Silesia (212 MB) via
+the CLI: compress 0.26 s at 1 GiB vs 0.74 s at 128 MiB. Decompress 0.18 s vs 0.24 s.
+The parse kernel runs one lane per chunk, so a 128 MiB budget's batches (~217 chunks)
+leave it badly under-occupied.
+A segmented parse (several lanes per chunk) would also make small budgets cheaper.
+
+**The same effect shows at the default budget.** The recorded M8 run reads lower than
+M7-estimator on GPU compress end to end (Silesia LZ4 1.72 → 1.19 GB/s, Auto 1.07 →
+0.64), with kernels unchanged. At 1 GiB, Silesia (212 MB) splits into 2 batches and the
+256 MiB synthetics into 3, where M7 ran one. In-process A/B on Silesia, same binary,
+interleaved runs:
+
+| Budget | Batches | LZ4 none | LZ4 auto |
+|---|---|---|---|
+| 4 GiB | 1 | 1.74 GB/s (122 ms) | 1.10 |
+| 2 GiB | 1 | 1.72 (123 ms) | — |
+| 1 GiB | 2 | 1.20 (177 ms) | 0.64 |
+| 512 MiB | 4 | 0.78 (273 ms) | 0.47 |
+
+Each extra batch costs ~55 ms, about one whole parse kernel. The parse is
+latency-bound at one lane per chunk, so a half-size batch takes nearly as long as a
+full one. Streaming bounds memory, but throughput then depends on batch count until
+the parse gets more parallelism.
+
+**Decision: default budget 3 GiB** (was 1 GiB while developing). That's enough to
+encode 256 MiB in one batch, with or without `Auto` filters (~590 KB / ~687 KB of GPU
+memory per 64 KiB chunk), so benchmark-sized inputs run as fast as M7. A unit test
+pins this. `Exhaustive` (~850 KB per chunk) still splits 256 MiB in two. 2 GiB was
+considered: it fits plain Silesia only. Larger files still pay ~55 ms per extra
+batch. The real fix is more parse parallelism (segmented parse), not a bigger budget.
+`--gpu-memory` lowers the cap on smaller GPUs.
+Recorded M8 run (3 GiB): every Silesia GPU path is within ±1% of M7-estimator or above
+it. The exception is `Exhaustive` on the 256 MiB numeric synthetics, which split into 2
+batches and run 20–26% slower than M7. That's accepted: `Exhaustive` is the slow,
+opt-in mode.
+
+**Decoder: no extra copy of the output.** With 3 GiB, GPU decompress end to end was
+still 9–16% below M7 (Silesia LZ4 coop 1.73 → 1.57 GB/s, GLZ 2.06 → 1.74), with
+kernels unchanged and Silesia in one batch. The shared batch loop handed each batch to
+a sink that copied it into a fresh `Vec`: 212 MB and ~22 ms, with first-touch page
+faults. M7 returned the readback `Vec` as is. The sink now takes each batch by value,
+and `append_batch` takes over the first batch without copying. Silesia
+`decompress`: 138.6 → 122.3 ms (1.53 → 1.73 GB/s, equal to M7).

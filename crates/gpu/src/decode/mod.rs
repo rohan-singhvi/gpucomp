@@ -2,7 +2,8 @@
 
 pub mod plan;
 
-use std::io::{Read, Seek, SeekFrom};
+use std::borrow::Cow;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 
 use format::{Filter, Index};
@@ -52,6 +53,8 @@ pub enum GpuDecodeError {
     Filter(#[from] crate::filter::FilterError),
     #[error("decoder configuration not supported: {0}")]
     Unsupported(String),
+    #[error("writing decoded output: {0}")]
+    Write(std::io::Error),
 }
 
 impl ChunkStatus {
@@ -105,6 +108,7 @@ pub struct GpuDecoder {
     glz_pipeline: wgpu::ComputePipeline,
     filters: FilterKernels,
     config: DecoderConfig,
+    memory_budget: u64,
 }
 
 fn compute_pipeline(
@@ -171,6 +175,7 @@ impl GpuDecoder {
             glz_pipeline,
             filters: FilterKernels::new(ctx),
             config,
+            memory_budget: crate::encode::DEFAULT_GPU_MEMORY,
         })
     }
 
@@ -181,6 +186,82 @@ impl GpuDecoder {
         }
     }
 
+    /// Caps the GPU memory one batch may use (default
+    /// [`crate::encode::DEFAULT_GPU_MEMORY`]); large files decode in batches.
+    pub fn with_memory_budget(mut self, bytes: u64) -> Self {
+        self.memory_budget = bytes;
+        self
+    }
+
+    /// Decompresses a whole `.gpcz` file from `reader` into `writer`, a batch
+    /// at a time, and returns the bytes written.
+    pub fn decompress_stream<R: Read + Seek, W: Write>(
+        &self,
+        ctx: &Context,
+        reader: &mut R,
+        writer: &mut W,
+        verify: bool,
+    ) -> Result<u64, GpuDecodeError> {
+        let index = format::read_index(reader)?;
+        let data_offset = index.data_offset();
+        let mut written = 0u64;
+        self.decode_batches(
+            ctx,
+            &index,
+            0..index.chunks.len(),
+            verify,
+            &mut |span| read_span(reader, data_offset, span).map(Cow::Owned),
+            &mut |bytes| {
+                writer.write_all(&bytes).map_err(GpuDecodeError::Write)?;
+                written += bytes.len() as u64;
+                Ok(())
+            },
+        )?;
+        Ok(written)
+    }
+
+    /// The batch loop behind every decode: splits `chunks` into batches that
+    /// fit the memory budget and binding limit, and pipelines them two at a
+    /// time (batch i + 1 is uploaded and dispatched before batch i is read
+    /// back). `read` returns a span of the data section; `sink` receives each
+    /// batch's output in order.
+    fn decode_batches<'a>(
+        &self,
+        ctx: &Context,
+        index: &Index,
+        chunks: Range<usize>,
+        verify: bool,
+        read: &mut dyn FnMut(Range<u64>) -> Result<Cow<'a, [u8]>, GpuDecodeError>,
+        sink: &mut dyn FnMut(Vec<u8>) -> Result<(), GpuDecodeError>,
+    ) -> Result<(), GpuDecodeError> {
+        let limit = batch_limit(ctx);
+        // Two batches are in flight at once.
+        let budget = self.memory_budget / 2;
+        let batches = plan::batches(index, chunks, budget, limit);
+        log::debug!(
+            "GPU decoder: {} batch(es), budget {} MiB",
+            batches.len(),
+            self.memory_budget >> 20
+        );
+        let mut pending: Option<PreparedDecode> = None;
+        for range in batches {
+            let plan = plan::plan(index, range.clone(), limit)?;
+            let src = read(plan.src.clone())?;
+            let prepared = self.prepare(ctx, index.clone(), range, &plan, &src)?;
+            if let Some(p) = &prepared {
+                self.dispatch(ctx, p, None);
+            }
+            if let Some(previous) = pending.take() {
+                sink(self.finish(ctx, &previous, verify)?)?;
+            }
+            pending = prepared;
+        }
+        if let Some(previous) = pending {
+            sink(self.finish(ctx, &previous, verify)?)?;
+        }
+        Ok(())
+    }
+
     /// Decompresses a whole `.gpcz` file held in memory.
     pub fn decompress(
         &self,
@@ -188,13 +269,22 @@ impl GpuDecoder {
         file: &[u8],
         verify: bool,
     ) -> Result<Vec<u8>, GpuDecodeError> {
-        match self.prepare_file(ctx, file)? {
-            None => Ok(Vec::new()),
-            Some(prepared) => {
-                self.dispatch(ctx, &prepared, None);
-                self.finish(ctx, &prepared, verify)
-            }
-        }
+        let index = Index::parse(file)?;
+        let data = &file[index.data_offset() as usize..];
+        index.validate(data.len() as u64)?;
+        let mut out = Vec::new();
+        self.decode_batches(
+            ctx,
+            &index,
+            0..index.chunks.len(),
+            verify,
+            &mut |span| Ok(Cow::Borrowed(&data[span.start as usize..span.end as usize])),
+            &mut |bytes| {
+                append_batch(&mut out, bytes);
+                Ok(())
+            },
+        )?;
+        Ok(out)
     }
 
     /// Decompresses `[offset, offset + len)`, reading only the index and the
@@ -209,15 +299,19 @@ impl GpuDecoder {
     ) -> Result<Vec<u8>, GpuDecodeError> {
         let index = format::read_index(reader)?;
         let chunks = index.chunks_for_range(offset, len)?;
-        let plan = plan::plan(&index, chunks.clone(), batch_limit(ctx))?;
-        let mut src = vec![0u8; (plan.src.end - plan.src.start) as usize];
-        reader
-            .seek(SeekFrom::Start(index.data_offset() + plan.src.start))
-            .map_err(format::ReadError::from)?;
-        reader
-            .read_exact(&mut src)
-            .map_err(format::ReadError::from)?;
-        let mut out = self.decode(ctx, &index, chunks.clone(), &plan, &src, verify)?;
+        let data_offset = index.data_offset();
+        let mut out = Vec::new();
+        self.decode_batches(
+            ctx,
+            &index,
+            chunks.clone(),
+            verify,
+            &mut |span| read_span(reader, data_offset, span).map(Cow::Owned),
+            &mut |bytes| {
+                append_batch(&mut out, bytes);
+                Ok(())
+            },
+        )?;
         let first = chunks.start as u64 * u64::from(index.header.chunk_size);
         out.drain(..(offset.saturating_sub(first) as usize).min(out.len()));
         out.truncate(len as usize);
@@ -239,25 +333,6 @@ impl GpuDecoder {
         let plan = plan::plan(&index, chunks.clone(), batch_limit(ctx))?;
         let src = &data[plan.src.start as usize..plan.src.end as usize];
         self.prepare(ctx, index, chunks, &plan, src)
-    }
-
-    /// Decodes `chunks` of `index` from `src` (the plan's payload span).
-    fn decode(
-        &self,
-        ctx: &Context,
-        index: &Index,
-        chunks: Range<usize>,
-        plan: &plan::DecodePlan,
-        src: &[u8],
-        verify: bool,
-    ) -> Result<Vec<u8>, GpuDecodeError> {
-        match self.prepare(ctx, index.clone(), chunks, plan, src)? {
-            None => Ok(Vec::new()),
-            Some(prepared) => {
-                self.dispatch(ctx, &prepared, None);
-                self.finish(ctx, &prepared, verify)
-            }
-        }
     }
 
     fn prepare(
@@ -484,9 +559,59 @@ impl PreparedDecode {
     }
 }
 
+/// Reads `span` (relative to the data section at `data_offset`) from `reader`.
+fn read_span<R: Read + Seek>(
+    reader: &mut R,
+    data_offset: u64,
+    span: Range<u64>,
+) -> Result<Vec<u8>, GpuDecodeError> {
+    let mut bytes = vec![0u8; (span.end - span.start) as usize];
+    reader
+        .seek(SeekFrom::Start(data_offset + span.start))
+        .map_err(format::ReadError::from)?;
+    reader
+        .read_exact(&mut bytes)
+        .map_err(format::ReadError::from)?;
+    Ok(bytes)
+}
+
 /// Largest span one decode may bind: the storage binding limit, and u32 shader addressing.
 fn batch_limit(ctx: &Context) -> u64 {
     ctx.device_limits()
         .max_storage_buffer_binding_size
         .min(u64::from(u32::MAX) & !3)
+}
+
+/// Appends a decoded batch to `out`, taking it over without a copy when `out`
+/// is still empty (a single-batch decode returns the readback as is).
+fn append_batch(out: &mut Vec<u8>, batch: Vec<u8>) {
+    if out.is_empty() {
+        *out = batch;
+    } else {
+        out.extend_from_slice(&batch);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_batch_is_taken_over_without_a_copy() {
+        let mut out = Vec::new();
+        let batch = vec![1u8, 2, 3];
+        let ptr = batch.as_ptr();
+        append_batch(&mut out, batch);
+        assert_eq!(out, [1, 2, 3]);
+        assert_eq!(out.as_ptr(), ptr, "first batch was copied");
+    }
+
+    #[test]
+    fn later_batches_are_appended_in_order() {
+        let mut out = Vec::new();
+        append_batch(&mut out, vec![1, 2]);
+        append_batch(&mut out, vec![]);
+        append_batch(&mut out, vec![3]);
+        assert_eq!(out, [1, 2, 3]);
+    }
 }

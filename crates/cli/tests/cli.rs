@@ -325,3 +325,47 @@ fn gpu_filter_selection_matches_the_cpu() {
         );
     }
 }
+
+#[test]
+fn gpu_paths_stream_files_within_a_memory_budget() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, packed, cpu_packed, out) = (
+        temp("m.txt"),
+        temp("m.gpcz"),
+        temp("m.cpu.gpcz"),
+        temp("m.out"),
+    );
+    let data: Vec<u8> = sample().repeat(12); // ~3.6 MB
+    std::fs::write(&input, &data).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    gpucomp(&[
+        "compress",
+        &s(&input),
+        &s(&packed),
+        "--gpu",
+        "--gpu-memory",
+        "1M",
+        "--checksum",
+    ]);
+    gpucomp(&[
+        "compress",
+        &s(&input),
+        &s(&cpu_packed),
+        "--encoder",
+        "greedy",
+        "--checksum",
+    ]);
+    assert!(std::fs::read(&packed).unwrap() == std::fs::read(&cpu_packed).unwrap());
+    gpucomp(&[
+        "decompress",
+        &s(&packed),
+        &s(&out),
+        "--gpu",
+        "--gpu-memory",
+        "512K",
+        "--verify",
+    ]);
+    assert!(std::fs::read(&out).unwrap() == data);
+}

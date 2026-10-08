@@ -74,6 +74,43 @@ pub fn plan(index: &Index, chunks: Range<usize>, limit: u64) -> Result<DecodePla
     })
 }
 
+/// GPU bytes one batch of `entries` needs: the uploaded payloads, the output
+/// three times over (output buffer, inverse-filter scratch, readback staging)
+/// and 20 bytes per chunk (descriptor and status).
+pub fn batch_bytes(entries: &[format::ChunkEntry]) -> u64 {
+    entries
+        .iter()
+        .map(|e| pad4(u64::from(e.comp_size)) + 3 * u64::from(e.uncomp_size) + 20)
+        .sum()
+}
+
+/// Splits `chunks` into consecutive batches of at most `budget` GPU bytes
+/// ([`batch_bytes`]) and at most `limit` bytes of payload or output each
+/// (the binding limit). A chunk that alone exceeds the budget gets a batch of
+/// its own.
+pub fn batches(index: &Index, chunks: Range<usize>, budget: u64, limit: u64) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut start = chunks.start;
+    while start < chunks.end {
+        let (mut bytes, mut src, mut dst) = (0u64, 0u64, 0u64);
+        let mut end = start;
+        while end < chunks.end {
+            let e = &index.chunks[end];
+            let (s, d) = (pad4(u64::from(e.comp_size)), u64::from(e.uncomp_size));
+            let next = bytes + batch_bytes(std::slice::from_ref(e));
+            let fits = next <= budget && src + s <= limit && dst + d <= limit;
+            if end > start && !fits {
+                break;
+            }
+            (bytes, src, dst) = (next, src + s, dst + d);
+            end += 1;
+        }
+        out.push(start..end);
+        start = end;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use format::{ChunkEntry, Codec, Filter, Header};
@@ -168,5 +205,44 @@ mod tests {
                 limit: 4199
             })
         );
+    }
+
+    #[test]
+    fn batch_bytes_counts_payloads_three_outputs_and_descriptors() {
+        let idx = index();
+        // Payloads padded to 4: 104 + 4096 + 52; outputs 10_000.
+        assert_eq!(batch_bytes(&idx.chunks), 4252 + 3 * 10_000 + 3 * 20);
+        assert_eq!(batch_bytes(&idx.chunks[1..2]), 4096 + 3 * 4096 + 20);
+    }
+
+    #[test]
+    fn a_big_budget_keeps_everything_in_one_batch() {
+        assert_eq!(batches(&index(), 0..3, u64::MAX, u64::MAX), vec![(0..3)]);
+    }
+
+    #[test]
+    fn a_small_budget_splits_into_consecutive_batches() {
+        let idx = index();
+        let one = batch_bytes(&idx.chunks[0..1]);
+        let two = batch_bytes(&idx.chunks[0..2]);
+        assert_eq!(batches(&idx, 0..3, two, u64::MAX), [0..2, 2..3]);
+        assert_eq!(batches(&idx, 0..3, one, u64::MAX), [0..1, 1..2, 2..3]);
+    }
+
+    #[test]
+    fn chunks_bigger_than_the_budget_still_get_a_batch() {
+        assert_eq!(batches(&index(), 0..3, 1, u64::MAX), [0..1, 1..2, 2..3]);
+    }
+
+    #[test]
+    fn the_binding_limit_also_splits_batches() {
+        // Outputs of chunks 0 and 1 together (8192) exceed a 5000-byte limit.
+        assert_eq!(batches(&index(), 0..3, u64::MAX, 5000), [0..1, 1..2, 2..3]);
+    }
+
+    #[test]
+    fn batches_cover_sub_ranges_and_empty_ranges() {
+        assert_eq!(batches(&index(), 1..3, u64::MAX, u64::MAX), vec![(1..3)]);
+        assert!(batches(&index(), 2..2, u64::MAX, u64::MAX).is_empty());
     }
 }

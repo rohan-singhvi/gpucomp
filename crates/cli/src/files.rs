@@ -33,8 +33,12 @@ pub struct CompressArgs {
     /// GPU backend (with --gpu).
     #[arg(long, value_enum, requires = "gpu")]
     pub backend: Option<crate::BackendArg>,
+    /// GPU memory budget per batch (with --gpu), e.g. 512M or 2G. Large files
+    /// are processed in batches that fit.
+    #[arg(long, value_parser = parse_bytes, requires = "gpu")]
+    pub gpu_memory: Option<u64>,
     /// Per-chunk filters: `auto` tries none, shuffle-4 and delta-4 on every
-    /// chunk and keeps the smallest (CPU only for now).
+    /// chunk and keeps the smallest.
     #[arg(long, value_enum, default_value_t = FiltersArg::None)]
     pub filters: FiltersArg,
 }
@@ -70,6 +74,9 @@ pub struct DecompressArgs {
     /// GPU backend (with --gpu).
     #[arg(long, value_enum, requires = "gpu")]
     pub backend: Option<crate::BackendArg>,
+    /// GPU memory budget per batch (with --gpu), e.g. 512M or 2G.
+    #[arg(long, value_parser = parse_bytes, requires = "gpu")]
+    pub gpu_memory: Option<u64>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -90,6 +97,21 @@ pub enum EncoderArg {
 pub enum DecoderArg {
     HandWritten,
     Lz4Flex,
+}
+
+/// Parses a byte count like `123`, `512K`, `8M` or `2G` (binary units).
+pub fn parse_bytes(text: &str) -> Result<u64, String> {
+    let (digits, shift) = match text.chars().last() {
+        Some('k' | 'K') => (&text[..text.len() - 1], 10),
+        Some('m' | 'M') => (&text[..text.len() - 1], 20),
+        Some('g' | 'G') => (&text[..text.len() - 1], 30),
+        _ => (text, 0),
+    };
+    let n: u64 = digits
+        .parse()
+        .map_err(|_| format!("invalid byte count {text:?}"))?;
+    n.checked_mul(1 << shift)
+        .ok_or_else(|| format!("byte count {text:?} is too large"))
 }
 
 /// Parses `4096`, `64K` or `1M` (binary units).
@@ -157,12 +179,14 @@ pub fn describe(index: &Index, file_len: u64) -> String {
 }
 
 pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
-    let input = std::fs::read(&args.input)?;
     if args.gpu {
         let ctx = gpu::Context::new(&gpu::ContextOptions {
             backends: args.backend.map(crate::BackendArg::backends),
         })?;
-        let encoder = gpu::encode::GpuEncoder::new(&ctx, Default::default())?;
+        let budget = args.gpu_memory.unwrap_or(gpu::encode::DEFAULT_GPU_MEMORY);
+        log::info!("GPU memory budget: {} MiB per batch", budget >> 20);
+        let encoder =
+            gpu::encode::GpuEncoder::new(&ctx, Default::default())?.with_memory_budget(budget);
         let options = gpu::encode::GpuCompressOptions {
             codec: match args.codec {
                 CodecArg::Lz4 => Codec::Lz4,
@@ -179,9 +203,16 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
                 FiltersArg::Exhaustive => gpu::encode::FilterMode::Exhaustive,
             },
         };
-        std::fs::write(&args.output, encoder.compress(&ctx, &input, &options)?)?;
+        // Streamed: only one batch of input is in memory at a time.
+        let input = std::fs::File::open(&args.input)?;
+        let len = input.metadata()?.len();
+        let mut reader = std::io::BufReader::new(input);
+        let mut writer = std::io::BufWriter::new(std::fs::File::create(&args.output)?);
+        encoder.compress_stream(&ctx, &mut reader, len, &mut writer, &options)?;
+        std::io::Write::flush(&mut writer)?;
         return Ok(());
     }
+    let input = std::fs::read(&args.input)?;
     let options = CompressOptions {
         codec: match args.codec {
             CodecArg::Stored => Codec::Stored,
@@ -221,15 +252,23 @@ pub fn decompress(args: &DecompressArgs) -> anyhow::Result<()> {
         let ctx = gpu::Context::new(&gpu::ContextOptions {
             backends: args.backend.map(crate::BackendArg::backends),
         })?;
-        let decoder = gpu::decode::GpuDecoder::new(&ctx);
-        let output = match (args.offset, args.length) {
+        let budget = args.gpu_memory.unwrap_or(gpu::encode::DEFAULT_GPU_MEMORY);
+        log::info!("GPU memory budget: {} MiB per batch", budget >> 20);
+        let decoder = gpu::decode::GpuDecoder::new(&ctx).with_memory_budget(budget);
+        let mut reader = std::io::BufReader::new(std::fs::File::open(&args.input)?);
+        match (args.offset, args.length) {
             (Some(offset), Some(length)) => {
-                let mut file = std::io::BufReader::new(std::fs::File::open(&args.input)?);
-                decoder.decompress_range(&ctx, &mut file, offset, length, args.verify)?
+                let output =
+                    decoder.decompress_range(&ctx, &mut reader, offset, length, args.verify)?;
+                std::fs::write(&args.output, output)?;
             }
-            _ => decoder.decompress(&ctx, &std::fs::read(&args.input)?, args.verify)?,
-        };
-        std::fs::write(&args.output, output)?;
+            _ => {
+                // Streamed: one batch of output in memory at a time.
+                let mut writer = std::io::BufWriter::new(std::fs::File::create(&args.output)?);
+                decoder.decompress_stream(&ctx, &mut reader, &mut writer, args.verify)?;
+                std::io::Write::flush(&mut writer)?;
+            }
+        }
         return Ok(());
     }
     let output = match (args.offset, args.length) {
@@ -262,6 +301,15 @@ mod tests {
         assert_eq!(parse_size("64K"), Ok(65_536));
         assert_eq!(parse_size("64k"), Ok(65_536));
         assert_eq!(parse_size("1M"), Ok(1 << 20));
+    }
+
+    #[test]
+    fn byte_counts_accept_binary_suffixes_up_to_gigabytes() {
+        assert_eq!(parse_bytes("512K"), Ok(512 << 10));
+        assert_eq!(parse_bytes("8m"), Ok(8 << 20));
+        assert_eq!(parse_bytes("2G"), Ok(2 << 30));
+        assert_eq!(parse_bytes("123"), Ok(123));
+        assert!(parse_bytes("1T").is_err() && parse_bytes("").is_err());
     }
 
     #[test]
