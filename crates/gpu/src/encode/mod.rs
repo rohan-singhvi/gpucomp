@@ -7,8 +7,13 @@ use wgpu::BufferUsages;
 use crate::{dispatch_grid, Context, GpuError};
 
 const COMMON_SHADER: &str = include_str!("../../shaders/encode_common.wgsl");
+const MATCHES_SHADER: &str = include_str!("../../shaders/encode_matches.wgsl");
+const PARSE_SHADER: &str = include_str!("../../shaders/encode_parse.wgsl");
+const EMIT_SHARED: &str = include_str!("../../shaders/encode_emit_shared.wgsl");
 const LZ4_EMIT: &str = include_str!("../../shaders/lz4_emit.wgsl");
 const GLZ_EMIT: &str = include_str!("../../shaders/glz_emit.wgsl");
+/// Chunks per parse workgroup (one invocation each); matches the shader.
+const PARSE_WG: u32 = 64;
 
 /// Match-finding parameters; same meaning as `cpu::lz4::encode::Params`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,10 +93,10 @@ pub fn slot_size(chunk_size: u32) -> u32 {
     format::pad4(u64::from(chunk_size) + u64::from(chunk_size) / 255 + 16) as u32
 }
 
-/// Workgroup memory the encoder needs: the hash table, the two scans, the
-/// parse's dependency-elimination group list and four counters.
+/// Workgroup memory the encoder needs: the larger of the match-finding
+/// kernel's hash table and the emit kernel's scans (the parse uses none).
 pub fn workgroup_bytes(params: &EncodeParams) -> u32 {
-    4 * (1 << params.hash_log) + 12 * params.block + 8 * MAX_GROUP + 16
+    (4 << params.hash_log).max(12 * params.block + 16)
 }
 
 /// How many chunks one dispatch may encode so that the input, match scratch
@@ -103,8 +108,16 @@ pub fn chunks_per_batch(chunk_size: u32, binding_limit: u64) -> u64 {
 
 pub struct GpuEncoder {
     params: EncodeParams,
-    lz4_pipeline: wgpu::ComputePipeline,
-    glz_pipeline: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
+    matches: wgpu::ComputePipeline,
+    lz4: CodecPipelines,
+    glz: CodecPipelines,
+}
+
+/// The codec-specific kernels: parse (size accounting) and emit.
+struct CodecPipelines {
+    parse: wgpu::ComputePipeline,
+    emit: wgpu::ComputePipeline,
 }
 
 /// Raw output of one or more encode dispatches: per-chunk compressed sizes and
@@ -147,8 +160,51 @@ impl GpuEncoder {
         if !(4..=65_535).contains(&params.probe_len) {
             return unsupported(format!("probe_len {} not in 4..=65535", params.probe_len));
         }
-        let pipeline = |label: &str, emit: &str, codec: u32| {
-            let source = format!("{COMMON_SHADER}\n{emit}");
+        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let layout = ctx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("encode"),
+                entries: &[
+                    storage(0, true),  // input
+                    storage(1, false), // scratch
+                    storage(2, false), // output
+                    storage(3, false), // sizes
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    storage(5, false), // chunk_info
+                    storage(6, false), // group_buf
+                ],
+            });
+        let pipeline_layout = ctx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("encode"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+        let pipeline = |label: &str, kernel: &[&str], constants: &[(&str, f64)]| {
+            let source = std::iter::once(COMMON_SHADER)
+                .chain(kernel.iter().copied())
+                .collect::<Vec<_>>()
+                .join("\n");
             let module = ctx
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -158,24 +214,35 @@ impl GpuEncoder {
             ctx.device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(label),
-                    layout: None,
+                    layout: Some(&pipeline_layout),
                     module: &module,
                     entry_point: Some("main"),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[
-                            ("WG_SIZE", f64::from(params.block)),
-                            ("HASH_LOG", f64::from(params.hash_log)),
-                            ("CODEC", f64::from(codec)),
-                        ],
+                        constants,
                         ..Default::default()
                     },
                     cache: None,
                 })
         };
+        let wg = ("WG_SIZE", f64::from(params.block));
+        let codec = |name: &str, emit: &str, id: u32| CodecPipelines {
+            parse: pipeline(
+                &format!("{name} parse"),
+                &[PARSE_SHADER],
+                &[("CODEC", f64::from(id))],
+            ),
+            emit: pipeline(&format!("{name} emit"), &[EMIT_SHARED, emit], &[wg]),
+        };
         Ok(GpuEncoder {
             params,
-            lz4_pipeline: pipeline("lz4 encode", LZ4_EMIT, 0),
-            glz_pipeline: pipeline("glz encode", GLZ_EMIT, 1),
+            matches: pipeline(
+                "encode matches",
+                &[MATCHES_SHADER],
+                &[wg, ("HASH_LOG", f64::from(params.hash_log))],
+            ),
+            lz4: codec("lz4", LZ4_EMIT, 0),
+            glz: codec("glz", GLZ_EMIT, 1),
+            layout,
         })
     }
 
@@ -368,15 +435,35 @@ impl GpuEncoder {
             contents: bytemuck::cast_slice(&params),
             usage: BufferUsages::UNIFORM,
         });
+        let info_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("encode chunk info"),
+            size: chunks * 16,
+            usage: BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        // Only the GLZ parse with dependency elimination uses the group lists.
+        let group_bytes = if groups > 0 {
+            chunks * u64::from(MAX_GROUP) * 8
+        } else {
+            8
+        };
+        let group_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("encode group lists"),
+            size: group_bytes,
+            usage: BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("encode"),
-            layout: &self.pipeline_for(options.codec).get_bind_group_layout(0),
+            layout: &self.layout,
             entries: &[
                 (0, &input_buf),
                 (1, &scratch_buf),
                 (2, &output_buf),
                 (3, &sizes_buf),
                 (4, &params_buf),
+                (5, &info_buf),
+                (6, &group_buf),
             ]
             .map(|(binding, buffer)| wgpu::BindGroupEntry {
                 binding,
@@ -392,10 +479,10 @@ impl GpuEncoder {
         }
     }
 
-    fn pipeline_for(&self, codec: format::Codec) -> &wgpu::ComputePipeline {
+    fn kernels(&self, codec: format::Codec) -> &CodecPipelines {
         match codec {
-            format::Codec::Glz => &self.glz_pipeline,
-            format::Codec::Lz4 | format::Codec::Stored => &self.lz4_pipeline,
+            format::Codec::Glz => &self.glz,
+            format::Codec::Lz4 | format::Codec::Stored => &self.lz4,
         }
     }
 
@@ -410,13 +497,20 @@ impl GpuEncoder {
                 label: Some("encode"),
                 timestamp_writes: timer.map(crate::GpuTimer::pass_writes),
             });
-            pass.set_pipeline(self.pipeline_for(p.codec));
+            // Three kernels; wgpu orders their storage accesses.
+            let max = ctx.device_limits().max_compute_workgroups_per_dimension;
+            let per_chunk = dispatch_grid(p.chunks, max);
+            let parse = dispatch_grid(p.chunks.div_ceil(PARSE_WG), max);
+            let kernels = self.kernels(p.codec);
             pass.set_bind_group(0, &p.bind_group, &[]);
-            let (x, y) = dispatch_grid(
-                p.chunks,
-                ctx.device_limits().max_compute_workgroups_per_dimension,
-            );
-            pass.dispatch_workgroups(x, y, 1);
+            for (pipeline, (x, y)) in [
+                (&self.matches, per_chunk),
+                (&kernels.parse, parse),
+                (&kernels.emit, per_chunk),
+            ] {
+                pass.set_pipeline(pipeline);
+                pass.dispatch_workgroups(x, y, 1);
+            }
         }
         if let Some(timer) = timer {
             timer.resolve(&mut encoder);
@@ -474,16 +568,17 @@ mod tests {
     }
 
     #[test]
-    fn workgroup_memory_is_table_scans_group_list_and_counters() {
-        // table + scan (u32) + scan2 (vec2) per invocation + MAX_GROUP vec2 + 4 counters.
+    fn workgroup_memory_is_the_larger_of_the_table_and_the_emit_scans() {
+        // Match finding holds the hash table; emit holds two scans (u32 and
+        // vec2 per invocation) and counters; the parse holds nothing.
         let p = EncodeParams::default();
-        assert_eq!(workgroup_bytes(&p), 4 * 4096 + 12 * 64 + 8 * 64 + 16);
-        let small = EncodeParams {
-            hash_log: 10,
-            block: 128,
+        assert_eq!(workgroup_bytes(&p), 4 * 4096);
+        let small_table = EncodeParams {
+            hash_log: 8,
+            block: 256,
             ..p
         };
-        assert_eq!(workgroup_bytes(&small), 4 * 1024 + 12 * 128 + 8 * 64 + 16);
+        assert_eq!(workgroup_bytes(&small_table), 12 * 256 + 16);
     }
 
     #[test]

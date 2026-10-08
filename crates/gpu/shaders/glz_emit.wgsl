@@ -1,4 +1,4 @@
-// GLZ emit (appended to encode_common.wgsl). Writes the layout of
+// Encoder kernel 3, GLZ (appended to encode_common.wgsl and encode_emit_shared.wgsl). Writes the layout of
 // cpu::glz::emit: header words, then per sequence (one invocation each, WG_SIZE
 // at a time) its token, offset and extension values at positions given by a
 // prefix sum of escape counts, and its literals at a prefix sum of literal
@@ -29,30 +29,21 @@ fn main(
     @builtin(local_invocation_index) lid: u32,
 ) {
     let chunk = wid.x + wid.y * nwg.x;
-    let chunk_count = (params.input_len + params.chunk_size - 1u) / params.chunk_size;
-    if (chunk >= chunk_count) {
+    if (chunk >= chunk_count()) {
         return;
     }
     let start = chunk * params.chunk_size;
-    let n = min(params.chunk_size, params.input_len - start);
+    let n = chunk_len(chunk);
     let sbase = chunk * params.chunk_size;
-
-    find_matches(start, n, sbase, lid);
-    if (lid == 0u) {
-        parse(start, n, sbase);
-    }
-    storageBarrier();
-    let count = workgroupUniformLoad(&seq_count);
-    let total = workgroupUniformLoad(&encoded_size);
+    let shape = load_info(chunk, lid);
+    let count = shape.x;
+    let total = shape.y;
     if (total >= n) {
-        // Won't shrink the chunk: report the size and skip emit.
-        if (lid == 0u) {
-            sizes[chunk] = total;
-        }
+        // Won't shrink the chunk; the parse already reported its size.
         return;
     }
-    let ext_count = workgroupUniformLoad(&glz_ext_count);
-    let wide = workgroupUniformLoad(&glz_wide);
+    let ext_count = shape.z;
+    let wide = shape.w;
 
     let out_base = chunk * params.slot_size;
     let offsets_at = out_base + 8u + pad4(count);

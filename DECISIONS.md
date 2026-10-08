@@ -264,3 +264,34 @@ LZ4's naive kernel still leads: text 3.0 vs LZ4 coop 1.9 and naive 7.3; mixed 8.
 decode speed for −20% ratio on Silesia, so it stays an option, not the default. End
 to end everything is still bound by 6–10 GB/s transfers. GPU compression (~0.7 GB/s)
 remains the weak spot, and the serial parse is still next.
+
+## Encoder split into three kernels (occupancy fix)
+Profiling the fused encoder (one workgroup per chunk doing match finding, parse and
+emit) showed that occupancy was the problem, not the amount of work. On Silesia, shrinking only
+the hash table 16 KiB → 4 KiB made the kernel 2.6× faster (0.73 → 1.91 GB/s), and
+the *unchanged* serial parse phase alone 2.8× faster (0.84 → 0.30 s/GB; 60% of kernel
+time). The parse runs on one lane of each workgroup, so the number of parses in flight
+equals the number of resident workgroups, and the 16 KiB table capped that at a few
+per core. Bigger chunks were also *faster* (1 MiB: 1.16 GB/s), because of fixed
+per-chunk costs (table zeroing, per-block barriers).
+
+The encoder is now three kernels in one compute pass, sharing one explicit bind-group
+layout (seven bindings), so each kernel's occupancy depends on its own needs:
+1. `encode_matches.wgsl`: one workgroup per chunk, the only kernel with the table.
+2. `encode_parse.wgsl`: **one invocation per chunk, 64 chunks per workgroup, no
+   workgroup memory**, so every SIMD lane parses its own chunk (the M5 lesson). GLZ's
+   dependency-group lists moved to a per-chunk slice of global memory
+   (`chunk × MAX_GROUP`): a private array would be allocated per invocation.
+3. `lz4_emit.wgsl` / `glz_emit.wgsl` (+ `encode_emit_shared.wgsl`): one workgroup per
+   chunk; the parse's results come through a per-chunk `chunk_info` buffer.
+Each kernel is its own shader module (common prelude + kernel), which also sidesteps a
+naga 30 assertion seen with pipeline constants for overrides an entry point doesn't use.
+Output is unchanged, and it's byte-identical to the CPU twins in every existing test.
+
+Kernel GB/s, before → after: Silesia LZ4 0.72 → 1.25, GLZ g64 0.39 → 1.07, text
+0.75 → 1.69, zeros 0.59 → 2.33, random 0.72 → 4.89. Match finding (~0.44 s/GB when
+measured fused) is now roughly half the kernel. End to end rose only 0.48 → 0.69 GB/s.
+Host work is now as large as the kernel: allocating a 4×-input scratch buffer per call,
+reading back whole output slots (≈ 1.0× input, though the result is ~0.5×), and packing
+on the CPU. Next: GPU-side packing so only compressed bytes are read back, reusable
+buffers, then faster match finding (word-wise compares, larger workgroups).

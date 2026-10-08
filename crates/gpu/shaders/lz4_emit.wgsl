@@ -1,4 +1,4 @@
-// LZ4 emit (appended to encode_common.wgsl): a workgroup prefix sum over the
+// Encoder kernel 3, LZ4 (appended to encode_common.wgsl and encode_emit_shared.wgsl): a workgroup prefix sum over the
 // sequences' encoded sizes gives each its output offset; each sequence's owner
 // writes its header bytes and short literal runs, and the whole workgroup
 // copies literal runs of at least LONG_LITERALS bytes.
@@ -63,26 +63,17 @@ fn main(
     // Everything up to the parse depends only on uniform values, so barriers
     // below are in uniform control flow.
     let chunk = wid.x + wid.y * nwg.x;
-    let chunk_count = (params.input_len + params.chunk_size - 1u) / params.chunk_size;
-    if (chunk >= chunk_count) {
+    if (chunk >= chunk_count()) {
         return;
     }
     let start = chunk * params.chunk_size;
-    let n = min(params.chunk_size, params.input_len - start);
+    let n = chunk_len(chunk);
     let sbase = chunk * params.chunk_size;
-
-    find_matches(start, n, sbase, lid);
-    if (lid == 0u) {
-        parse(start, n, sbase);
-    }
-    storageBarrier();
-    let count = workgroupUniformLoad(&seq_count);
-    let total = workgroupUniformLoad(&encoded_size);
+    let shape = load_info(chunk, lid);
+    let count = shape.x;
+    let total = shape.y;
     if (total >= n) {
-        // Won't shrink the chunk: report the size and skip emit.
-        if (lid == 0u) {
-            sizes[chunk] = total;
-        }
+        // Won't shrink the chunk; the parse already reported its size.
         return;
     }
 
