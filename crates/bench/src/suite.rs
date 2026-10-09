@@ -176,63 +176,74 @@ pub fn gpu_decode_configs(
     Ok(rows)
 }
 
-/// GPU compression of each input (64 KiB chunks, level-1 parameters):
-/// kernel-only and end to end (upload, encode, readback, packing, checksums off).
+/// GPU compression of each input (64 KiB chunks) at levels 1 to 3: kernel-only
+/// and end to end (upload, encode, readback, packing, checksums off). Level 1
+/// keeps the original row names (`gpu.lz4.compress.*`); levels 2 and 3 are
+/// `gpu.lz4.l2.compress.*` and `gpu.lz4.l3.compress.*`.
 pub fn gpu_encode(
     ctx: &Context,
     inputs: &[(String, Vec<u8>)],
     cfg: &SuiteConfig,
 ) -> anyhow::Result<Vec<Measurement>> {
-    use gpu::encode::{GpuCompressOptions, GpuEncoder};
+    use gpu::encode::{EncodeParams, GpuCompressOptions, GpuEncoder};
 
-    let encoder = GpuEncoder::new(ctx, Default::default())?;
-    let options = GpuCompressOptions::default();
     let timer = GpuTimer::new(ctx);
     let mut rows = Vec::new();
-    for (name, data) in inputs {
-        if data.is_empty() {
-            continue;
+    for level in 1..=3u8 {
+        let encoder = GpuEncoder::new(ctx, EncodeParams::for_level(level))?;
+        let options = GpuCompressOptions {
+            level,
+            ..GpuCompressOptions::default()
+        };
+        let prefix = match level {
+            1 => "gpu.lz4.compress".to_string(),
+            l => format!("gpu.lz4.l{l}.compress"),
+        };
+        for (name, data) in inputs {
+            if data.is_empty() {
+                continue;
+            }
+            let file = encoder.compress(ctx, data, &options)?;
+            let n = data.len() as u64;
+            let ratio = Some(n as f64 / file.len() as f64);
+            let row = |label: &str, elapsed: Duration, timing| Measurement {
+                name: format!("{prefix}.{label}"),
+                input: name.clone(),
+                bytes: n,
+                gbps: gbps(n, elapsed),
+                ratio,
+                timing,
+            };
+
+            let prepared = encoder.prepare(ctx, data, &options)?;
+            let (kernel, timing) = match &timer {
+                Some(timer) => (
+                    median_of(cfg.warmup, cfg.runs, || {
+                        encoder.dispatch(ctx, &prepared, Some(timer));
+                        Ok(timer.read(ctx)?)
+                    })?,
+                    Timing::GpuTimestamp,
+                ),
+                None => (
+                    median_of(cfg.warmup, cfg.runs, || {
+                        let start = Instant::now();
+                        encoder.dispatch(ctx, &prepared, None);
+                        ctx.wait()?;
+                        Ok(start.elapsed())
+                    })?,
+                    Timing::WallGpu,
+                ),
+            };
+            drop(prepared);
+            rows.push(row("kernel", kernel, timing));
+
+            let e2e = median_of(cfg.warmup, cfg.runs, || {
+                let start = Instant::now();
+                encoder.compress(ctx, data, &options)?;
+                Ok(start.elapsed())
+            })?;
+            rows.push(row("e2e", e2e, Timing::WallE2e));
         }
-        let file = encoder.compress(ctx, data, &options)?;
-        let n = data.len() as u64;
-        let ratio = Some(n as f64 / file.len() as f64);
-        let row = |label: &str, elapsed: Duration, timing| Measurement {
-            name: label.into(),
-            input: name.clone(),
-            bytes: n,
-            gbps: gbps(n, elapsed),
-            ratio,
-            timing,
-        };
-
-        let prepared = encoder.prepare(ctx, data, &options)?;
-        let (kernel, timing) = match &timer {
-            Some(timer) => (
-                median_of(cfg.warmup, cfg.runs, || {
-                    encoder.dispatch(ctx, &prepared, Some(timer));
-                    Ok(timer.read(ctx)?)
-                })?,
-                Timing::GpuTimestamp,
-            ),
-            None => (
-                median_of(cfg.warmup, cfg.runs, || {
-                    let start = Instant::now();
-                    encoder.dispatch(ctx, &prepared, None);
-                    ctx.wait()?;
-                    Ok(start.elapsed())
-                })?,
-                Timing::WallGpu,
-            ),
-        };
-        drop(prepared);
-        rows.push(row("gpu.lz4.compress.kernel", kernel, timing));
-
-        let e2e = median_of(cfg.warmup, cfg.runs, || {
-            let start = Instant::now();
-            encoder.compress(ctx, data, &options)?;
-            Ok(start.elapsed())
-        })?;
-        rows.push(row("gpu.lz4.compress.e2e", e2e, Timing::WallE2e));
     }
     Ok(rows)
 }

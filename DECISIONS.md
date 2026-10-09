@@ -615,3 +615,74 @@ Recorded (lazy vs parse-seg), Silesia:
   decode +6–8%.
 - Text 1.816 → 1.922× (+5% compress speed).
 - GLZ g64 (serial parse) compresses 3–5% slower for +1.3% ratio.
+
+## In-block visibility: not worth it at level 1 (negative result)
+Positions in a 128-position match-finding block don't see each other. The CPU twin
+says full visibility (a plain sequential hash table, so the output wouldn't depend
+on block size) would raise Silesia from 1.993× to 2.041× with the lazy parse. That
+was implemented exactly, and it passed every twin test. GPU kernel times:
+
+| Variant | Silesia ratio | Silesia kernel | text 256 MiB kernel |
+|---|---|---|---|
+| none (level 1 today) | 1.993× | 77.8 ms | 57.8 ms |
+| scan back to the first lane sharing the low 8 hash bits (exact) | 2.039× | 267 ms | 230 ms |
+| same tables, scan disabled | 1.993× | 91.7 ms | 72.1 ms |
+| window K=1 (recompute the hash of p−1) | 2.010× | 82.8 ms | 69.0 ms |
+| window K=4 | 2.015× | 97.0 ms | 75.8 ms |
+| window K=8 | 2.018× | 102.8 ms | 91.7 ms |
+
+- **The exact scan is divergent.** Each 32-wide SIMD group waits for its longest
+  scan, so it costs the maximum, not the average.
+- **Its extra memory and barrier also cost ~14 ms.** The first-lane table, the
+  hash array and one more barrier take workgroup memory past 16 KB.
+- **Bounded windows cost more speed than they add ratio** at every K.
+
+Finding the previous equal key across a 128-lane block cheaply needs subgroup
+shuffles or a sort, neither of which is worth it here.
+
+**Decision:** keep block semantics. Hash chains get their ratio from older
+candidates, and the parsing research found that without in-block links they lose
+only ~2% with the lazy parse (D=4: 2.233× vs 2.277× linked).
+
+## Hash chains and levels (M9)
+**Semantics** (CPU twin `find_matches`, GPU `encode_matches.wgsl`):
+- A position's first candidate is the table entry: the latest position with its hash
+  from an earlier block.
+- With `depth` > 1, the position also stores that entry as its chain link
+  (`chain`, one u32 per input byte). It then follows links to older candidates,
+  up to `depth` of them. Links skip same-block positions, as the table does.
+- The longest match wins; ties go to the nearest candidate (strictly longer
+  replaces). A candidate beyond 64 KiB ends the walk.
+- GPU shortcuts that keep the result exact:
+  - skip extending a candidate whose byte at the current best length differs;
+  - stop once the best match reaches the probe cap;
+  - issue the next link's load before extending.
+
+  The skip and the early stop cut depth 16 from 472 to 355 ms on Silesia. Depth 2
+  and 4 barely change. Their cost is the dependent global loads along the chain.
+- `storageBarrier()` between blocks makes links visible to later blocks. It's only
+  compiled in with DEPTH > 1.
+
+**Level 1 keeps its own code path.** The general loop at DEPTH = 1 cost 6–7% on the
+GPU (Silesia kernel 2.72 → 2.55 GB/s in the first recorded run) even with the barrier
+compiled out, so DEPTH = 1 runs the original single-candidate code. The CPU twin
+likewise (within 2.5% of before, single-threaded).
+
+**Levels:** `Params::for_level` / `EncodeParams::for_level` map 1/2/3 to depth 1/4/16
+(clamped), and `--level` in the CLI applies to the GPU encoder and its CPU twins. The
+level is stored in the header, and from level 2 it also widens the filter candidates
+(M7).
+
+Recorded (M9-levels), GPU LZ4, 64 KiB chunks:
+
+| Level (depth) | Silesia ratio | kernel GB/s | end to end GB/s | text ratio |
+|---|---|---|---|---|
+| 1 (1) | 1.993× | 2.71 | 2.27 | 1.922× |
+| 2 (4) | 2.212× | 1.30 | 1.20 | 2.261× |
+| 3 (16) | 2.319× | 0.61 | 0.56 | 2.612× |
+
+lz4_flex (multi-threaded CPU) is 2.036× at 5.3 GB/s for reference. Level 2 beats it
+on ratio by 9% but is far slower, so the deep levels need a faster candidate search.
+Next is multi-way buckets in workgroup memory: no dependent global loads, though
+fewer hash bits. Depth-2 numbers (2.118×, ~1.8 GB/s kernel) are in
+the CPU/GPU measurements above if a level between 1 and 2 is wanted.

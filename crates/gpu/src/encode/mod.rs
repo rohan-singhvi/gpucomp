@@ -36,6 +36,23 @@ pub struct EncodeParams {
     pub probe_len: u32,
     /// Lazy parse (see `cpu::lz4::encode::Params::lazy`).
     pub lazy: bool,
+    /// Hash-chain candidates per position (see `cpu::lz4::encode::Params::depth`).
+    pub depth: u32,
+}
+
+impl EncodeParams {
+    /// The encoder for compression `level`; must equal
+    /// `cpu::lz4::encode::Params::for_level`.
+    pub fn for_level(level: u8) -> Self {
+        EncodeParams {
+            depth: match level {
+                0 | 1 => 1,
+                2 => 4,
+                _ => 16,
+            },
+            ..EncodeParams::default()
+        }
+    }
 }
 
 impl Default for EncodeParams {
@@ -47,6 +64,7 @@ impl Default for EncodeParams {
             hash_log: 12,
             probe_len: 16,
             lazy: true,
+            depth: 1,
         }
     }
 }
@@ -122,6 +140,9 @@ impl Default for GpuCompressOptions {
 /// decoder resolves 64 sequences per step, so larger groups can't help it.
 pub const MAX_GROUP: u32 = 64;
 
+/// Largest hash-chain depth (candidates per position).
+pub const MAX_DEPTH: u32 = 64;
+
 /// Segments per chunk in the parallel parse (one lane each); emit finds a
 /// sequence through the per-chunk table of where each segment's run starts.
 pub const PARSE_SEGMENTS: u32 = 32;
@@ -168,10 +189,14 @@ pub const DEFAULT_GPU_MEMORY: u64 = 3 << 30;
 /// plus per-chunk sizes, info and pack entries (and, with dependency
 /// elimination, the group lists). Filter selection keeps one extra input-sized
 /// buffer (sampled) or two per extra candidate (exhaustive).
-pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions) -> u64 {
+pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions, params: &EncodeParams) -> u64 {
     let c = u64::from(options.chunk_size);
     let slot = |n: u64| u64::from(slot_size(n as u32));
     let mut bytes = 8 * c + slot(c) + 32 + 4 * u64::from(PARSE_SEGMENTS);
+    if params.depth > 1 {
+        // Hash-chain links, one per input byte.
+        bytes += 4 * c;
+    }
     if options.independent_groups.is_some() {
         bytes += 8 * u64::from(MAX_GROUP);
     }
@@ -257,6 +282,7 @@ struct BufferCache {
     info: Option<wgpu::Buffer>,
     groups: Option<wgpu::Buffer>,
     segs: Option<wgpu::Buffer>,
+    chain: Option<wgpu::Buffer>,
     entries: Option<wgpu::Buffer>,
     packed: Option<wgpu::Buffer>,
     sizes_read: Option<wgpu::Buffer>,
@@ -358,6 +384,9 @@ impl GpuEncoder {
         {
             return unsupported(format!("workgroup size {} not supported", params.block));
         }
+        if !(1..=MAX_DEPTH).contains(&params.depth) {
+            return unsupported(format!("depth {} not in 1..={MAX_DEPTH}", params.depth));
+        }
         // The parse marks visited positions with bit 31 of the match word, so
         // probe-capped lengths (bits 16..) must stay below 1 << 15.
         if !(4..=32_767).contains(&params.probe_len) {
@@ -396,6 +425,7 @@ impl GpuEncoder {
                     storage(5, false), // chunk_info
                     storage(6, false), // group_buf
                     storage(7, false), // segs
+                    storage(8, false), // chain
                 ],
             });
         let pack_layout = ctx
@@ -470,7 +500,11 @@ impl GpuEncoder {
                 "encode matches",
                 &encode_layout,
                 &[COMMON_SHADER, MATCHES_SHADER],
-                &[wg, ("HASH_LOG", f64::from(params.hash_log))],
+                &[
+                    wg,
+                    ("HASH_LOG", f64::from(params.hash_log)),
+                    ("DEPTH", f64::from(params.depth)),
+                ],
             ),
             lz4: codec("lz4", LZ4_EMIT, 0),
             glz: codec("glz", GLZ_EMIT, 1),
@@ -719,7 +753,8 @@ impl GpuEncoder {
             }
         };
         let by_binding = (self.batch_chunks(ctx, options.chunk_size) / candidates).max(1);
-        let by_budget = (self.memory_budget / encoder_bytes_per_chunk(options)).max(1);
+        let by_budget =
+            (self.memory_budget / encoder_bytes_per_chunk(options, &self.params)).max(1);
         let chunks = by_binding.min(by_budget);
         log::debug!(
             "GPU encoder: {chunks} chunks of {} KiB per batch (budget {} MiB)",
@@ -1164,6 +1199,7 @@ impl GpuEncoder {
                 (5, binding(&p.info.0, p.info.1)),
                 (6, binding(&p.groups.0, p.groups.1)),
                 (7, binding(&p.segs.0, p.segs.1)),
+                (8, binding(&p.chain.0, p.chain.1)),
             ]
             .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
         })
@@ -1307,6 +1343,18 @@ impl GpuEncoder {
             segs_size,
             BufferUsages::STORAGE,
         );
+        // Hash-chain links, one u32 per input byte, only with depth > 1.
+        let chain_size = if self.params.depth > 1 {
+            chunks * u64::from(chunk_size) * 4
+        } else {
+            4
+        };
+        let chain_buf = ensure(
+            &mut c.chain,
+            "encode chain links",
+            chain_size,
+            BufferUsages::STORAGE,
+        );
         // Bind exactly the sizes this batch needs, as if the buffers were fresh.
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("encode"),
@@ -1320,6 +1368,7 @@ impl GpuEncoder {
                 (5, binding(&info_buf, info_size)),
                 (6, binding(&group_buf, group_size)),
                 (7, binding(&segs_buf, segs_size)),
+                (8, binding(&chain_buf, chain_size)),
             ]
             .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
         });
@@ -1328,6 +1377,7 @@ impl GpuEncoder {
             info: (info_buf.clone(), info_size),
             groups: (group_buf.clone(), group_size),
             segs: (segs_buf.clone(), segs_size),
+            chain: (chain_buf.clone(), chain_size),
             serial_parse: groups > 0,
             codec: options.codec,
             chunks: chunks as u32,
@@ -1429,6 +1479,7 @@ pub struct PreparedEncode {
     info: (wgpu::Buffer, u64),
     groups: (wgpu::Buffer, u64),
     segs: (wgpu::Buffer, u64),
+    chain: (wgpu::Buffer, u64),
     /// GLZ with dependency elimination: the one-invocation-per-chunk parse.
     serial_parse: bool,
 }
@@ -1737,14 +1788,23 @@ mod tests {
         // plus the output slot, 32 bytes (sizes + readback, info, entry) and
         // the parse's segment table (a u32 per segment).
         let plain = 8 * c + u64::from(slot_size(65_536)) + 32 + 4 * u64::from(PARSE_SEGMENTS);
-        assert_eq!(encoder_bytes_per_chunk(&base), plain);
+        assert_eq!(
+            encoder_bytes_per_chunk(&base, &EncodeParams::default()),
+            plain
+        );
+        // Hash chains keep a link (u32) per input byte.
+        let chained = EncodeParams {
+            depth: 4,
+            ..EncodeParams::default()
+        };
+        assert_eq!(encoder_bytes_per_chunk(&base, &chained), plain + 4 * c);
         let groups = GpuCompressOptions {
             codec: format::Codec::Glz,
             independent_groups: Some(8),
             ..base
         };
         assert_eq!(
-            encoder_bytes_per_chunk(&groups),
+            encoder_bytes_per_chunk(&groups, &EncodeParams::default()),
             plain + 8 * u64::from(MAX_GROUP)
         );
         let auto = GpuCompressOptions {
@@ -1756,7 +1816,7 @@ mod tests {
         let sample = u64::from(sample_len(65_536));
         let extra = filter_candidates(1).len() as u64 - 1;
         assert_eq!(
-            encoder_bytes_per_chunk(&auto),
+            encoder_bytes_per_chunk(&auto, &EncodeParams::default()),
             plain + c + extra * (sample + u64::from(slot_size(sample as u32)))
         );
         let exhaustive = GpuCompressOptions {
@@ -1764,7 +1824,7 @@ mod tests {
             ..base
         };
         assert_eq!(
-            encoder_bytes_per_chunk(&exhaustive),
+            encoder_bytes_per_chunk(&exhaustive, &EncodeParams::default()),
             plain + extra * (c + u64::from(slot_size(65_536)))
         );
     }
@@ -1778,7 +1838,8 @@ mod tests {
                 filters,
                 ..Default::default()
             };
-            let chunks = DEFAULT_GPU_MEMORY / encoder_bytes_per_chunk(&options);
+            let chunks =
+                DEFAULT_GPU_MEMORY / encoder_bytes_per_chunk(&options, &EncodeParams::default());
             assert!(
                 chunks * u64::from(options.chunk_size) >= 256 << 20,
                 "{filters:?}: {chunks} chunks per batch"

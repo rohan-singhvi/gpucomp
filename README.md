@@ -30,6 +30,7 @@ gpucomp info                                    # show the GPU adapter, backend 
 
 gpucomp compress --gpu big.bin big.gpcz         # compress on the GPU (LZ4 block)
 gpucomp compress --gpu --codec glz --filters auto big.bin big.gpcz
+gpucomp compress --gpu --level 3 big.bin big.gpcz  # smaller, slower
 gpucomp compress big.bin big.gpcz               # CPU, multi-threaded (lz4_flex)
 
 gpucomp info big.gpcz                           # codec, chunks, ratio, filters used
@@ -42,6 +43,7 @@ Useful options (see `gpucomp <command> --help` for all of them):
 | Option | Meaning |
 |---|---|
 | `--codec lz4\|glz\|stored` | Block codec (default `lz4`) |
+| `--level 1\|2\|3` | Compression level: more match candidates per position (1, 4, 16) for a smaller file; default 1 |
 | `--chunk-size 64K` | Chunk size, a power of two from 4K to 1M |
 | `--filters none\|auto\|exhaustive` | Per-chunk filter selection |
 | `--checksum` / `--verify` | Store / check per-chunk checksums |
@@ -76,7 +78,9 @@ Apple M4 Pro, [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=si
 |---|---|---|
 | CPU `lz4_flex`, multi-threaded compress | 2.04× | 5.3 |
 | CPU `lz4_flex`, multi-threaded decompress | — | 12.6 |
-| GPU compress, LZ4 | 1.99× | 2.31 |
+| GPU compress, LZ4 | 1.99× | 2.27 |
+| GPU compress, LZ4, `--level 2` | 2.21× | 1.20 |
+| GPU compress, LZ4, `--level 3` | 2.32× | 0.56 |
 | GPU compress, LZ4, `--filters auto` | 2.05× | 1.43 |
 | GPU compress, GLZ | 1.96× | 2.29 |
 | GPU decompress, LZ4 (kernel only) | — | 3.3 |

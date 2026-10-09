@@ -26,6 +26,9 @@ pub struct Params {
     /// Lazy parse: skip a match when the next position's (phase-1) match is
     /// longer. Otherwise greedy.
     pub lazy: bool,
+    /// Candidates per position: the latest earlier-block position with the
+    /// same hash, then that position's own candidate, and so on (a hash chain).
+    pub depth: usize,
 }
 
 impl Default for Params {
@@ -36,6 +39,22 @@ impl Default for Params {
             hash_log: 12,
             probe_len: 16,
             lazy: true,
+            depth: 1,
+        }
+    }
+}
+
+impl Params {
+    /// The encoder for compression `level` (clamped to 1..=3): hash-chain
+    /// candidates 1, 4 and 16 (DECISIONS.md, "Hash chains and levels").
+    pub fn for_level(level: u8) -> Self {
+        Params {
+            depth: match level {
+                0 | 1 => 1,
+                2 => 4,
+                _ => 16,
+            },
+            ..Params::default()
         }
     }
 }
@@ -77,29 +96,58 @@ pub fn find_matches(input: &[u8], params: &Params) -> Vec<Match> {
     let match_limit = n - LAST_LITERALS; // matches end at or before this
                                          // Bucket value = position + 1; 0 = empty (the GPU zero-initialises its table).
     let mut table = vec![0u32; 1 << params.hash_log];
+    // Per position, its first candidate (position + 1; 0 = none): following
+    // these links walks back through earlier blocks' positions with the hash.
+    let mut chain = vec![0u32; if params.depth > 1 { n } else { 0 }];
 
     for block_start in (0..=last_start).step_by(params.block) {
         let block = block_start..(block_start + params.block).min(last_start + 1);
         for p in block.clone() {
-            let entry = table[hash(read_u32(input, p), params.hash_log) as usize];
-            if entry == 0 {
-                continue;
-            }
-            let candidate = entry as usize - 1;
-            let offset = p - candidate;
-            if offset > MAX_OFFSET {
-                continue;
-            }
+            let mut entry = table[hash(read_u32(input, p), params.hash_log) as usize];
             let limit = (p + params.probe_len).min(match_limit);
-            let mut end = p;
-            while end < limit && input[end - offset] == input[end] {
-                end += 1;
+            if params.depth <= 1 {
+                // Level 1: one candidate.
+                if entry == 0 {
+                    continue;
+                }
+                let offset = p - (entry as usize - 1);
+                if offset > MAX_OFFSET {
+                    continue;
+                }
+                let mut end = p;
+                while end < limit && input[end - offset] == input[end] {
+                    end += 1;
+                }
+                if end - p >= MIN_MATCH {
+                    matches[p] = Match {
+                        len: (end - p) as u32,
+                        offset: offset as u32,
+                    };
+                }
+                continue;
             }
-            if end - p >= MIN_MATCH {
-                matches[p] = Match {
-                    len: (end - p) as u32,
-                    offset: offset as u32,
-                };
+            chain[p] = entry;
+            // The longest of up to `depth` candidates; ties go to the nearest.
+            for _ in 0..params.depth {
+                if entry == 0 {
+                    break;
+                }
+                let candidate = entry as usize - 1;
+                let offset = p - candidate;
+                if offset > MAX_OFFSET {
+                    break;
+                }
+                let mut end = p;
+                while end < limit && input[end - offset] == input[end] {
+                    end += 1;
+                }
+                if end - p >= MIN_MATCH && end - p > matches[p].len as usize {
+                    matches[p] = Match {
+                        len: (end - p) as u32,
+                        offset: offset as u32,
+                    };
+                }
+                entry = chain[candidate];
             }
         }
         for p in block {
@@ -276,6 +324,92 @@ mod tests {
         assert_eq!(m[100].offset, 37);
     }
 
+    fn chained(depth: usize) -> Params {
+        Params { depth, ..block64() }
+    }
+
+    /// "abcdefghijklmnop" at 0 (block 0), "abcd" then noise at 70 (block 1),
+    /// and "abcdefghijklmnop" again at 140 (block 2).
+    fn chain_input() -> Vec<u8> {
+        let mut input = random(200, 21);
+        input[..16].copy_from_slice(b"abcdefghijklmnop");
+        input[70..74].copy_from_slice(b"abcd");
+        input[140..156].copy_from_slice(b"abcdefghijklmnop");
+        input
+    }
+
+    #[test]
+    fn depth_one_takes_the_latest_candidate() {
+        let m = find_matches(&chain_input(), &chained(1));
+        assert_eq!(m[140], Match { len: 4, offset: 70 });
+    }
+
+    #[test]
+    fn deeper_chains_find_older_longer_matches() {
+        let m = find_matches(&chain_input(), &chained(2));
+        assert_eq!(
+            m[140],
+            Match {
+                len: 16,
+                offset: 140
+            }
+        );
+    }
+
+    #[test]
+    fn equal_lengths_go_to_the_nearest_candidate() {
+        // "abcdefgh" + noise at 0 and at 70: both give 8 bytes at 140.
+        let mut input = random(200, 22);
+        input[..8].copy_from_slice(b"abcdefgh");
+        input[70..78].copy_from_slice(b"abcdefgh");
+        input[140..148].copy_from_slice(b"abcdefgh");
+        let m = find_matches(&input, &chained(4));
+        assert_eq!(m[140], Match { len: 8, offset: 70 });
+    }
+
+    #[test]
+    fn chains_stop_beyond_max_offset() {
+        // The older copy is 66 000 back: out of reach even with depth 4.
+        let mut input = random(66_200, 23);
+        input[..16].copy_from_slice(b"abcdefghijklmnop");
+        input[66_010..66_014].copy_from_slice(b"abcd");
+        input[66_100..66_116].copy_from_slice(b"abcdefghijklmnop");
+        let m = find_matches(&input, &chained(4));
+        assert_eq!(m[66_100], Match { len: 4, offset: 90 });
+    }
+
+    #[test]
+    fn levels_add_hash_chain_candidates() {
+        assert_eq!(Params::for_level(1), Params::default());
+        assert_eq!(
+            Params::for_level(2),
+            Params {
+                depth: 4,
+                ..Params::default()
+            }
+        );
+        assert_eq!(
+            Params::for_level(3),
+            Params {
+                depth: 16,
+                ..Params::default()
+            }
+        );
+        assert_eq!(Params::for_level(0), Params::for_level(1));
+        assert_eq!(Params::for_level(9), Params::for_level(3));
+    }
+
+    #[test]
+    fn higher_levels_compress_smaller() {
+        let input: Vec<u8> = (0..20_000u32)
+            .flat_map(|i| format!("row {} col {}; ", (i * 7919) % 1013, i % 37).into_bytes())
+            .take(65_536)
+            .collect();
+        let size = |level| encode_block(&input, &Params::for_level(level)).len();
+        assert!(size(1) > size(2), "{} vs {}", size(1), size(2));
+        assert!(size(2) > size(3), "{} vs {}", size(2), size(3));
+    }
+
     #[test]
     fn matches_are_capped_at_probe_len() {
         let m = find_matches(&[0u8; 1000], &block64());
@@ -439,11 +573,13 @@ mod tests {
             prop_oneof![Just(4usize), Just(64), Just(256)],
             8u32..=14,
             4usize..=64,
+            1usize..=8,
         )
-            .prop_map(|(block, hash_log, probe_len)| Params {
+            .prop_map(|(block, hash_log, probe_len, depth)| Params {
                 block,
                 hash_log,
                 probe_len,
+                depth,
                 ..Params::default()
             })
     }

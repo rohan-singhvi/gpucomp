@@ -369,3 +369,36 @@ fn gpu_paths_stream_files_within_a_memory_budget() {
     ]);
     assert!(std::fs::read(&out).unwrap() == data);
 }
+
+#[test]
+fn levels_compress_smaller_and_gpu_matches_cpu() {
+    let (input, l1, l3, l3_gpu, out) = (
+        temp("l.txt"),
+        temp("l1.gpcz"),
+        temp("l3.gpcz"),
+        temp("l3.gpu.gpcz"),
+        temp("l.out"),
+    );
+    std::fs::write(&input, sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    gpucomp(&["compress", &s(&input), &s(&l1), "--encoder", "greedy"]);
+    gpucomp(&[
+        "compress",
+        &s(&input),
+        &s(&l3),
+        "--encoder",
+        "greedy",
+        "--level",
+        "3",
+    ]);
+    let size = |p: &PathBuf| std::fs::metadata(p).unwrap().len();
+    assert!(size(&l3) < size(&l1), "{} vs {}", size(&l3), size(&l1));
+    let info = String::from_utf8(gpucomp(&["info", &s(&l3)]).stdout).unwrap();
+    assert!(info.contains("level:       3"), "{info}");
+    gpucomp(&["decompress", &s(&l3), &s(&out)]);
+    assert!(std::fs::read(&out).unwrap() == sample());
+    if has_gpu() {
+        gpucomp(&["compress", &s(&input), &s(&l3_gpu), "--gpu", "--level", "3"]);
+        assert!(std::fs::read(&l3_gpu).unwrap() == std::fs::read(&l3).unwrap());
+    }
+}

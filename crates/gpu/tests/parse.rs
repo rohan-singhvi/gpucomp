@@ -18,6 +18,7 @@ fn twin(p: EncodeParams) -> Params {
         hash_log: p.hash_log,
         probe_len: p.probe_len as usize,
         lazy: p.lazy,
+        depth: p.depth as usize,
     }
 }
 
@@ -167,4 +168,85 @@ fn probes_that_would_reach_the_visit_mark_are_rejected() {
         GpuEncoder::new(&ctx, params),
         Err(gpu::encode::GpuEncodeError::Unsupported(_))
     ));
+}
+
+#[test]
+fn hash_chains_match_the_twin() {
+    let Some(ctx) = context() else { return };
+    let input = [
+        text(100_000),
+        random(20_000, 31),
+        text(50_000),
+        vec![3; 30_000],
+    ]
+    .concat();
+    for depth in [2, 4, 16] {
+        let params = EncodeParams {
+            depth,
+            ..EncodeParams::default()
+        };
+        let encoder = GpuEncoder::new(&ctx, params).unwrap();
+        for chunk in [4096u32, 65_536] {
+            for codec in [Codec::Lz4, Codec::Glz] {
+                let options = GpuCompressOptions {
+                    codec,
+                    chunk_size: chunk,
+                    ..GpuCompressOptions::default()
+                };
+                let blocks = encoder.encode_blocks(&ctx, &input, &options).unwrap();
+                for (i, (block, c)) in blocks.iter().zip(input.chunks(chunk as usize)).enumerate() {
+                    let want = match codec {
+                        Codec::Lz4 => encode_block(c, &twin(params)),
+                        _ => cpu::glz::encode_block(
+                            c,
+                            &cpu::glz::GlzParams {
+                                lz: twin(params),
+                                independent_groups: None,
+                            },
+                        ),
+                    };
+                    let ok = match block {
+                        EncodedBlock::Compressed(b) => *b == want,
+                        EncodedBlock::Incompressible { size } => *size as usize == want.len(),
+                    };
+                    assert!(ok, "depth {depth}, {codec:?}, chunk {chunk}: block {i}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn levels_map_like_the_twin() {
+    for level in 0..=4 {
+        assert_eq!(
+            twin(EncodeParams::for_level(level)),
+            Params::for_level(level),
+            "level {level}"
+        );
+    }
+}
+
+#[test]
+fn gpu_levels_equal_cpu_levels() {
+    let Some(ctx) = context() else { return };
+    let input = [text(150_000), random(10_000, 41), text(80_000)].concat();
+    for level in 1..=3 {
+        let encoder = GpuEncoder::new(&ctx, EncodeParams::for_level(level)).unwrap();
+        let options = GpuCompressOptions {
+            level,
+            ..GpuCompressOptions::default()
+        };
+        let file = encoder.compress(&ctx, &input, &options).unwrap();
+        let cpu = cpu::container::compress(
+            &input,
+            &cpu::container::CompressOptions {
+                encoder: cpu::container::Encoder::Greedy(Params::for_level(level)),
+                level,
+                ..cpu::container::CompressOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(file == cpu, "level {level}");
+    }
 }

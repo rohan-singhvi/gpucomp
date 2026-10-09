@@ -267,10 +267,10 @@ Revised 2026-10-08 after a research pass (literature on GPU LZ, entropy coding, 
 - Most of the ratio gap is match-candidate count, not parse cleverness. The level-1 match finder keeps **one** candidate per hash slot (`probe_len` caps extension, not probes). LZ4 format at 64 KiB: today 1.94×; +lazy 2.00×; +in-block visibility 2.04×; hash chains depth 2/4/16 with lazy 2.17/2.28/2.40×; lz4 -12 2.49×.
 - Steps, each benchmarked:
   1. **Exact segmented parse** (done: `encode_parse_seg.wgsl`). 32 lanes per chunk, with a merge fix-up. Output is identical to the serial parse.
-  2. **Lazy rule** in the CPU twin and GPU parse (+2.7%).
-  3. **In-block visibility** in match finding (+2.2%), deterministic and twin-exact.
-  4. **Hash chains** of depth D as levels: level 1 = D 1 or 2, level 2 = D 4, level 3 = D 16. Optimal parse (+2% over lazy at equal D) for the top level, via a segmented backward DP.
-- Then the original M9 items: `--level N` in the CLI and the header, wider filter search at higher levels, and a CPU twin for every level.
+  2. **Lazy rule** in the CPU twin and GPU parse (done: 1.943 → 1.993×, same speed).
+  3. ~~In-block visibility~~ (dropped: +2.3% ratio but the exact GPU scan cost 3.4× the match kernel, and bounded windows cost more speed than they gain; DECISIONS.md).
+  4. **Hash chains** as levels (done): depth 1/4/16 = levels 1/2/3, `--level` in the CLI. Silesia 1.993 / 2.212 / 2.319×. Next for the top level: faster chains (multi-way buckets in workgroup memory instead of dependent global loads), and an optimal parse (+2% over lazy at equal D) via a segmented backward DP.
+- Done with the chains: `--level N` in the CLI and the header, wider filter candidates from level 2 (already in M7), and a CPU twin for every level.
 - **Accept when:** every level round-trips in the M4 matrix, ratio improves monotonically with level on Silesia, and `BENCHMARKS.md` has a ratio-vs-throughput table for each level next to `lz4_flex` and zstd 1/3.
 
 ### M9e — GLZ v2: entropy stage (format change, both directions)

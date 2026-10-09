@@ -1,5 +1,6 @@
 //! `compress`, `decompress` and `info <file>`.
 
+use cpu::lz4::encode::Params;
 use std::path::PathBuf;
 
 use clap::ValueEnum;
@@ -42,6 +43,11 @@ pub struct CompressArgs {
     /// chunk and keeps the smallest.
     #[arg(long, value_enum, default_value_t = FiltersArg::None)]
     pub filters: FiltersArg,
+    /// Compression level, 1 (fastest) to 3 (smallest): more match candidates
+    /// per position, and more filter candidates from level 2. Applies to the
+    /// GPU encoder and its CPU twins (`--encoder greedy`, GLZ), not lz4_flex.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=3))]
+    pub level: u8,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -187,7 +193,8 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         let budget = args.gpu_memory.unwrap_or(gpu::encode::DEFAULT_GPU_MEMORY);
         log::info!("GPU memory budget: {} MiB per batch", budget >> 20);
         let encoder =
-            gpu::encode::GpuEncoder::new(&ctx, Default::default())?.with_memory_budget(budget);
+            gpu::encode::GpuEncoder::new(&ctx, gpu::encode::EncodeParams::for_level(args.level))?
+                .with_memory_budget(budget);
         let options = gpu::encode::GpuCompressOptions {
             codec: match args.codec {
                 CodecArg::Lz4 => Codec::Lz4,
@@ -196,7 +203,7 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
             },
             chunk_size: args.chunk_size,
             checksums: args.checksum,
-            level: 1,
+            level: args.level,
             independent_groups: args.independent_groups,
             filters: match args.filters {
                 FiltersArg::None => gpu::encode::FilterMode::None,
@@ -223,14 +230,16 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         chunk_size: args.chunk_size,
         encoder: match (args.codec, args.encoder) {
             (CodecArg::Glz, _) => cpu::container::Encoder::Glz(cpu::glz::GlzParams {
+                lz: Params::for_level(args.level),
                 independent_groups: args.independent_groups,
-                ..Default::default()
             }),
             (_, EncoderArg::Lz4Flex) => cpu::container::Encoder::Lz4Flex,
-            (_, EncoderArg::Greedy) => cpu::container::Encoder::Greedy(Default::default()),
+            (_, EncoderArg::Greedy) => {
+                cpu::container::Encoder::Greedy(Params::for_level(args.level))
+            }
         },
         checksums: args.checksum,
-        level: 1,
+        level: args.level,
         filters: match args.filters {
             FiltersArg::None => cpu::container::FilterMode::None,
             FiltersArg::Auto => cpu::container::FilterMode::Auto,

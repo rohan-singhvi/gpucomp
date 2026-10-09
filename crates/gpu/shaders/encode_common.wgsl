@@ -42,6 +42,9 @@ struct Params {
 // parse segment (non-decreasing). Segment k's sequences are stored from
 // scratch word seg_len(n) * k of the chunk, 4 words each.
 @group(0) @binding(7) var<storage, read_write> segs: array<u32>;
+// With hash chains (DEPTH > 1): per position, its first candidate (position
+// + 1; 0 = none), written by match finding and followed to older candidates.
+@group(0) @binding(8) var<storage, read_write> chain: array<u32>;
 
 const MIN_MATCH: u32 = 4u;
 const MFLIMIT: u32 = 12u;

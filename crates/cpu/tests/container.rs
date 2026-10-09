@@ -63,6 +63,7 @@ const ENCODERS: [Encoder; 2] = [
         hash_log: 12,
         probe_len: 16,
         lazy: true,
+        depth: 1,
     }),
 ];
 const DECODERS: [Decoder; 2] = [Decoder::HandWritten, Decoder::Lz4Flex];
