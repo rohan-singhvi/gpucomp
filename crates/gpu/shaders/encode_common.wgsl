@@ -38,6 +38,10 @@ struct Params {
 @group(0) @binding(5) var<storage, read_write> chunk_info: array<vec4<u32>>;
 // Per chunk, MAX_GROUP entries: the parse's dependency-group match outputs.
 @group(0) @binding(6) var<storage, read_write> group_buf: array<vec2<u32>>;
+// Per chunk, PARSE_SEGMENTS entries: the index of the first sequence of each
+// parse segment (non-decreasing). Segment k's sequences are stored from
+// scratch word seg_len(n) * k of the chunk, 4 words each.
+@group(0) @binding(7) var<storage, read_write> segs: array<u32>;
 
 const MIN_MATCH: u32 = 4u;
 const MFLIMIT: u32 = 12u;
@@ -45,6 +49,7 @@ const LAST_LITERALS: u32 = 5u;
 const MAX_OFFSET: u32 = 65535u;
 const LONG_LITERALS: u32 = 64u;
 const MAX_GROUP: u32 = 64u; // keep in sync with gpu::encode::MAX_GROUP
+const PARSE_SEGMENTS: u32 = 32u; // keep in sync with gpu::encode::PARSE_SEGMENTS
 
 fn chunk_count() -> u32 {
     return (params.input_len + params.chunk_size - 1u) / params.chunk_size;
@@ -99,6 +104,13 @@ fn put_byte(pos: u32, b: u32) {
 
 fn pad4(n: u32) -> u32 {
     return (n + 3u) & ~3u;
+}
+
+// Positions per parse segment of an n-byte chunk: a multiple of 4, so a
+// segment's sequences (at most one per 4 positions) fit in its own scratch
+// words, and PARSE_SEGMENTS of them never exceed chunk_size.
+fn seg_len(n: u32) -> u32 {
+    return max(4u, pad4((n + PARSE_SEGMENTS - 1u) / PARSE_SEGMENTS));
 }
 
 // Continuation bytes of an LZ4 length whose 4-bit field is 15.

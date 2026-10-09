@@ -36,6 +36,7 @@ fn main(
     let n = chunk_len(chunk);
     let sbase = chunk * params.chunk_size;
     let shape = load_info(chunk, lid);
+    load_segs(chunk, lid);
     let count = shape.x;
     let total = shape.y;
     if (total >= n) {
@@ -64,8 +65,9 @@ fn main(
         var match_code = 0u;
         var offset = 0u;
         var esc = 0u;
+        var q = 0u;
         if (in_range) {
-            let q = sbase + 4u * i;
+            q = seq_addr(sbase, n, i);
             lit_start = scratch[q];
             lit_len = scratch[q + 1u];
             let match_len = scratch[q + 2u];
@@ -75,6 +77,7 @@ fn main(
             }
             esc = select(0u, 1u, lit_len >= 15u) + select(0u, 1u, match_code >= 15u);
         }
+        qaddr[lid] = q;
         // Inclusive scan of (escapes, literal bytes).
         scan2[lid] = vec2<u32>(esc, lit_len);
         workgroupBarrier();
@@ -116,7 +119,7 @@ fn main(
         // Long literal runs of this block, by the whole workgroup.
         let in_block = min(WG_SIZE, count - block);
         for (var j = 0u; j < in_block; j++) {
-            let q = sbase + 4u * (block + j);
+            let q = qaddr[j];
             let len = scratch[q + 1u];
             if (len >= LONG_LITERALS) {
                 var lp = lit_base;

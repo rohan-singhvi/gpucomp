@@ -138,6 +138,11 @@ fn parse(chunk: u32) {
             + pad4(ext_count * select(2u, 4u, wide != 0u)) + lit_total;
     }
     chunk_info[chunk] = vec4<u32>(count, total, ext_count, wide);
+    // Every sequence is in segment 0 (stored from word 0); the rest are empty.
+    segs[chunk * PARSE_SEGMENTS] = 0u;
+    for (var k = 1u; k < PARSE_SEGMENTS; k++) {
+        segs[chunk * PARSE_SEGMENTS + k] = count;
+    }
     if (total >= n) {
         sizes[chunk] = total;
     }

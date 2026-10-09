@@ -261,13 +261,31 @@ Implements §4a for both codecs.
 - Map readback buffers asynchronously, and poll the device correctly.
 - **Accept when:** a file of at least 4 GiB (generated test data) round-trips correctly GPU→GPU, with bounded GPU memory use, and a range read near the end of it touches only the chunks it needs. Make the memory bound configurable and log it.
 
-### M9 — Compression levels
-Builds on M3's parameterised encoder (§1 goal 5). Levels change only the encoder, so every level must decode with the same decoders.
-- **Level 1** (default): M3 as built. Greedy parse, small workgroup hash table, one candidate per bucket, level-1 filter candidates.
-- **Middle levels:** more candidates per position (multi-way buckets or short hash chains, possibly in storage memory), lazy matching in the parse phase (check whether position `p+1` has a longer match before committing to `p`), and wider filter search.
-- **High levels:** optimal or near-optimal parsing within a chunk, and the entropy stage (M11) once it exists.
-- `--level N` in the CLI; record the level in the header. The CPU twin encoder supports the same levels, so the GPU can be checked against it.
-- **Accept when:** every level round-trips in the M4 matrix, ratio improves monotonically with level on Silesia, and `BENCHMARKS.md` has a ratio-vs-throughput table for each level next to `lz4_flex` and, for reference, zstd levels 1/3 on the CPU.
+### M9 — Parallel parse, then compression levels
+Revised 2026-10-08 after a research pass (literature on GPU LZ, entropy coding, parallel parsing and the CPU Pareto frontier) and local measurements on Silesia at 64 KiB chunks. The details and numbers are in DECISIONS.md ("Ratio and throughput research"). The main findings:
+- Ratio and speed need the same fix. The one-lane-per-chunk parse was the encoder's bottleneck, and better parses (lazy, then optimal) are also local rules that parallelise the same way.
+- Most of the ratio gap is match-candidate count, not parse cleverness. The level-1 match finder keeps **one** candidate per hash slot (`probe_len` caps extension, not probes). LZ4 format at 64 KiB: today 1.94×; +lazy 2.00×; +in-block visibility 2.04×; hash chains depth 2/4/16 with lazy 2.17/2.28/2.40×; lz4 -12 2.49×.
+- Steps, each benchmarked:
+  1. **Exact segmented parse** (done: `encode_parse_seg.wgsl`). 32 lanes per chunk, with a merge fix-up. Output is identical to the serial parse.
+  2. **Lazy rule** in the CPU twin and GPU parse (+2.7%).
+  3. **In-block visibility** in match finding (+2.2%), deterministic and twin-exact.
+  4. **Hash chains** of depth D as levels: level 1 = D 1 or 2, level 2 = D 4, level 3 = D 16. Optimal parse (+2% over lazy at equal D) for the top level, via a segmented backward DP.
+- Then the original M9 items: `--level N` in the CLI and the header, wider filter search at higher levels, and a CPU twin for every level.
+- **Accept when:** every level round-trips in the M4 matrix, ratio improves monotonically with level on Silesia, and `BENCHMARKS.md` has a ratio-vs-throughput table for each level next to `lz4_flex` and zstd 1/3.
+
+### M9e — GLZ v2: entropy stage (format change, both directions)
+Promoted from M11. It's the biggest single ratio lever: zstd -1 at 64 KiB chunks is 2.76× against lz4 -1 at 2.07×. An entropy bound on GLZ's own streams gives 2.53× with today's matches and 2.72× with better ones.
+- Lengths and offsets become log2-bucket codes plus raw extra bits.
+- Each chunk gets a static order-0 table per stream (literals, length codes, offset codes), with raw, RLE and entropy modes per stream.
+- Canonical Huffman, length-limited to 11 bits (decode table 4 KB), with **32 independent lanes per stream** in GDeflate's layout. 32 is fixed in the format, so the bitstream doesn't depend on the device's subgroup size. rANS (32-bit state, 16-bit I/O) is the alternative for skewed sequence streams.
+- Integer-only, fully specified table construction, so the CPU twin matches byte for byte.
+- Decoding is two-phase: entropy-decode into scratch, then the existing GLZ copy.
+- Later: repeat offsets, and optionally a file-level shared table set to cut the ~1–2% per-chunk table cost.
+- **Accept when:** CPU and GPU encode and decode GLZ v2 identically, the M4 matrix covers it, and Silesia is ≥ 2.6× at 64 KiB chunks.
+
+### Later ratio levers (after M9e)
+- **Chunk size vs ratio:** with a strong match finder, 64 KiB independence costs 9–10% (lz4 -9: 2.48× at 64 KiB, 2.71× at 1 MiB). Options: 256 KiB chunks with lane-parallel decode, or linked chunk pairs (decode reads at most 2 chunks).
+- **Typed filters** for numeric and columnar data (FOR/bit-packing in FastLanes layout, field split, float encodings), chosen by the existing sampled selector.
 
 ### M10 — Final benchmarks and report
 - Run the Silesia corpus (each file and the concatenated tarball) plus synthetic data: zeros, random, and repetitive text.

@@ -11,6 +11,7 @@ use crate::{dispatch_grid, Context, GpuError};
 const COMMON_SHADER: &str = include_str!("../../shaders/encode_common.wgsl");
 const MATCHES_SHADER: &str = include_str!("../../shaders/encode_matches.wgsl");
 const PARSE_SHADER: &str = include_str!("../../shaders/encode_parse.wgsl");
+const PARSE_SEG_SHADER: &str = include_str!("../../shaders/encode_parse_seg.wgsl");
 const EMIT_SHARED: &str = include_str!("../../shaders/encode_emit_shared.wgsl");
 const LZ4_EMIT: &str = include_str!("../../shaders/lz4_emit.wgsl");
 const GLZ_EMIT: &str = include_str!("../../shaders/glz_emit.wgsl");
@@ -118,6 +119,10 @@ impl Default for GpuCompressOptions {
 /// decoder resolves 64 sequences per step, so larger groups can't help it.
 pub const MAX_GROUP: u32 = 64;
 
+/// Segments per chunk in the parallel parse (one lane each); emit finds a
+/// sequence through the per-chunk table of where each segment's run starts.
+pub const PARSE_SEGMENTS: u32 = 32;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GpuEncodeError {
     #[error(transparent)]
@@ -163,7 +168,7 @@ pub const DEFAULT_GPU_MEMORY: u64 = 3 << 30;
 pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions) -> u64 {
     let c = u64::from(options.chunk_size);
     let slot = |n: u64| u64::from(slot_size(n as u32));
-    let mut bytes = 8 * c + slot(c) + 32;
+    let mut bytes = 8 * c + slot(c) + 32 + 4 * u64::from(PARSE_SEGMENTS);
     if options.independent_groups.is_some() {
         bytes += 8 * u64::from(MAX_GROUP);
     }
@@ -182,7 +187,7 @@ pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions) -> u64 {
 /// Workgroup memory the encoder needs: the larger of the match-finding
 /// kernel's hash table and the emit kernel's scans (the parse uses none).
 pub fn workgroup_bytes(params: &EncodeParams) -> u32 {
-    (4 << params.hash_log).max(12 * EMIT_WG + 16)
+    (4 << params.hash_log).max(16 * EMIT_WG + 16 + 4 * PARSE_SEGMENTS)
 }
 
 /// How many chunks one dispatch may encode so that the input, match scratch
@@ -211,7 +216,11 @@ pub struct GpuEncoder {
 
 /// The codec-specific kernels: parse (size accounting) and emit.
 struct CodecPipelines {
+    /// Segmented parallel parse, one workgroup per chunk.
     parse: wgpu::ComputePipeline,
+    /// One invocation per chunk: GLZ dependency elimination depends on the
+    /// parse's history, so it can't be split into segments.
+    parse_serial: wgpu::ComputePipeline,
     emit: wgpu::ComputePipeline,
 }
 
@@ -244,6 +253,7 @@ struct BufferCache {
     params: Option<wgpu::Buffer>,
     info: Option<wgpu::Buffer>,
     groups: Option<wgpu::Buffer>,
+    segs: Option<wgpu::Buffer>,
     entries: Option<wgpu::Buffer>,
     packed: Option<wgpu::Buffer>,
     sizes_read: Option<wgpu::Buffer>,
@@ -345,8 +355,10 @@ impl GpuEncoder {
         {
             return unsupported(format!("workgroup size {} not supported", params.block));
         }
-        if !(4..=65_535).contains(&params.probe_len) {
-            return unsupported(format!("probe_len {} not in 4..=65535", params.probe_len));
+        // The parse marks visited positions with bit 31 of the match word, so
+        // probe-capped lengths (bits 16..) must stay below 1 << 15.
+        if !(4..=32_767).contains(&params.probe_len) {
+            return unsupported(format!("probe_len {} not in 4..=32767", params.probe_len));
         }
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
@@ -380,6 +392,7 @@ impl GpuEncoder {
                     uniform(4),        // params
                     storage(5, false), // chunk_info
                     storage(6, false), // group_buf
+                    storage(7, false), // segs
                 ],
             });
         let pack_layout = ctx
@@ -430,6 +443,12 @@ impl GpuEncoder {
         let codec = |name: &str, emit: &str, id: u32| CodecPipelines {
             parse: pipeline(
                 &format!("{name} parse"),
+                &encode_layout,
+                &[COMMON_SHADER, PARSE_SEG_SHADER],
+                &[("CODEC", f64::from(id))],
+            ),
+            parse_serial: pipeline(
+                &format!("{name} serial parse"),
                 &encode_layout,
                 &[COMMON_SHADER, PARSE_SHADER],
                 &[("CODEC", f64::from(id))],
@@ -1141,6 +1160,7 @@ impl GpuEncoder {
                 (4, binding(&p.params_buf, PARAMS_SIZE)),
                 (5, binding(&p.info.0, p.info.1)),
                 (6, binding(&p.groups.0, p.groups.1)),
+                (7, binding(&p.segs.0, p.segs.1)),
             ]
             .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
         })
@@ -1276,6 +1296,14 @@ impl GpuEncoder {
             group_size,
             BufferUsages::STORAGE,
         );
+        // Per chunk, where each parse segment's sequences start (see emit).
+        let segs_size = chunks * u64::from(PARSE_SEGMENTS) * 4;
+        let segs_buf = ensure(
+            &mut c.segs,
+            "encode segment table",
+            segs_size,
+            BufferUsages::STORAGE,
+        );
         // Bind exactly the sizes this batch needs, as if the buffers were fresh.
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("encode"),
@@ -1288,6 +1316,7 @@ impl GpuEncoder {
                 (4, binding(&params_buf, PARAMS_SIZE)),
                 (5, binding(&info_buf, info_size)),
                 (6, binding(&group_buf, group_size)),
+                (7, binding(&segs_buf, segs_size)),
             ]
             .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
         });
@@ -1295,6 +1324,8 @@ impl GpuEncoder {
             scratch: (scratch_buf.clone(), scratch_size),
             info: (info_buf.clone(), info_size),
             groups: (group_buf.clone(), group_size),
+            segs: (segs_buf.clone(), segs_size),
+            serial_parse: groups > 0,
             codec: options.codec,
             chunks: chunks as u32,
             input_buf,
@@ -1356,12 +1387,19 @@ impl GpuEncoder {
         // Three kernels; wgpu orders their storage accesses.
         let max = ctx.device_limits().max_compute_workgroups_per_dimension;
         let per_chunk = dispatch_grid(p.chunks, max);
-        let parse = dispatch_grid(p.chunks.div_ceil(PARSE_WG), max);
         let kernels = self.kernels(p.codec);
+        let parse = if p.serial_parse {
+            (
+                &kernels.parse_serial,
+                dispatch_grid(p.chunks.div_ceil(PARSE_WG), max),
+            )
+        } else {
+            (&kernels.parse, per_chunk)
+        };
         pass.set_bind_group(0, bind_group, &[]);
         for (pipeline, (x, y)) in [
             (&self.matches, per_chunk),
-            (&kernels.parse, parse),
+            parse,
             (&kernels.emit, per_chunk),
         ] {
             pass.set_pipeline(pipeline);
@@ -1387,6 +1425,9 @@ pub struct PreparedEncode {
     scratch: (wgpu::Buffer, u64),
     info: (wgpu::Buffer, u64),
     groups: (wgpu::Buffer, u64),
+    segs: (wgpu::Buffer, u64),
+    /// GLZ with dependency elimination: the one-invocation-per-chunk parse.
+    serial_parse: bool,
 }
 
 /// Header plus chunk-table bytes for `len` input bytes.
@@ -1668,7 +1709,9 @@ mod tests {
     #[test]
     fn workgroup_memory_is_the_larger_of_the_table_and_the_emit_scans() {
         // Match finding holds the hash table; emit holds two scans (u32 and
-        // vec2 per invocation) and counters; the parse holds nothing.
+        // vec2 per invocation), sequence addresses, counters and the segment
+        // table; the parse
+        // holds a few words per segment, less than emit.
         let p = EncodeParams::default();
         assert_eq!(workgroup_bytes(&p), 4 * 4096);
         // The emit kernel's workgroup is EMIT_WG whatever the match block.
@@ -1677,7 +1720,10 @@ mod tests {
             block: 256,
             ..p
         };
-        assert_eq!(workgroup_bytes(&small_table), 12 * EMIT_WG + 16);
+        assert_eq!(
+            workgroup_bytes(&small_table),
+            16 * EMIT_WG + 16 + 4 * PARSE_SEGMENTS
+        );
     }
 
     #[test]
@@ -1685,8 +1731,9 @@ mod tests {
         let c = 65_536u64;
         let base = GpuCompressOptions::default();
         // input, upload staging, scratch (4×), packed, packed readback = 8c,
-        // plus the output slot and 32 bytes (sizes + readback, info, entry).
-        let plain = 8 * c + u64::from(slot_size(65_536)) + 32;
+        // plus the output slot, 32 bytes (sizes + readback, info, entry) and
+        // the parse's segment table (a u32 per segment).
+        let plain = 8 * c + u64::from(slot_size(65_536)) + 32 + 4 * u64::from(PARSE_SEGMENTS);
         assert_eq!(encoder_bytes_per_chunk(&base), plain);
         let groups = GpuCompressOptions {
             codec: format::Codec::Glz,

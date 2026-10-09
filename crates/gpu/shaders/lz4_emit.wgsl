@@ -70,6 +70,7 @@ fn main(
     let n = chunk_len(chunk);
     let sbase = chunk * params.chunk_size;
     let shape = load_info(chunk, lid);
+    load_segs(chunk, lid);
     let count = shape.x;
     let total = shape.y;
     if (total >= n) {
@@ -83,9 +84,12 @@ fn main(
     for (var block = 0u; block < count; block += WG_SIZE) {
         let i = block + lid;
         var size = 0u;
+        var q_i = 0u;
         if (i < count) {
-            size = sequence_size(sbase + 4u * i);
+            q_i = seq_addr(sbase, n, i);
+            size = sequence_size(q_i);
         }
+        qaddr[lid] = q_i;
         scan[lid] = size;
         workgroupBarrier();
         // Inclusive Hillis–Steele scan over the block's sizes.
@@ -99,12 +103,12 @@ fn main(
             workgroupBarrier();
         }
         if (i < count) {
-            emit_sequence(sbase + 4u * i, start, out_base + running + scan[lid] - size);
+            emit_sequence(q_i, start, out_base + running + scan[lid] - size);
         }
         // Long literal runs of this block's sequences, by the whole workgroup.
         let in_block = min(WG_SIZE, count - block);
         for (var j = 0u; j < in_block; j++) {
-            let q = sbase + 4u * (block + j);
+            let q = qaddr[j];
             let lit_len = scratch[q + 1u];
             if (lit_len >= LONG_LITERALS) {
                 let seq_pos = out_base + running + scan[j] - sequence_size(q);

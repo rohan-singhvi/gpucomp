@@ -497,3 +497,98 @@ a sink that copied it into a fresh `Vec`: 212 MB and ~22 ms, with first-touch pa
 faults. M7 returned the readback `Vec` as is. The sink now takes each batch by value,
 and `append_batch` takes over the first batch without copying. Silesia
 `decompress`: 138.6 → 122.3 ms (1.53 → 1.73 GB/s, equal to M7).
+
+## Ratio and throughput research (2026-10-08)
+Four research passes (GPU LZ literature, GPU entropy coding, parallel parsing and
+match finding, the CPU ratio/throughput frontier), plus local measurements on Silesia
+(211.9 MB) with **64 KiB independent chunks** unless noted. The measurement tools were
+the lz4 1.10 and zstd 1.5.7 CLIs (`-b -B64K`), entropy bounds computed from the CPU
+twin's GLZ streams, and a C simulator of our LZ4 encoder that reproduces our ratios
+(1.9445× vs 1.943× recorded).
+
+**Where the ratio goes** (LZ4 format unless noted):
+
+| Configuration | Ratio |
+|---|---|
+| gpucomp level 1 (greedy, 1 candidate per slot, block 128) | 1.94× |
+| + lazy parse | 2.00× |
+| + in-block visibility, lazy | 2.04× |
+| hash chains D=2 / 4 / 16, lazy, hash_log 12 | 2.17 / 2.28 / 2.40× |
+| optimal parse, D=64, hash_log 16 | 2.47× |
+| lz4 -1 / -9 / -12 | 2.07 / 2.48 / 2.49× |
+| zstd -1 without literal compression | 2.31× |
+| zstd -1 / -3 / -9 / -19 | 2.76 / 2.88 / 3.08 / 3.26× |
+| zstd -1 at 256 KiB / 1 MiB chunks | 2.89 / 2.88× |
+| lz4 -9 at 256 KiB / 1 MiB chunks | 2.66 / 2.71× |
+| GLZ + order-0 entropy bound (level-1 matches; block 1 with hash_log 16) | 2.53 / 2.72× |
+
+- **The match finder is the first limit.** It keeps one candidate per hash slot;
+  `probe_len` caps extension, not probes. Most of LZ4-HC's gain comes from the first
+  4–16 candidates.
+- **Entropy coding is the largest single lever** (+33% for zstd -1 over lz4 -1).
+- **Larger chunks matter less** until the match finder is strong, then cost 9–10%.
+
+**Throughput.** The one-lane-per-chunk parse was ~60 of ~110 ms. Greedy and lazy
+parses decide each step from the current position only, so they can be computed
+exactly in parallel. How quickly a greedy walk started at a segment boundary lands on
+the true path (Silesia, level-1 matches): median 4 B, p90 28 B, p99 157 B, p99.9
+4.7 KB, max 9.9 KB. A fix-up loop is therefore needed for the tail. Published GPU
+entropy coders run at tens to hundreds of GB/s (DietGPU, Tian et al., GDeflate's
+32-lane layout), so an entropy stage shouldn't be the bottleneck. GPU LZ compression
+is hard everywhere: nvCOMP LZ4 compresses text-like data at about 4.6 GB/s on an A100,
+which has several times the M4 Pro's bandwidth.
+
+**Decision:** reorder the roadmap (plan.md M9, M9e). Order: exact segmented parse,
+lazy rule, in-block visibility, hash chains as levels, then GLZ v2 with an entropy
+stage. Chunk size and typed filters come later.
+
+## Segmented parse: exact, 32 lanes per chunk
+`encode_parse_seg.wgsl` replaces the one-lane-per-chunk parse for LZ4 and for GLZ
+without groups. GLZ with dependency elimination keeps the serial kernel, because
+its group state depends on parse history.
+
+Without groups, a greedy step depends only on its position, so the serial parse can
+be computed exactly with one workgroup per chunk and one lane per segment
+(`PARSE_SEGMENTS` = 32, `seg_len(n)` positions each):
+- **Phase A, speculative walks.** Each lane walks from its segment start, marks the
+  positions it visits (bit 31 of the match word, so `probe_len` is now ≤ 32767),
+  and records its exit.
+- **Phase B, fix-up rounds.** Each lane re-walks from the previous lane's exit until
+  it meets a mark (its speculative walk is then correct from there) or leaves the
+  segment. Rounds repeat until no exit changes.
+- **Phase C, final walk.** Each lane writes its sequences in place in its own
+  segment's scratch words (the j-th match starts ≥ 4j past the segment start).
+  A scan then fixes each first sequence's anchor.
+
+The output is byte-identical: all existing twin and matrix tests pass, plus new
+stitching tests in `tests/parse.rs`.
+
+**Emit** looks up sequence i through a per-chunk table of each segment's first
+sequence index (`segs`, 32 × u32 per chunk; the serial parse writes a one-segment
+table). The first version did this lookup, a binary search, in every lane for every
+sequence of the long-literal loop, and emit went from 13 to 69 ms. Caching each
+lane's address in workgroup memory brought it to about 16 ms.
+
+**Long runs.** Inside a run, every lane's walk lands in the same match, and each
+lane extended it to the run's end: zeros fell 4.89 → 1.45 GB/s. Fixes:
+- Speculative extension stops 256 B past the segment. Such an exit stays "unknown"
+  until the lane is confirmed on the true path.
+- A confirmed long match is extended by the whole workgroup (`coop_extend`: 16 B
+  per lane per step, minimum first mismatch).
+- The final walk takes a crossing match's end from the known exit instead of
+  extending again.
+
+After these, zeros runs at 4.59 GB/s. With one lane per chunk, M8's serial parse kept
+the SIMD lanes busy on separate chunks, so zeros stays slightly below it.
+
+Recorded (parse-seg vs M8), GPU compress, Silesia:
+- LZ4 kernel 1.98 → 2.72 GB/s (+38%), end to end 1.74 → 2.29 (+32%).
+- GLZ end to end 1.73 → 2.28.
+- `--filters auto` 1.09 → 1.41; `exhaustive` 0.58 → 0.78.
+- Single Silesia files gain 2–7× (e.g. `xml` kernel 0.12 → 0.78). Small files used
+  to leave the serial parse too few chunks to run side by side.
+- Synthetics: mixed +7%, random ±0, text −2%, zeros −6%; GLZ g64 (serial parse)
+  unchanged.
+
+Kernel split on Silesia: match finding ~34 ms, parse ~28 ms (was ~60), emit ~16 ms.
+Match finding is now the largest kernel.
