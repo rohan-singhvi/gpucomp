@@ -19,7 +19,8 @@ pub struct CompressArgs {
     #[arg(long)]
     pub checksum: bool,
     /// CPU block encoder for LZ4: `lz4-flex` (baseline) or `greedy` (the GPU
-    /// encoder's twin). GLZ always uses its own greedy encoder.
+    /// encoder's twin, which parses lazily at level 1). GLZ always uses its
+    /// own encoder.
     #[arg(long, value_enum, default_value_t = EncoderArg::Lz4Flex)]
     pub encoder: EncoderArg,
     /// GLZ only: no match may copy from another match's output within each

@@ -1,4 +1,4 @@
-// Encoder kernel 2: greedy parse, ONE INVOCATION PER CHUNK (appended to
+// Encoder kernel 2: greedy (or lazy) parse, ONE INVOCATION PER CHUNK (appended to
 // encode_common.wgsl). Extends the matches it takes and, for GLZ with
 // params.groups > 0, caps matches whose source pattern would reach another
 // match's output in the same group of params.groups sequences (dependency
@@ -63,7 +63,9 @@ fn parse(chunk: u32) {
             break;
         }
         let m = scratch[sbase + p];
-        if ((m >> 16u) < MIN_MATCH) {
+        // Lazy: skip it if the next position's match is longer.
+        if ((m >> 16u) < MIN_MATCH
+            || (params.lazy != 0u && p + 1u + MFLIMIT <= n && (scratch[sbase + p + 1u] >> 16u) > (m >> 16u))) {
             p++;
             continue;
         }

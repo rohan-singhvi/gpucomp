@@ -76,11 +76,11 @@ Apple M4 Pro, [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=si
 |---|---|---|
 | CPU `lz4_flex`, multi-threaded compress | 2.04× | 5.3 |
 | CPU `lz4_flex`, multi-threaded decompress | — | 12.6 |
-| GPU compress, LZ4 | 1.94× | 2.29 |
-| GPU compress, LZ4, `--filters auto` | 1.99× | 1.41 |
-| GPU compress, GLZ | 1.91× | 2.28 |
+| GPU compress, LZ4 | 1.99× | 2.31 |
+| GPU compress, LZ4, `--filters auto` | 2.05× | 1.43 |
+| GPU compress, GLZ | 1.96× | 2.29 |
 | GPU decompress, LZ4 (kernel only) | — | 3.3 |
-| GPU decompress, GLZ (kernel only) | — | 4.7 |
+| GPU decompress, GLZ (kernel only) | — | 4.9 |
 
 The GPU doesn't beat a good multi-threaded CPU yet. The parse now runs 32 lanes per chunk, so match finding is the largest encoder kernel. Host↔GPU transfers (6–10 GB/s here) also cap end-to-end throughput. The roadmap to better ratio and speed is in [plan.md](plan.md) (M9, M9e). Full results and history are in [BENCHMARKS.md](BENCHMARKS.md), and the reasoning behind design choices, including negative results, is in [DECISIONS.md](DECISIONS.md).
 

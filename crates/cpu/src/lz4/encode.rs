@@ -7,7 +7,8 @@
 //!    positions from *earlier* blocks, verifies it and extends the match up to
 //!    `probe_len` bytes. Then every position of the block is inserted; when
 //!    several hit one bucket, the latest position wins (`atomicMax` on the GPU).
-//! 2. **Parse** (serial): walk forward greedily, taking any match of length ≥ 4.
+//! 2. **Parse**: walk forward taking any match of length ≥ 4, except (lazy)
+//!    when the next position's match is longer.
 //!    A match that hit the `probe_len` cap is extended here, so total extension
 //!    work is O(n) instead of O(n × match length).
 //! 3. **Emit**: write the LZ4 sequences.
@@ -22,6 +23,9 @@ pub struct Params {
     pub hash_log: u32,
     /// Phase 1 extends each match at most this far; phase 2 extends taken ones.
     pub probe_len: usize,
+    /// Lazy parse: skip a match when the next position's (phase-1) match is
+    /// longer. Otherwise greedy.
+    pub lazy: bool,
 }
 
 impl Default for Params {
@@ -31,6 +35,7 @@ impl Default for Params {
             block: 128,
             hash_log: 12,
             probe_len: 16,
+            lazy: true,
         }
     }
 }
@@ -105,8 +110,18 @@ pub fn find_matches(input: &[u8], params: &Params) -> Vec<Match> {
     matches
 }
 
-/// Phase 2: greedy parse over the phase-1 matches.
-pub fn parse(input: &[u8], matches: &[Match]) -> Vec<Sequence> {
+/// Lazy matching: skip the match at `p` (emit a literal) when the next
+/// position's phase-1 match is longer. Phase-1 lengths are probe-capped, so
+/// this needs no extra extension. Positions past the last match start have no
+/// match (the GPU never writes them, so `p + 1` must be a valid start).
+pub fn defer_match(matches: &[Match], p: usize, n: usize) -> bool {
+    p + 1 + MFLIMIT <= n && matches[p + 1].len > matches[p].len
+}
+
+/// Phase 2: greedy (or, with `lazy`, lazy) parse over the phase-1 matches.
+/// Each step depends only on the matches at `p` and `p + 1`, which is what lets
+/// the GPU parse segments of a chunk in parallel.
+pub fn parse(input: &[u8], matches: &[Match], lazy: bool) -> Vec<Sequence> {
     let n = input.len();
     let match_limit = n.saturating_sub(LAST_LITERALS);
     let mut sequences = Vec::new();
@@ -114,7 +129,7 @@ pub fn parse(input: &[u8], matches: &[Match]) -> Vec<Sequence> {
     let mut p = 0;
     while p + MFLIMIT <= n {
         let m = matches[p];
-        if (m.len as usize) < MIN_MATCH {
+        if (m.len as usize) < MIN_MATCH || (lazy && defer_match(matches, p, n)) {
             p += 1;
             continue;
         }
@@ -175,7 +190,11 @@ fn write_length(out: &mut Vec<u8>, len: usize) {
 /// Compresses `input` as one LZ4 block.
 pub fn encode_block(input: &[u8], params: &Params) -> Vec<u8> {
     let mut out = Vec::with_capacity(super::max_compressed_size(input.len()));
-    emit(input, &parse(input, &find_matches(input, params)), &mut out);
+    emit(
+        input,
+        &parse(input, &find_matches(input, params), params.lazy),
+        &mut out,
+    );
     out
 }
 
@@ -307,7 +326,7 @@ mod tests {
     #[test]
     fn parse_takes_matches_greedily_and_extends_capped_ones() {
         let input = [0u8; 1000];
-        let seqs = parse(&input, &find_matches(&input, &block64()));
+        let seqs = parse(&input, &find_matches(&input, &block64()), false);
         assert_eq!(
             seqs,
             [
@@ -327,10 +346,45 @@ mod tests {
         );
     }
 
+    /// Block 0 holds "abcd" and, apart, "bcdefghij"; position 128 starts
+    /// "abcdefghij", so it has a 4-byte match and position 129 a 9-byte one.
+    fn lazy_input() -> Vec<u8> {
+        let mut input = random(128, 11);
+        input[10..14].copy_from_slice(b"abcd");
+        input[30] = b'X';
+        input[31..40].copy_from_slice(b"bcdefghij");
+        input.extend_from_slice(b"abcdefghij");
+        input.extend(random(64, 12));
+        input
+    }
+
+    #[test]
+    fn greedy_parse_takes_the_first_match() {
+        let input = lazy_input();
+        let seqs = parse(&input, &find_matches(&input, &block64()), false);
+        assert_eq!(
+            (seqs[0].lit_len, seqs[0].match_len, seqs[0].offset),
+            (128, 4, 118)
+        );
+    }
+
+    #[test]
+    fn lazy_parse_skips_a_match_when_the_next_one_is_longer() {
+        let input = lazy_input();
+        let seqs = parse(&input, &find_matches(&input, &block64()), true);
+        assert_eq!(
+            (seqs[0].lit_len, seqs[0].match_len, seqs[0].offset),
+            (129, 9, 98)
+        );
+        let mut out = Vec::new();
+        emit(&input, &seqs, &mut out);
+        assert_eq!(decode(&out, input.len()), input);
+    }
+
     #[test]
     fn parse_without_matches_is_one_literal_run() {
         let input = random(100, 6);
-        let seqs = parse(&input, &find_matches(&input, &Params::default()));
+        let seqs = parse(&input, &find_matches(&input, &Params::default()), true);
         assert_eq!(
             seqs,
             [Sequence {
@@ -390,6 +444,7 @@ mod tests {
                 block,
                 hash_log,
                 probe_len,
+                ..Params::default()
             })
     }
 
@@ -404,7 +459,7 @@ mod tests {
         #[test]
         fn parse_obeys_lz4_end_of_block_rules(input in compressible(), params in params()) {
             let n = input.len();
-            let seqs = parse(&input, &find_matches(&input, &params));
+            let seqs = parse(&input, &find_matches(&input, &params), params.lazy);
             let (last, body) = seqs.split_last().unwrap();
             prop_assert_eq!(last.match_len, 0);
             prop_assert_eq!((last.lit_start + last.lit_len) as usize, n);

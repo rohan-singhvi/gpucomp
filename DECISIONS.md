@@ -592,3 +592,26 @@ Recorded (parse-seg vs M8), GPU compress, Silesia:
 
 Kernel split on Silesia: match finding ~34 ms, parse ~28 ms (was ~60), emit ~16 ms.
 Match finding is now the largest kernel.
+
+## Lazy parse at level 1
+Rule (`cpu::lz4::encode::defer_match`, mirrored in both GPU parse kernels): at a
+position with a match, emit a literal instead if the next position's **phase-1**
+(probe-capped) match is longer. The step still depends only on position (it reads
+match words p and p + 1), so the segmented parse stays exact. In phase C, a lane's
+read at p + 1 == seg_end is cached before the barrier, because the next lane
+overwrites that word with sequences. Lazy applies to GLZ too, including with groups
+(the deferral comes before the group check). `Params::lazy` / `EncodeParams::lazy`
+default to true; greedy stays available.
+
+Using the capped lengths is nearly free and almost as good as comparing fully
+extended matches (Silesia CPU twin: greedy 1.9447×, lazy capped 1.9947×, lazy full
+1.9964×).
+
+Recorded (lazy vs parse-seg), Silesia:
+- LZ4 1.943 → 1.993× at the same speed (kernel 2.72, end to end 2.29 → 2.31 GB/s).
+- GLZ 1.908 → 1.955×.
+- `--filters auto` 1.993 → 2.045×, above lz4_flex's 2.036×.
+- Decode gets faster with fewer sequences: GLZ kernel +5–11%, LZ4 auto-filtered
+  decode +6–8%.
+- Text 1.816 → 1.922× (+5% compress speed).
+- GLZ g64 (serial parse) compresses 3–5% slower for +1.3% ratio.

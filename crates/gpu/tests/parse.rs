@@ -2,7 +2,8 @@
 //! stitched where the walks merge (see encode_parse_seg.wgsl). Its output must
 //! equal the serial greedy parse, so these inputs target the stitching:
 //! matches across segment boundaries, runs covering whole segments, periodic
-//! data whose shifted parses merge late, and parses ending mid-segment.
+//! data whose shifted parses merge late, and parses ending mid-segment, for
+//! the greedy and the lazy parse (which also reads the next position's match).
 
 mod common;
 
@@ -16,6 +17,7 @@ fn twin(p: EncodeParams) -> Params {
         block: p.block as usize,
         hash_log: p.hash_log,
         probe_len: p.probe_len as usize,
+        lazy: p.lazy,
     }
 }
 
@@ -72,10 +74,15 @@ fn check(encoder: &GpuEncoder, ctx: &gpu::Context, params: EncodeParams, chunk: 
 #[test]
 fn segment_stitching_matches_the_serial_parse() {
     let Some(ctx) = context() else { return };
-    let params = EncodeParams::default();
-    let encoder = GpuEncoder::new(&ctx, params).unwrap();
-    for chunk in [4096, 65_536] {
-        check(&encoder, &ctx, params, chunk);
+    for lazy in [false, true] {
+        let params = EncodeParams {
+            lazy,
+            ..EncodeParams::default()
+        };
+        let encoder = GpuEncoder::new(&ctx, params).unwrap();
+        for chunk in [4096, 65_536] {
+            check(&encoder, &ctx, params, chunk);
+        }
     }
 }
 

@@ -1,7 +1,8 @@
-// Encoder kernel 2: greedy parse, ONE WORKGROUP PER CHUNK, one lane per
+// Encoder kernel 2: greedy (or lazy) parse, ONE WORKGROUP PER CHUNK, one lane per
 // segment of seg_len(n) positions (appended to encode_common.wgsl). Without
-// dependency elimination a greedy step depends only on its position
-// (p -> p + 1 for a literal, p -> the extended match end), so the serial
+// dependency elimination a parse step depends only on its position (and the
+// match words at p and p + 1): p -> p + 1 for a literal, p -> the extended
+// match end. So the serial
 // parse can be computed exactly in parallel:
 //   A. Each lane walks from its segment's start until it leaves the segment,
 //      marking the positions it visits (MARK in the match word). Its last
@@ -55,13 +56,24 @@ struct Chunk {
     match_limit: u32, // matches end at or before this
 }
 
-// The greedy step from `p` (with p + MFLIMIT <= n): returns (next position,
+// The parse step from `p` (with p + MFLIMIT <= n): returns (next position,
 // match word or 0 for a literal). Extension stops at `limit` (and always at
-// match_limit), so a match reaching `limit` may really be longer.
-fn greedy_step(c: Chunk, p: u32, limit: u32) -> vec2<u32> {
+// match_limit), so a match reaching `limit` may really be longer. A lazy
+// parse also reads the match word at p + 1; at p + 1 == seg_end that's
+// `look` unless NONE (the next lane may be overwriting it in phase C).
+fn greedy_step(c: Chunk, p: u32, limit: u32, seg_end: u32, look: u32) -> vec2<u32> {
     let m = scratch[c.sbase + p] & ~MARK;
     if ((m >> 16u) < MIN_MATCH) {
         return vec2<u32>(p + 1u, 0u);
+    }
+    if (params.lazy != 0u && p + 1u + MFLIMIT <= c.n) {
+        var next = scratch[c.sbase + p + 1u] & ~MARK;
+        if (p + 1u == seg_end && look != NONE) {
+            next = look;
+        }
+        if ((next >> 16u) > (m >> 16u)) {
+            return vec2<u32>(p + 1u, 0u);
+        }
     }
     let end = extend(c.start, p + (m >> 16u), m & 0xFFFFu, min(limit, c.match_limit));
     return vec2<u32>(end, m);
@@ -84,7 +96,7 @@ fn speculative_walk(c: Chunk, seg_start: u32, seg_end: u32) -> vec3<u32> {
             break;
         }
         scratch[c.sbase + p] |= MARK;
-        let s = greedy_step(c, p, cap);
+        let s = greedy_step(c, p, cap, seg_end, NONE);
         if (s.y != 0u && s.x >= cap && cap < c.match_limit) {
             inexact = vec2<u32>(s.y & 0xFFFFu, 1u);
         }
@@ -108,7 +120,7 @@ fn corrected_walk(c: Chunk, e: u32, seg_end: u32) -> vec2<u32> {
         if ((scratch[c.sbase + p] & MARK) != 0u) {
             return vec2<u32>(p, 1u);
         }
-        p = greedy_step(c, p, c.match_limit).x;
+        p = greedy_step(c, p, c.match_limit, seg_end, NONE).x;
     }
     return vec2<u32>(p, 0u);
 }
@@ -280,6 +292,13 @@ fn main(
     }
 
     // ---- C: write this segment's part of the true path ----
+    // The lazy look-ahead past the segment, read before the next lane writes
+    // its sequences over it.
+    var look = 0u;
+    if (seg_end + MFLIMIT <= n) {
+        look = scratch[c.sbase + seg_end] & ~MARK;
+    }
+    workgroupBarrier();
     var count = 0u;
     var acc = vec3<u32>(0u, 0u, 0u);
     var anchor = 0u; // previous match end; unknown before the first match
@@ -292,7 +311,7 @@ fn main(
         if (p >= seg_end || p + MFLIMIT > n) {
             break;
         }
-        var s = greedy_step(c, p, seg_end);
+        var s = greedy_step(c, p, seg_end, seg_end, look);
         if (s.y == 0u) {
             p = s.x;
             continue;

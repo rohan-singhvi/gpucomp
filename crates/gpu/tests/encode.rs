@@ -19,6 +19,7 @@ fn twin(p: EncodeParams) -> Params {
         block: p.block as usize,
         hash_log: p.hash_log,
         probe_len: p.probe_len as usize,
+        lazy: p.lazy,
     }
 }
 
@@ -91,16 +92,19 @@ fn other_parameters_also_match_the_twin() {
             block: 32,
             hash_log: 10,
             probe_len: 8,
+            lazy: false,
         },
         EncodeParams {
             block: 128,
             hash_log: 11,
             probe_len: 32,
+            lazy: true,
         },
         EncodeParams {
             block: 256,
             hash_log: 12,
             probe_len: 4,
+            lazy: false,
         },
     ] {
         let encoder = GpuEncoder::new(&ctx, params).unwrap();

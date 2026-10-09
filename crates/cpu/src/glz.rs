@@ -25,7 +25,7 @@
 //! group of `G` sequences, so a decoder can resolve a whole group in one
 //! parallel step (Gompresso's dependency elimination).
 
-use crate::lz4::encode::{find_matches, Params, Sequence};
+use crate::lz4::encode::{defer_match, find_matches, Params, Sequence};
 use crate::lz4::{LAST_LITERALS, MFLIMIT, MIN_MATCH};
 
 pub const WIDE_BIT: u32 = 1 << 31;
@@ -55,12 +55,13 @@ pub enum GlzError {
     SizeMismatch,
 }
 
-/// Greedy parse over phase-1 matches, as in `lz4::encode::parse`, optionally
+/// Greedy or lazy parse over phase-1 matches, as in `lz4::encode::parse`, optionally
 /// refusing matches that would depend on another match in the same group.
 pub fn parse(
     input: &[u8],
     matches: &[crate::lz4::encode::Match],
     groups: Option<u32>,
+    lazy: bool,
 ) -> Vec<Sequence> {
     let n = input.len();
     let match_limit = n.saturating_sub(LAST_LITERALS);
@@ -72,7 +73,7 @@ pub fn parse(
     let mut p = 0;
     while p + MFLIMIT <= n {
         let m = matches[p];
-        if (m.len as usize) < MIN_MATCH {
+        if (m.len as usize) < MIN_MATCH || (lazy && defer_match(matches, p, n)) {
             p += 1;
             continue;
         }
@@ -203,7 +204,10 @@ pub fn emit(input: &[u8], sequences: &[Sequence]) -> Vec<u8> {
 /// Compresses `input` as one GLZ block.
 pub fn encode_block(input: &[u8], params: &GlzParams) -> Vec<u8> {
     let matches = find_matches(input, &params.lz);
-    emit(input, &parse(input, &matches, params.independent_groups))
+    emit(
+        input,
+        &parse(input, &matches, params.independent_groups, params.lz.lazy),
+    )
 }
 
 /// Decodes one GLZ block into `dst` (exactly the uncompressed size). Header
@@ -405,8 +409,12 @@ mod tests {
         let input = [b"the cat sat on the mat. ".repeat(40), random(500, 3)].concat();
         let matches = find_matches(&input, &Params::default());
         assert_eq!(
-            parse(&input, &matches, None),
-            crate::lz4::encode::parse(&input, &matches)
+            parse(&input, &matches, None, false),
+            crate::lz4::encode::parse(&input, &matches, false)
+        );
+        assert_eq!(
+            parse(&input, &matches, None, true),
+            crate::lz4::encode::parse(&input, &matches, true)
         );
     }
 
@@ -414,7 +422,7 @@ mod tests {
     fn independent_groups_never_copy_from_a_group_mates_match() {
         let input = b"abcabcabcabc-xyz-".repeat(200);
         let matches = find_matches(&input, &Params::default());
-        let seqs = parse(&input, &matches, Some(4));
+        let seqs = parse(&input, &matches, Some(4), true);
         assert_independent(&seqs, 4);
         let block = emit(&input, &seqs);
         assert_eq!(decode(&block, input.len()).unwrap(), input);
@@ -569,7 +577,7 @@ mod tests {
             prop_assert_eq!(decode(&block, input.len()).unwrap(), input.clone());
             if let Some(g) = groups {
                 let matches = find_matches(&input, &params.lz);
-                assert_independent(&parse(&input, &matches, Some(g)), g as usize);
+                assert_independent(&parse(&input, &matches, Some(g), true), g as usize);
             }
         }
 

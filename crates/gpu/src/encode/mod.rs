@@ -34,6 +34,8 @@ pub struct EncodeParams {
     pub hash_log: u32,
     /// Phase 1 extends matches at most this far.
     pub probe_len: u32,
+    /// Lazy parse (see `cpu::lz4::encode::Params::lazy`).
+    pub lazy: bool,
 }
 
 impl Default for EncodeParams {
@@ -44,6 +46,7 @@ impl Default for EncodeParams {
             block: 128,
             hash_log: 12,
             probe_len: 16,
+            lazy: true,
         }
     }
 }
@@ -1265,7 +1268,7 @@ impl GpuEncoder {
             slot,
             self.params.probe_len,
             groups,
-            0,
+            u32::from(self.params.lazy),
             0,
             0,
         ];

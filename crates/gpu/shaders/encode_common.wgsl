@@ -20,7 +20,7 @@ struct Params {
     slot_size: u32,  // output bytes reserved per chunk (multiple of 4)
     probe_len: u32,  // phase-1 match extension cap
     groups: u32,     // GLZ dependency-elimination group size; 0 = off
-    _pad0: u32,
+    lazy: u32,       // 1 = lazy parse (cpu::lz4::encode::defer_match)
     _pad1: u32,
     _pad2: u32,
 }
