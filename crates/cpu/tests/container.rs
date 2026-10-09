@@ -460,3 +460,80 @@ fn lz4_flex_decoder_refuses_glz_files() {
         Err(CpuError::Options(_))
     ));
 }
+
+// ---- GLZ-E (codec 3) ----
+
+fn glze(filters: cpu::container::FilterMode) -> CompressOptions {
+    CompressOptions {
+        codec: Codec::GlzE,
+        checksums: true,
+        filters,
+        ..glz(None)
+    }
+}
+
+#[test]
+fn glze_files_round_trip_and_read_ranges() {
+    use cpu::container::FilterMode;
+    for filters in [FilterMode::None, FilterMode::Auto] {
+        for (name, input) in fixtures() {
+            let file = compress(&input, &glze(filters)).unwrap();
+            assert_eq!(Index::parse(&file).unwrap().header.codec, Codec::GlzE);
+            let out = decompress(&file, &dopts(Decoder::HandWritten))
+                .unwrap_or_else(|e| panic!("{name} {filters:?}: {e}"));
+            assert!(out == input, "{name} {filters:?}");
+        }
+    }
+    let input = text(10 * CHUNK as usize + 99);
+    let file = compress(&input, &glze(FilterMode::None)).unwrap();
+    let c = u64::from(CHUNK);
+    for (offset, len) in [(0, 10), (c - 5, 10), (3 * c + 7, 2 * c)] {
+        let got = range(&file, offset, len).unwrap();
+        assert!(got == input[offset as usize..(offset + len) as usize]);
+    }
+}
+
+#[test]
+fn glze_is_smaller_than_glz_on_varied_text() {
+    let input: Vec<u8> = (0..400_000u32)
+        .flat_map(|i| format!("item {} of {}, ", (i * 7919) % 2003, i % 89).into_bytes())
+        .take(8 << 16)
+        .collect();
+    let at_64k = |o: CompressOptions| CompressOptions {
+        chunk_size: 1 << 16,
+        ..o
+    };
+    let glz_file = compress(&input, &at_64k(glz(None))).unwrap();
+    let glze_file = compress(&input, &at_64k(glze(cpu::container::FilterMode::None))).unwrap();
+    assert!(
+        glze_file.len() * 10 < glz_file.len() * 8,
+        "{} vs {}",
+        glze_file.len(),
+        glz_file.len()
+    );
+}
+
+#[test]
+fn glze_costs_at_most_six_words_a_chunk_over_glz() {
+    // Tiny, highly compressible chunks: every stream stays raw, which adds the
+    // literal count, four mode words and up to a word of padding (offsets
+    // split into two streams).
+    let input = text(20 * CHUNK as usize);
+    let glz_file = compress(&input, &glz(None)).unwrap();
+    let glze_file = compress(&input, &glze(cpu::container::FilterMode::None)).unwrap();
+    assert!(glze_file.len() <= glz_file.len() + 20 * 24);
+}
+
+#[test]
+fn glze_needs_the_glz_encoder_and_our_decoder() {
+    let bad = CompressOptions {
+        codec: Codec::GlzE,
+        ..opts(Encoder::Lz4Flex)
+    };
+    assert!(matches!(compress(b"abc", &bad), Err(CpuError::Options(_))));
+    let file = compress(&text(10_000), &glze(cpu::container::FilterMode::None)).unwrap();
+    assert!(matches!(
+        decompress(&file, &dopts(Decoder::Lz4Flex)),
+        Err(CpuError::Options(_))
+    ));
+}

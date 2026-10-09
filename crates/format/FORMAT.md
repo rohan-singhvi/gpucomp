@@ -19,7 +19,7 @@ chunks it overlaps.
 |-------:|-----:|---------------|---------|
 | 0      | 4    | `magic`       | `GPCZ` |
 | 4      | 2    | `version`     | `1` |
-| 6      | 2    | `codec`       | `0` = stored, `1` = LZ4 block, `2` = GLZ |
+| 6      | 2    | `codec`       | `0` = stored, `1` = LZ4 block, `2` = GLZ, `3` = GLZ-E |
 | 8      | 4    | `chunk_size`  | power of two, 4 KiB ..= 1 MiB |
 | 12     | 4    | `chunk_count` | `ceil(total_size / chunk_size)`, so `0` for an empty file |
 | 16     | 8    | `total_size`  | uncompressed size in bytes |
@@ -94,6 +94,71 @@ lowest failing sequence, which is what a serial decoder reports.
 each group of G consecutive sequences, no match copies bytes from another match's output
 in the same group. A decoder that resolves G sequences at a time can then copy all of a
 group's matches at once.
+
+## GLZ-E block (codec 3)
+
+A GLZ block whose byte streams are entropy-coded. Decoding a GLZ-E block gives back an
+exact GLZ block (codec 2), which then decodes, and is checked, as GLZ. All values are
+little-endian, and every part is a whole number of 4-byte words.
+
+```
+u32     seq_count | WIDE_BIT          as in GLZ
+u32     ext_count                     as in GLZ
+u32     lit_count                     literal bytes (sum of lit_len)
+stream  tokens    [seq_count]         the GLZ token bytes
+stream  off_lo    [seq_count]         low byte of each GLZ offset
+stream  off_hi    [seq_count]         high byte of each GLZ offset
+ext     [ext_count] u16 or u32        exactly the GLZ extension array (padded to 4)
+stream  literals  [lit_count]         the GLZ literal bytes
+```
+
+The block must end right after the literal stream.
+
+**Streams.** A stream of `n` byte symbols (n comes from the header) starts with a mode
+word:
+
+- **Raw**, `0x00000000`: the `n` bytes, zero-padded to 4.
+- **RLE**, `0x0000ss01`: all `n` symbols are `ss`. Nothing follows.
+- **Huffman**, `0x00000002`:
+  - **Code lengths:** 128 bytes. Byte `i` holds the lengths of symbols `2i` (low nibble)
+    and `2i + 1` (high nibble). A length is 0 (symbol unused) or 1..=11. The lengths must
+    form a complete prefix code: Σ 2^(11 − len) over used symbols = 2048.
+  - **Lane sizes:** `L = clamp(ceil(n / 512), 1, 32)` lanes. Lane `k` codes symbols
+    `[k·n / L, (k+1)·n / L)`. Then `L` u16 word counts, zero-padded to 4 bytes.
+  - **Lane words:** lane 0's words, then lane 1's, and so on.
+  - **Codes:** canonical. Shorter codes come first, and codes of equal length are in
+    symbol order. Codes are bit-reversed and packed least significant bit first into u32
+    words, as in deflate. A decoder reads 11 bits at a time, treating bits past the lane's
+    last word as zero. A lane must not consume bits past its last word.
+
+**Checks** (decoders report the first failure in this order):
+1. **Header:** the 3 words are present, else `Truncated`. Then `seq_count` in
+   `1..=uncomp_size / 4 + 1`, `ext_count ≤ 2 × seq_count` and `lit_count ≤ uncomp_size`,
+   else `BadSequence`.
+2. **Each stream, in order:**
+   - The mode word is present, else `Truncated`. An unknown mode or nonzero reserved bits
+     gives `BadMode`.
+   - The raw bytes, code lengths, lane sizes and lane words are present, else
+     `Truncated`.
+   - The code lengths are complete and ≤ 11, else `BadTable`. (This is checked after the
+     lengths are present and before the lane sizes.)
+   - The lanes decode in order without reading past their words, else `LaneOverrun`.
+3. **Extension words** are present, else `Truncated`, then the literal stream.
+4. **Nothing follows** the literal stream, else `SizeMismatch`.
+5. **The rebuilt GLZ block** decodes, with the GLZ checks.
+
+**Encoder (the CPU twin and the GPU must match):**
+- **Choosing a mode:** RLE if exactly one symbol value occurs. Otherwise Huffman if that's
+  strictly smaller than raw, else raw. An empty stream is raw.
+- **Code lengths:**
+  1. Sort the used symbols by (count, symbol).
+  2. Build a two-queue Huffman tree from that leaf queue and a queue of merged nodes,
+     merging the two lightest each time. When a leaf and a node weigh the same, the leaf
+     comes first.
+  3. Fold depths over 11 back with JPEG Annex K.3. For each overlong length `i`, from the
+     deepest: while codes remain at `i`, take the deepest `j < i − 1` that has codes; move
+     two codes from `i` to `i − 1`, and replace one code at `j` with two at `j + 1`.
+  4. Hand out the per-length counts, longest first, to the symbols in sorted order.
 
 ## Filters
 

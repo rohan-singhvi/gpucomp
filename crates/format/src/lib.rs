@@ -49,6 +49,8 @@ pub enum Codec {
     Lz4 = 1,
     /// GPU-friendly LZ77 with separate fixed-width streams (milestone M6).
     Glz = 2,
+    /// GLZ with its byte streams entropy-coded (Huffman in 32 lanes; M9e).
+    GlzE = 3,
 }
 
 /// A reversible per-chunk transform applied before compression (§4a of the plan).
@@ -170,6 +172,7 @@ impl Header {
             0 => Codec::Stored,
             1 => Codec::Lz4,
             2 => Codec::Glz,
+            3 => Codec::GlzE,
             id => return Err(FormatError::UnknownCodec(id)),
         };
         let flags = u32_at(bytes, 24);

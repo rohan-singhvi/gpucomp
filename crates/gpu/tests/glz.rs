@@ -127,6 +127,7 @@ fn expected_status(e: GlzError) -> ChunkStatus {
         GlzError::OffsetBeforeStart => ChunkStatus::OffsetBeforeStart,
         GlzError::OutputOverflow => ChunkStatus::OutputOverflow,
         GlzError::SizeMismatch => ChunkStatus::SizeMismatch,
+        GlzError::Stream(_) => unreachable!("GLZ blocks have no entropy-coded streams"),
     }
 }
 

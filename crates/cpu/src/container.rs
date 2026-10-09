@@ -138,9 +138,11 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
     })?;
 
     match (options.codec, options.encoder) {
-        (Codec::Glz, Encoder::Glz(_)) | (Codec::Stored, _) => {}
+        (Codec::Glz | Codec::GlzE, Encoder::Glz(_)) | (Codec::Stored, _) => {}
         (Codec::Lz4, Encoder::Lz4Flex | Encoder::Greedy(_)) => {}
-        (Codec::Glz, _) => return Err(CpuError::Options("the GLZ codec needs Encoder::Glz")),
+        (Codec::Glz | Codec::GlzE, _) => {
+            return Err(CpuError::Options("the GLZ codecs need Encoder::Glz"))
+        }
         (Codec::Lz4, Encoder::Glz(_)) => {
             return Err(CpuError::Options("Encoder::Glz needs the GLZ codec"))
         }
@@ -148,7 +150,7 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
 
     // The stored codec never filters: a stored chunk is stored unfiltered.
     let candidates: &[Filter] = match (options.filters, options.codec) {
-        (FilterMode::Auto | FilterMode::Exhaustive, Codec::Lz4 | Codec::Glz) => {
+        (FilterMode::Auto | FilterMode::Exhaustive, Codec::Lz4 | Codec::Glz | Codec::GlzE) => {
             crate::filter::candidates(options.level)
         }
         _ => &[Filter::None],
@@ -203,8 +205,9 @@ fn encode_block(options: &CompressOptions, block: &[u8]) -> Option<Vec<u8>> {
             Some(crate::lz4::encode::encode_block(block, &params))
         }
         (Codec::Glz, Encoder::Glz(params)) => Some(crate::glz::encode_block(block, &params)),
+        (Codec::GlzE, Encoder::Glz(params)) => Some(crate::glze::encode_block(block, &params)),
         // Rejected by `compress` before any chunk is encoded.
-        (Codec::Lz4, Encoder::Glz(_)) | (Codec::Glz, _) => unreachable!(),
+        (Codec::Lz4, Encoder::Glz(_)) | (Codec::Glz | Codec::GlzE, _) => unreachable!(),
     }
 }
 
@@ -270,11 +273,16 @@ fn decode_chunk(
 ) -> Result<(), CpuError> {
     if entry.stored {
         dst.copy_from_slice(payload);
-    } else if codec == Codec::Glz {
+    } else if matches!(codec, Codec::Glz | Codec::GlzE) {
         if options.decoder == Decoder::Lz4Flex {
             return Err(CpuError::Options("lz4_flex can't decode GLZ files"));
         }
-        crate::glz::decode_block(payload, dst).map_err(|source| CpuError::Glz { chunk, source })?;
+        let decode = if codec == Codec::Glz {
+            crate::glz::decode_block
+        } else {
+            crate::glze::decode_block
+        };
+        decode(payload, dst).map_err(|source| CpuError::Glz { chunk, source })?;
     } else {
         match options.decoder {
             Decoder::HandWritten => crate::lz4::decode::decode_block(payload, dst)

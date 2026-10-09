@@ -402,3 +402,35 @@ fn levels_compress_smaller_and_gpu_matches_cpu() {
         assert!(std::fs::read(&l3_gpu).unwrap() == std::fs::read(&l3).unwrap());
     }
 }
+
+#[test]
+fn glze_codec_round_trips_on_the_cpu_and_beats_glz() {
+    let (input, glz, glze, out) = (
+        temp("e.txt"),
+        temp("e.glz.gpcz"),
+        temp("e.glze.gpcz"),
+        temp("e.out"),
+    );
+    std::fs::write(&input, sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    gpucomp(&["compress", &s(&input), &s(&glz), "--codec", "glz"]);
+    gpucomp(&[
+        "compress",
+        &s(&input),
+        &s(&glze),
+        "--codec",
+        "glze",
+        "--checksum",
+    ]);
+    let info = String::from_utf8(gpucomp(&["info", &s(&glze)]).stdout).unwrap();
+    assert!(info.contains("codec:       glze"), "{info}");
+    gpucomp(&["decompress", &s(&glze), &s(&out), "--verify"]);
+    assert!(std::fs::read(&out).unwrap() == sample());
+    let size = |p: &PathBuf| std::fs::metadata(p).unwrap().len();
+    assert!(
+        size(&glze) < size(&glz),
+        "{} vs {}",
+        size(&glze),
+        size(&glz)
+    );
+}

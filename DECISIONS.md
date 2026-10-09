@@ -686,3 +686,39 @@ on ratio by 9% but is far slower, so the deep levels need a faster candidate sea
 Next is multi-way buckets in workgroup memory: no dependent global loads, though
 fewer hash bits. Depth-2 numbers (2.118×, ~1.8 GB/s kernel) are in
 the CPU/GPU measurements above if a level between 1 and 2 is wanted.
+
+## M9e step 1: GLZ-E format and CPU codec
+**What gets entropy-coded.** Two designs were estimated on Silesia (order-0 entropy
+plus per-chunk table and lane overheads, 64 KiB chunks):
+- **A:** Huffman-code GLZ's byte streams as they are: tokens, offset low bytes,
+  offset high bytes and literals, with extension values left raw. Level 1 2.482×,
+  level 3 2.727×.
+- **B:** zstd-style log2 bucket codes for lengths and offsets, plus raw extra bits.
+  2.500× and 2.759×.
+
+A gives up about 1% and keeps GLZ's arrays. Decoding is "entropy-decode back into
+the exact GLZ block, then decode GLZ", so sequence checks, error codes and the GPU
+GLZ decode kernel are reused. On the encoder side it's one transcoding pass after
+GLZ emit. **Chosen: A**, as a new codec 3 (GLZ-E). GLZ (codec 2) is unchanged.
+
+**Streams** (`cpu::huffman`, spec in FORMAT.md): raw, RLE or Huffman.
+- **Huffman:** canonical codes of at most 11 bits, stored as 128 bytes of
+  nibble lengths. Up to 32 lanes (one per 512 symbols), each a contiguous symbol
+  range with its own word-aligned, LSB-first bitstream. No atomics or bit
+  interleaving in either direction. The 11-bit limit gives a 2048-entry decode
+  table.
+- **Table construction** is integer-only with fixed tie-breaks: sort by (count,
+  symbol), two-queue Huffman taking the leaf on ties, JPEG Annex K.3 to limit lengths,
+  then reassign lengths in sorted order. That way the GPU encoder can reproduce it
+  exactly.
+
+**Measured** (CPU encoder, Silesia, 64 KiB chunks): GLZ 1.95 / 2.16 / 2.26× → GLZ-E
+2.50 / 2.68 / 2.75× at levels 1 / 2 / 3. The real Huffman codes landed on the
+estimates, and level 3 matches zstd -1 at the same chunk size (2.76×).
+
+**Cost on tiny or highly compressible chunks:** every stream stays raw, which adds
+up to 6 words per chunk over GLZ (the literal count, four mode words, padding). On
+4 KiB chunks of trivially repetitive text, GLZ-E was 10% larger than GLZ. A test
+bounds this.
+
+The GPU encoder and decoder still reject codec 3; they're steps 2 and 3.

@@ -181,7 +181,7 @@ impl GpuDecoder {
 
     fn pipeline_for(&self, codec: format::Codec) -> &wgpu::ComputePipeline {
         match codec {
-            format::Codec::Glz => &self.glz_pipeline,
+            format::Codec::Glz | format::Codec::GlzE => &self.glz_pipeline,
             format::Codec::Stored | format::Codec::Lz4 => &self.pipeline,
         }
     }
@@ -343,6 +343,11 @@ impl GpuDecoder {
         plan: &plan::DecodePlan,
         src: &[u8],
     ) -> Result<Option<PreparedDecode>, GpuDecodeError> {
+        if index.header.codec == format::Codec::GlzE {
+            return Err(GpuDecodeError::Unsupported(
+                "GLZ-E decoding on the GPU is not implemented yet".into(),
+            ));
+        }
         if plan.chunks.is_empty() {
             return Ok(None);
         }

@@ -92,6 +92,8 @@ pub enum CodecArg {
     Lz4,
     /// GPU-friendly LZ77 with separate fixed-width streams.
     Glz,
+    /// GLZ with entropy-coded (Huffman) streams: smaller, slower to decode.
+    Glze,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -155,6 +157,7 @@ pub fn describe(index: &Index, file_len: u64) -> String {
         Codec::Stored => "stored",
         Codec::Lz4 => "lz4",
         Codec::Glz => "glz",
+        Codec::GlzE => "glze",
     };
     let ratio = if file_len == 0 {
         0.0
@@ -199,7 +202,8 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
             codec: match args.codec {
                 CodecArg::Lz4 => Codec::Lz4,
                 CodecArg::Glz => Codec::Glz,
-                CodecArg::Stored => anyhow::bail!("--gpu compresses with lz4 or glz"),
+                CodecArg::Glze => Codec::GlzE,
+                CodecArg::Stored => anyhow::bail!("--gpu compresses with lz4, glz or glze"),
             },
             chunk_size: args.chunk_size,
             checksums: args.checksum,
@@ -226,13 +230,16 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
             CodecArg::Stored => Codec::Stored,
             CodecArg::Lz4 => Codec::Lz4,
             CodecArg::Glz => Codec::Glz,
+            CodecArg::Glze => Codec::GlzE,
         },
         chunk_size: args.chunk_size,
         encoder: match (args.codec, args.encoder) {
-            (CodecArg::Glz, _) => cpu::container::Encoder::Glz(cpu::glz::GlzParams {
-                lz: Params::for_level(args.level),
-                independent_groups: args.independent_groups,
-            }),
+            (CodecArg::Glz | CodecArg::Glze, _) => {
+                cpu::container::Encoder::Glz(cpu::glz::GlzParams {
+                    lz: Params::for_level(args.level),
+                    independent_groups: args.independent_groups,
+                })
+            }
             (_, EncoderArg::Lz4Flex) => cpu::container::Encoder::Lz4Flex,
             (_, EncoderArg::Greedy) => {
                 cpu::container::Encoder::Greedy(Params::for_level(args.level))

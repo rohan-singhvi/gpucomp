@@ -53,6 +53,9 @@ pub enum GlzError {
     OutputOverflow,
     #[error("block decodes to a different size, or has unused literal bytes")]
     SizeMismatch,
+    /// GLZ-E only: an entropy-coded stream is malformed.
+    #[error("entropy-coded stream: {0}")]
+    Stream(crate::huffman::StreamError),
 }
 
 /// Greedy or lazy parse over phase-1 matches, as in `lz4::encode::parse`, optionally
@@ -142,7 +145,11 @@ fn pad4(v: &mut Vec<u8>) {
 }
 
 /// Byte offsets of the arrays: (tokens, offsets, ext, literals).
-fn field_offsets(count: usize, ext_count: usize, wide: bool) -> (usize, usize, usize, usize) {
+pub(crate) fn field_offsets(
+    count: usize,
+    ext_count: usize,
+    wide: bool,
+) -> (usize, usize, usize, usize) {
     let pad = |n: usize| n.div_ceil(4) * 4;
     let tokens = 8;
     let offsets = tokens + pad(count);

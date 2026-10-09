@@ -1393,7 +1393,7 @@ impl GpuEncoder {
 
     fn kernels(&self, codec: format::Codec) -> &CodecPipelines {
         match codec {
-            format::Codec::Glz => &self.glz,
+            format::Codec::Glz | format::Codec::GlzE => &self.glz,
             format::Codec::Lz4 | format::Codec::Stored => &self.lz4,
         }
     }
@@ -1607,7 +1607,7 @@ fn layout_payloads(sizes: &[u32], batch_len: usize, chunk_size: u32) -> PayloadL
 
 fn check_options(options: &GpuCompressOptions) -> Result<(), GpuEncodeError> {
     check_chunk_size(options.chunk_size)?;
-    if options.codec == format::Codec::Stored {
+    if matches!(options.codec, format::Codec::Stored | format::Codec::GlzE) {
         return Err(GpuEncodeError::Unsupported(
             "the GPU encodes LZ4 or GLZ".into(),
         ));
