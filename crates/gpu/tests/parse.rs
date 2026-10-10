@@ -54,7 +54,7 @@ fn adversarial(seg: usize) -> Vec<(String, Vec<u8>)> {
 }
 
 fn check(encoder: &GpuEncoder, ctx: &gpu::Context, params: EncodeParams, chunk: u32) {
-    let seg = chunk as usize / 32;
+    let seg = chunk as usize / gpu::encode::PARSE_SEGMENTS as usize;
     for (name, input) in adversarial(seg) {
         let options = GpuCompressOptions {
             chunk_size: chunk,
@@ -91,7 +91,7 @@ fn segment_stitching_matches_the_serial_parse() {
 fn long_probes_also_match_the_serial_parse() {
     let Some(ctx) = context() else { return };
     let params = EncodeParams {
-        probe_len: 32_767,
+        probe_len: 16_383,
         ..EncodeParams::default()
     };
     let encoder = GpuEncoder::new(&ctx, params).unwrap();
@@ -157,11 +157,12 @@ fn glz_with_and_without_groups_matches_the_cpu() {
 
 #[test]
 fn probes_that_would_reach_the_visit_mark_are_rejected() {
-    // Bit 31 of a match word marks positions a speculative walk visited, so
-    // probe-capped lengths must stay below 1 << 15.
+    // Bits 31 and 30 of a match word flag positions a speculative walk
+    // visited and deep matches already computed, so probe-capped lengths must
+    // stay below 1 << 14.
     let Some(ctx) = context() else { return };
     let params = EncodeParams {
-        probe_len: 32_768,
+        probe_len: 16_384,
         ..EncodeParams::default()
     };
     assert!(matches!(

@@ -12,6 +12,7 @@ Data is split into independent chunks (64 KiB by default), so every chunk can be
 - **Two codecs, both directions on CPU and GPU.**
   - **LZ4 block** (`lz4`): standard LZ4 blocks, readable by any LZ4 block decoder.
   - **GLZ** (`glz`): an LZ77 variant built for GPUs, with separate fixed-width streams. An optional *dependency elimination* mode (`--independent-groups`) lets the decoder run more matches in parallel, at some cost in ratio.
+  - **GLZ-E** (`glze`): GLZ with its byte streams Huffman-coded in up to 32 independent lanes each; about 28% smaller than GLZ on Silesia.
 - **Identical output on GPU and CPU.** The GPU encoder produces byte-for-byte the same file as its CPU twin, and every encoder round-trips through every decoder. The test suite enforces both.
 - **Random access.** `decompress --offset N --length M` reads only the header, the chunk table and the chunks that overlap the range.
 - **Per-chunk filters.** Optional byte-shuffle and delta filters for numeric data. `--filters auto` picks one per chunk by trial-encoding a sample, on CPU or GPU.
@@ -42,7 +43,7 @@ Useful options (see `gpucomp <command> --help` for all of them):
 
 | Option | Meaning |
 |---|---|
-| `--codec lz4\|glz\|glze\|stored` | Block codec (default `lz4`). `glze` adds Huffman coding to GLZ: much smaller, slower to decode |
+| `--codec lz4\|glz\|glze\|stored` | Block codec (default `lz4`). `glze` adds Huffman coding to GLZ: ~28% smaller, decodes a little slower than GLZ |
 | `--level 1\|2\|3` | Compression level: more match candidates per position (1, 4, 16) for a smaller file; default 1 |
 | `--chunk-size 64K` | Chunk size, a power of two from 4K to 1M |
 | `--filters none\|auto\|exhaustive` | Per-chunk filter selection |
@@ -72,23 +73,30 @@ For files larger than memory, use `GpuEncoder::compress_stream`, `GpuDecoder::de
 
 ## Performance
 
-Apple M4 Pro, [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) (212 MB), 64 KiB chunks, end to end (input in host memory, output back in host memory):
+Apple M4 Pro (12 CPU cores, 20-core GPU), [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) (212 MB), 64 KiB chunks. GPU numbers are end to end: input in host memory, output back in host memory.
 
-| Path | Ratio | GB/s |
-|---|---|---|
-| CPU `lz4_flex`, multi-threaded compress | 2.04× | 5.3 |
-| CPU `lz4_flex`, multi-threaded decompress | — | 12.6 |
-| GPU compress, LZ4 | 1.99× | 2.27 |
-| GPU compress, LZ4, `--level 2` | 2.21× | 1.20 |
-| GPU compress, LZ4, `--level 3` | 2.32× | 0.56 |
-| GPU compress, LZ4, `--filters auto` | 2.05× | 1.43 |
-| GPU compress, GLZ | 1.96× | 2.29 |
-| GPU compress, GLZ-E (Huffman-coded GLZ) | 2.50× | 1.36 |
-| GPU decompress, LZ4 (kernel only) | — | 3.3 |
-| GPU decompress, GLZ (kernel only) | — | 4.9 |
-| GPU decompress, GLZ-E (kernel only) | — | 2.9 |
+| Path | Ratio | Compress GB/s | Decompress GB/s |
+|---|---|---|---|
+| GPU, LZ4 (default) | 1.99× | 2.34 | 2.62 |
+| GPU, LZ4 `--level 2` | 2.21× | 1.34 | 2.62 |
+| GPU, LZ4 `--level 3` | 2.32× | 0.73 | 2.62 |
+| GPU, GLZ | 1.96× | 2.38 | 3.50 |
+| GPU, **GLZ-E** (Huffman-coded GLZ) | **2.50×** | 1.99 | 2.82 |
+| CPU `lz4_flex`, 12 threads | 2.04× | 5.7 | 12.6 |
+| CPU `zstd -1 -T0`, whole file (no random access) | 2.89× | 6.5 | 1.8 (1 thread) |
 
-The GPU doesn't beat a good multi-threaded CPU yet. The parse now runs 32 lanes per chunk, so match finding is the largest encoder kernel. Host↔GPU transfers (6–10 GB/s here) also cap end-to-end throughput. The roadmap to better ratio and speed is in [plan.md](plan.md) (M9, M9e). Full results and history are in [BENCHMARKS.md](BENCHMARKS.md), and the reasoning behind design choices, including negative results, is in [DECISIONS.md](DECISIONS.md).
+GPU decompression is listed for the default level; levels change only the encoder.
+
+**On numeric data**, GLZ-E with `--filters auto` beats `zstd -19` on most inputs. Byte-shuffle groups slowly changing bytes, and the entropy stage then exploits them. 32 MiB inputs, 64 KiB chunks:
+
+| Input | GLZ-E `--filters auto` | `--level 3` | zstd -1 | zstd -19 |
+|---|---|---|---|---|
+| f32 points | 1.42× | 1.56× | 1.15× | 1.41× |
+| i16 audio | 1.19× | 1.24× | 1.04× | 1.04× |
+| sorted u32 | 4.08× | 4.12× | 1.31× | 2.91× |
+| u64 timestamps | 3.17× | 8.96× | 3.90× | 3.90× |
+
+**Honest comparison:** on this machine, multi-threaded CPU compression is still ~2.5–3× faster than the GPU path. The GPU encoder is limited by latency, not bandwidth: serial parse walks, dependent table lookups, and occupancy capped by workgroup memory. Host↔GPU copies take another ~15–30% end to end. A discrete GPU with far more memory bandwidth and cores (against a typical desktop CPU) is the setting the project targets but hasn't been measured on yet. Full results and history are in [BENCHMARKS.md](BENCHMARKS.md), and the reasoning behind design choices, including negative results, is in [DECISIONS.md](DECISIONS.md).
 
 ## Repository layout
 

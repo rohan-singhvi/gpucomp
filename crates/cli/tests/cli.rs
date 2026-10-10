@@ -245,7 +245,7 @@ fn numeric_sample() -> Vec<u8> {
 
 #[test]
 fn filters_auto_round_trips_and_info_reports_the_filters() {
-    let (input, packed, output) = (temp("f.bin"), temp("f.gpcz"), temp("f.out"));
+    let (input, packed, output) = (temp("fl.bin"), temp("fl.gpcz"), temp("fl.out"));
     std::fs::write(&input, numeric_sample()).unwrap();
     let s = |p: &PathBuf| p.to_str().unwrap().to_string();
     for codec in ["lz4", "glz"] {
@@ -406,10 +406,10 @@ fn levels_compress_smaller_and_gpu_matches_cpu() {
 #[test]
 fn glze_codec_round_trips_on_the_cpu_and_beats_glz() {
     let (input, glz, glze, out) = (
-        temp("e.txt"),
-        temp("e.glz.gpcz"),
-        temp("e.glze.gpcz"),
-        temp("e.out"),
+        temp("ze.txt"),
+        temp("ze.glz.gpcz"),
+        temp("ze.glze.gpcz"),
+        temp("ze.out"),
     );
     std::fs::write(&input, sample()).unwrap();
     let s = |p: &PathBuf| p.to_str().unwrap().to_string();

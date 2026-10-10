@@ -124,6 +124,203 @@ pub struct GpuDecoder {
     filters: FilterKernels,
     config: DecoderConfig,
     memory_budget: u64,
+    /// Reusable batch buffers: two sets, as two batches are in flight.
+    buffers: std::sync::Mutex<[DecodeBuffers; 2]>,
+}
+
+/// GPU buffers a decode batch reuses, grown when a bigger batch arrives.
+/// Stale contents are harmless: inputs and descriptors are rewritten, the
+/// output and images are cleared by every dispatch, and statuses are written
+/// for every chunk.
+#[derive(Default)]
+struct DecodeBuffers {
+    upload: Option<wgpu::Buffer>,
+    src: Option<wgpu::Buffer>,
+    desc: Option<wgpu::Buffer>,
+    dst: Option<wgpu::Buffer>,
+    status: Option<wgpu::Buffer>,
+    readback: Option<wgpu::Buffer>,
+    image: Option<wgpu::Buffer>,
+    glze_desc: Option<wgpu::Buffer>,
+    glze_status: Option<wgpu::Buffer>,
+    status_read: Option<wgpu::Buffer>,
+    glze_status_read: Option<wgpu::Buffer>,
+    /// The submission of the last copy out of `upload`: mapping it again
+    /// waits for that one only, not for later batches' kernels.
+    upload_done: Option<wgpu::SubmissionIndex>,
+    /// Buffers created so far.
+    allocations: u32,
+}
+
+#[derive(Clone, Copy)]
+enum Slot {
+    Upload,
+    Src,
+    Desc,
+    Dst,
+    Status,
+    Readback,
+    Image,
+    GlzeDesc,
+    GlzeStatus,
+    StatusRead,
+    GlzeStatusRead,
+}
+
+/// Where a batch's buffers come from: a reusable set, or fresh ones
+/// ([`GpuDecoder::prepare_file`], whose buffers outlive the call).
+struct Alloc<'a>(Option<&'a mut DecodeBuffers>);
+
+impl Alloc<'_> {
+    /// A buffer of at least `size` bytes (at least 4) with `usage`.
+    fn get(
+        &mut self,
+        ctx: &Context,
+        slot: Slot,
+        label: &str,
+        size: u64,
+        usage: BufferUsages,
+    ) -> wgpu::Buffer {
+        let size = format::pad4(size).max(4);
+        let create = || {
+            ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        let Some(set) = self.0.as_deref_mut() else {
+            return create();
+        };
+        let DecodeBuffers {
+            upload,
+            src,
+            desc,
+            dst,
+            status,
+            readback,
+            image,
+            glze_desc,
+            glze_status,
+            status_read,
+            glze_status_read,
+            upload_done: _,
+            allocations,
+        } = set;
+        let cached = match slot {
+            Slot::Upload => upload,
+            Slot::Src => src,
+            Slot::Desc => desc,
+            Slot::Dst => dst,
+            Slot::Status => status,
+            Slot::Readback => readback,
+            Slot::Image => image,
+            Slot::GlzeDesc => glze_desc,
+            Slot::GlzeStatus => glze_status,
+            Slot::StatusRead => status_read,
+            Slot::GlzeStatusRead => glze_status_read,
+        };
+        match cached {
+            Some(buf) if buf.size() >= size => buf.clone(),
+            _ => {
+                // Drop the old one first so both never coexist.
+                *cached = None;
+                *allocations += 1;
+                let buf = create();
+                *cached = Some(buf.clone());
+                buf
+            }
+        }
+    }
+
+    /// `bytes` in a storage buffer: through a reused mapped staging buffer
+    /// and a GPU copy (fresh mapped memory would page-fault on every call),
+    /// or a fresh buffer.
+    fn upload(
+        &mut self,
+        ctx: &Context,
+        staging: Slot,
+        slot: Slot,
+        label: &str,
+        bytes: &[u8],
+    ) -> Result<wgpu::Buffer, GpuError> {
+        let size = format::pad4(bytes.len() as u64).max(4);
+        if self.0.is_none() {
+            let mut padded = bytes.to_vec();
+            padded.resize(size as usize, 0);
+            return Ok(ctx.upload(&padded, BufferUsages::STORAGE));
+        }
+        let up = self.get(
+            ctx,
+            staging,
+            "decode upload",
+            size,
+            BufferUsages::MAP_WRITE | BufferUsages::COPY_SRC,
+        );
+        // Wait only for this buffer's last copy (long done in a pipeline), not
+        // for the kernels queued since.
+        let last = self.0.as_ref().and_then(|set| set.upload_done.clone());
+        map_after(ctx, &[(&up, size)], wgpu::MapMode::Write, last)?;
+        let written = up.get_mapped_range_mut(..size).map(|mut view| {
+            view.slice(..bytes.len()).copy_from_slice(bytes);
+            view.slice(bytes.len()..).fill(0);
+        });
+        up.unmap();
+        written.map_err(|e| GpuError::Readback(e.to_string()))?;
+        let buf = self.get(
+            ctx,
+            slot,
+            label,
+            size,
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(&up, 0, &buf, 0, size);
+        let done = ctx.queue.submit([encoder.finish()]);
+        if let Some(set) = self.0.as_deref_mut() {
+            set.upload_done = Some(done);
+        }
+        Ok(buf)
+    }
+}
+
+/// Maps `buffers` (each its first `len` bytes) once submission `after` (or,
+/// if None, everything submitted so far) has finished.
+fn map_after(
+    ctx: &Context,
+    buffers: &[(&wgpu::Buffer, u64)],
+    mode: wgpu::MapMode,
+    after: Option<wgpu::SubmissionIndex>,
+) -> Result<(), GpuError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    for &(buffer, len) in buffers {
+        let tx = tx.clone();
+        buffer.map_async(mode, ..len, move |r| drop(tx.send(r)));
+    }
+    drop(tx);
+    ctx.device.poll(wgpu::PollType::Wait {
+        submission_index: after,
+        timeout: None,
+    })?;
+    let mut result = Ok(());
+    for r in rx.iter() {
+        if let Err(e) = r {
+            result = Err(GpuError::Readback(e.to_string()));
+        }
+    }
+    result
+}
+
+/// `size` bytes of `buffer` from its start, as a binding.
+fn binding(buffer: &wgpu::Buffer, size: u64) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        buffer,
+        offset: 0,
+        size: wgpu::BufferSize::new(format::pad4(size).max(4)),
+    })
 }
 
 fn compute_pipeline(
@@ -193,6 +390,7 @@ impl GpuDecoder {
             filters: FilterKernels::new(ctx),
             config,
             memory_budget: crate::encode::DEFAULT_GPU_MEMORY,
+            buffers: std::sync::Mutex::default(),
         })
     }
 
@@ -201,6 +399,21 @@ impl GpuDecoder {
             format::Codec::Glz | format::Codec::GlzE => &self.glz_pipeline,
             format::Codec::Stored | format::Codec::Lz4 => &self.pipeline,
         }
+    }
+
+    /// GPU buffers the decoder has created for its reusable batch buffers.
+    pub fn buffer_allocations(&self) -> u32 {
+        self.buffers().iter().map(|b| b.allocations).sum()
+    }
+
+    /// The reusable buffers. A panic while they were held may have left a
+    /// staging buffer mapped, so poisoned buffers start over.
+    fn buffers(&self) -> std::sync::MutexGuard<'_, [DecodeBuffers; 2]> {
+        self.buffers.lock().unwrap_or_else(|poisoned| {
+            let mut guard = poisoned.into_inner();
+            *guard = Default::default();
+            guard
+        })
     }
 
     /// Caps the GPU memory one batch may use (default
@@ -260,11 +473,14 @@ impl GpuDecoder {
             batches.len(),
             self.memory_budget >> 20
         );
+        let mut sets = self.buffers();
         let mut pending: Option<PreparedDecode> = None;
-        for range in batches {
+        for (k, range) in batches.into_iter().enumerate() {
             let plan = plan::plan(index, range.clone(), limit)?;
             let src = read(plan.src.clone())?;
-            let prepared = self.prepare(ctx, index.clone(), range, &plan, &src)?;
+            // Batch k - 1 may still be in flight on the other set.
+            let alloc = Alloc(Some(&mut sets[k % 2]));
+            let prepared = self.prepare(ctx, index.clone(), range, &plan, &src, alloc)?;
             if let Some(p) = &prepared {
                 self.dispatch(ctx, p, None);
             }
@@ -349,7 +565,7 @@ impl GpuDecoder {
         let chunks = 0..index.chunks.len();
         let plan = plan::plan(&index, chunks.clone(), batch_limit(ctx))?;
         let src = &data[plan.src.start as usize..plan.src.end as usize];
-        self.prepare(ctx, index, chunks, &plan, src)
+        self.prepare(ctx, index, chunks, &plan, src, Alloc(None))
     }
 
     fn prepare(
@@ -359,66 +575,112 @@ impl GpuDecoder {
         chunks: Range<usize>,
         plan: &plan::DecodePlan,
         src: &[u8],
+        mut alloc: Alloc,
     ) -> Result<Option<PreparedDecode>, GpuDecodeError> {
         if plan.chunks.is_empty() {
             return Ok(None);
         }
         let device = &ctx.device;
-        // Bindings can't be empty; a zero-byte payload still gets one word.
-        let src_buf = if src.is_empty() {
-            ctx.upload(&[0; 4], BufferUsages::STORAGE)
-        } else {
-            ctx.upload(src, BufferUsages::STORAGE)
-        };
+        let src_buf = alloc.upload(ctx, Slot::Upload, Slot::Src, "decode input", src)?;
+        let src_size = format::pad4(src.len() as u64).max(4);
         // GLZ-E: the entropy stage rebuilds each chunk's GLZ block in an image
         // buffer, and the GLZ kernel decodes the images.
         let glze = if index.header.codec == format::Codec::GlzE {
-            Some(self.prepare_glze(ctx, plan, src, &src_buf)?)
+            Some(self.prepare_glze(ctx, plan, src, (&src_buf, src_size), &mut alloc)?)
         } else {
             None
         };
-        let desc_buf = match &glze {
-            Some(g) => ctx.upload(bytemuck::cast_slice(&g.glz_descs), BufferUsages::STORAGE),
-            None => ctx.upload(bytemuck::cast_slice(&plan.chunks), BufferUsages::STORAGE),
+        let descs: &[u8] = match &glze {
+            Some(g) => bytemuck::cast_slice(&g.glz_descs),
+            None => bytemuck::cast_slice(&plan.chunks),
         };
-        let glz_src = glze.as_ref().map_or(&src_buf, |g| &g.image_buf);
+        let desc_buf = alloc.get(
+            ctx,
+            Slot::Desc,
+            "decode chunks",
+            descs.len() as u64,
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+        ctx.queue.write_buffer(&desc_buf, 0, descs);
+        let (glz_src, glz_src_size) = match &glze {
+            Some(g) => (&g.image_buf, g.image_size),
+            None => (&src_buf, src_size),
+        };
         let dst_size = format::pad4(plan.dst_len).max(4);
-        let dst_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("decode output"),
-            size: dst_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let dst_buf = alloc.get(
+            ctx,
+            Slot::Dst,
+            "decode output",
+            dst_size,
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+        );
         let status_size = 4 * plan.chunks.len() as u64;
-        let status_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("decode status"),
-            size: status_size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+        let status_buf = alloc.get(
+            ctx,
+            Slot::Status,
+            "decode status",
+            status_size,
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        );
+        // Readback staging for the output and statuses, copied in the batch's
+        // own submission (see `dispatch`), so `finish` waits for this batch
+        // only.
+        let readback = if alloc.0.is_some() {
+            let out = alloc.get(
+                ctx,
+                Slot::Readback,
+                "decode readback",
+                dst_size,
+                BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            );
+            let status = alloc.get(
+                ctx,
+                Slot::StatusRead,
+                "decode status readback",
+                status_size,
+                BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            );
+            let glze_status = glze.as_ref().map(|g| {
+                alloc.get(
+                    ctx,
+                    Slot::GlzeStatusRead,
+                    "glz-e status readback",
+                    g.status_size,
+                    BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                )
+            });
+            Some(Readback {
+                out,
+                status,
+                glze_status,
+            })
+        } else {
+            None
+        };
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("lz4 decode (naive)"),
+            label: Some("decode"),
             layout: &self
                 .pipeline_for(index.header.codec)
                 .get_bind_group_layout(0),
             entries: &[
-                (0, glz_src),
-                (1, &desc_buf),
-                (2, &dst_buf),
-                (3, &status_buf),
+                (0, binding(glz_src, glz_src_size)),
+                (1, binding(&desc_buf, descs.len() as u64)),
+                (2, binding(&dst_buf, dst_size)),
+                (3, binding(&status_buf, status_size)),
             ]
-            .map(|(binding, buffer)| wgpu::BindGroupEntry {
-                binding,
-                resource: buffer.as_entire_binding(),
-            }),
+            .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
         });
         let unfilter = self.prepare_unfilter(ctx, &index, chunks.clone(), plan, &dst_buf)?;
         Ok(Some(PreparedDecode {
             index,
             chunks,
             dst_len: plan.dst_len,
+            dst_size,
             dst_buf,
             status_buf,
+            status_size,
+            readback,
+            submitted: std::sync::Mutex::new(None),
             bind_group,
             unfilter,
             glze,
@@ -433,7 +695,8 @@ impl GpuDecoder {
         ctx: &Context,
         plan: &plan::DecodePlan,
         src: &[u8],
-        src_buf: &wgpu::Buffer,
+        src_buf: (&wgpu::Buffer, u64),
+        alloc: &mut Alloc,
     ) -> Result<GlzeStage, GpuDecodeError> {
         let (descs, image_len) = plan::glze_layout(&plan.chunks, src);
         let limit = batch_limit(ctx);
@@ -445,32 +708,41 @@ impl GpuDecoder {
             }
             .into());
         }
-        let image_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("glz-e images"),
-            size: image_len.max(4),
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let status_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("glz-e status"),
-            size: 4 * descs.len() as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let desc_buf = ctx.upload(bytemuck::cast_slice(&descs), BufferUsages::STORAGE);
+        let image_size = image_len.max(4);
+        let image_buf = alloc.get(
+            ctx,
+            Slot::Image,
+            "glz-e images",
+            image_size,
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+        let status_size = 4 * descs.len() as u64;
+        let status_buf = alloc.get(
+            ctx,
+            Slot::GlzeStatus,
+            "glz-e status",
+            status_size,
+            BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        );
+        let desc_bytes: &[u8] = bytemuck::cast_slice(&descs);
+        let desc_buf = alloc.get(
+            ctx,
+            Slot::GlzeDesc,
+            "glz-e chunks",
+            desc_bytes.len() as u64,
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        );
+        ctx.queue.write_buffer(&desc_buf, 0, desc_bytes);
         let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("glz-e entropy decode"),
             layout: &self.glze_pipeline.get_bind_group_layout(0),
             entries: &[
-                (0, src_buf),
-                (1, &desc_buf),
-                (2, &image_buf),
-                (3, &status_buf),
+                (0, binding(src_buf.0, src_buf.1)),
+                (1, binding(&desc_buf, desc_bytes.len() as u64)),
+                (2, binding(&image_buf, image_size)),
+                (3, binding(&status_buf, status_size)),
             ]
-            .map(|(binding, buffer)| wgpu::BindGroupEntry {
-                binding,
-                resource: buffer.as_entire_binding(),
-            }),
+            .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }),
         });
         let glz_descs = plan
             .chunks
@@ -484,7 +756,9 @@ impl GpuDecoder {
             .collect();
         Ok(GlzeStage {
             image_buf,
+            image_size,
             status_buf,
+            status_size,
             bind_group,
             glz_descs,
         })
@@ -549,9 +823,9 @@ impl GpuDecoder {
         let mut encoder = ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.clear_buffer(&p.dst_buf, 0, None);
+        encoder.clear_buffer(&p.dst_buf, 0, Some(p.dst_size));
         if let Some(g) = &p.glze {
-            encoder.clear_buffer(&g.image_buf, 0, None);
+            encoder.clear_buffer(&g.image_buf, 0, Some(g.image_size));
         }
         // With an unfilter stage, the timer spans decode, copies and filters.
         let decode_writes = match (timer, &p.unfilter) {
@@ -594,7 +868,15 @@ impl GpuDecoder {
         if let Some(timer) = timer {
             timer.resolve(&mut encoder);
         }
-        ctx.queue.submit([encoder.finish()]);
+        if let Some(r) = &p.readback {
+            encoder.copy_buffer_to_buffer(&p.dst_buf, 0, &r.out, 0, p.dst_size);
+            encoder.copy_buffer_to_buffer(&p.status_buf, 0, &r.status, 0, p.status_size);
+            if let (Some(g), Some(gs)) = (&p.glze, &r.glze_status) {
+                encoder.copy_buffer_to_buffer(&g.status_buf, 0, gs, 0, g.status_size);
+            }
+        }
+        let index = ctx.queue.submit([encoder.finish()]);
+        *p.submitted.lock().unwrap_or_else(|e| e.into_inner()) = Some(index);
     }
 
     /// Reads back statuses and output, then checks checksums if asked.
@@ -604,13 +886,62 @@ impl GpuDecoder {
         p: &PreparedDecode,
         verify: bool,
     ) -> Result<Vec<u8>, GpuDecodeError> {
-        let mut status: Vec<u32> =
-            bytemuck::pod_collect_to_vec(&ctx.read_buffer(&p.status_buf, p.status_buf.size())?);
-        if let Some(g) = &p.glze {
+        let (mut status, entropy, out) = match &p.readback {
+            Some(r) => {
+                // Wait for this batch's submission only: the next batch's
+                // kernel keeps running meanwhile.
+                let after = p
+                    .submitted
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                let mut maps = vec![(&r.out, p.dst_size), (&r.status, p.status_size)];
+                if let (Some(gs), Some(g)) = (&r.glze_status, &p.glze) {
+                    maps.push((gs, g.status_size));
+                }
+                let mapped = map_after(ctx, &maps, wgpu::MapMode::Read, after);
+                let read = |buf: &wgpu::Buffer, len: u64| -> Result<Vec<u8>, GpuError> {
+                    buf.get_mapped_range(..len)
+                        .map(|view| view.to_vec())
+                        .map_err(|e| GpuError::Readback(e.to_string()))
+                };
+                let result = mapped.and_then(|()| {
+                    let status: Vec<u32> =
+                        bytemuck::pod_collect_to_vec(&read(&r.status, p.status_size)?);
+                    let entropy = match (&r.glze_status, &p.glze) {
+                        (Some(gs), Some(g)) => Some(bytemuck::pod_collect_to_vec::<u8, u32>(
+                            &read(gs, g.status_size)?,
+                        )),
+                        _ => None,
+                    };
+                    let out = r
+                        .out
+                        .get_mapped_range(..p.dst_size)
+                        .map(|view| view[..p.dst_len as usize].to_vec())
+                        .map_err(|e| GpuError::Readback(e.to_string()))?;
+                    Ok((status, entropy, out))
+                });
+                // Unmap on every path, so the reused buffers map again.
+                for (buf, _) in &maps {
+                    buf.unmap();
+                }
+                result?
+            }
+            None => {
+                let status: Vec<u32> =
+                    bytemuck::pod_collect_to_vec(&ctx.read_buffer(&p.status_buf, p.status_size)?);
+                let entropy = match &p.glze {
+                    Some(g) => Some(bytemuck::pod_collect_to_vec::<u8, u32>(
+                        &ctx.read_buffer(&g.status_buf, g.status_size)?,
+                    )),
+                    None => None,
+                };
+                (status, entropy, ctx.read_buffer(&p.dst_buf, p.dst_size)?)
+            }
+        };
+        if let Some(entropy) = entropy {
             // An entropy-stage error comes first: the GLZ kernel then decoded
             // a partial image.
-            let entropy: Vec<u32> =
-                bytemuck::pod_collect_to_vec(&ctx.read_buffer(&g.status_buf, g.status_buf.size())?);
             for (s, &e) in status.iter_mut().zip(&entropy) {
                 if e != 0 {
                     *s = e;
@@ -627,7 +958,7 @@ impl GpuDecoder {
                 status: s,
             });
         }
-        let mut out = ctx.read_buffer(&p.dst_buf, p.dst_buf.size())?;
+        let mut out = out;
         out.truncate(p.dst_len as usize);
 
         if verify && p.index.header.checksums {
@@ -653,17 +984,33 @@ pub struct PreparedDecode {
     index: Index,
     chunks: Range<usize>,
     dst_len: u64,
+    /// Bytes of each (possibly larger, reused) buffer this batch uses.
+    dst_size: u64,
     dst_buf: wgpu::Buffer,
     status_buf: wgpu::Buffer,
+    status_size: u64,
+    /// Reused readback staging (None: fresh reads after the fact).
+    readback: Option<Readback>,
+    /// The submission `dispatch` made: `finish` waits for it alone.
+    submitted: std::sync::Mutex<Option<wgpu::SubmissionIndex>>,
     bind_group: wgpu::BindGroup,
     unfilter: Option<Unfilter>,
     glze: Option<GlzeStage>,
 }
 
+/// Staging buffers a batch's results are copied into by its own submission.
+struct Readback {
+    out: wgpu::Buffer,
+    status: wgpu::Buffer,
+    glze_status: Option<wgpu::Buffer>,
+}
+
 /// The entropy stage of a GLZ-E decode (see `GpuDecoder::prepare_glze`).
 struct GlzeStage {
     image_buf: wgpu::Buffer,
+    image_size: u64,
     status_buf: wgpu::Buffer,
+    status_size: u64,
     bind_group: wgpu::BindGroup,
     /// Descriptors for the GLZ kernel, pointing at the images.
     glz_descs: Vec<plan::ChunkDesc>,
@@ -729,6 +1076,57 @@ mod tests {
         append_batch(&mut out, batch);
         assert_eq!(out, [1, 2, 3]);
         assert_eq!(out.as_ptr(), ptr, "first batch was copied");
+    }
+
+    fn gpu() -> Option<Context> {
+        match Context::new(&crate::ContextOptions::default()) {
+            Ok(ctx) => Some(ctx),
+            Err(GpuError::NoAdapter(e)) => {
+                eprintln!("skipping GPU test: no adapter ({e})");
+                None
+            }
+            Err(e) => panic!("GPU context creation failed: {e}"),
+        }
+    }
+
+    #[test]
+    fn repeated_decompress_calls_reuse_buffers() {
+        let Some(ctx) = gpu() else { return };
+        let input: Vec<u8> = (0..300_000u32)
+            .flat_map(|i| format!("{} ", (i * 7) % 1999).into_bytes())
+            .take(1 << 20)
+            .collect();
+        for codec in [format::Codec::Lz4, format::Codec::GlzE] {
+            let encoder = match codec {
+                format::Codec::Lz4 => cpu::container::Encoder::Lz4Flex,
+                _ => cpu::container::Encoder::Glz(Default::default()),
+            };
+            let file = cpu::container::compress(
+                &input,
+                &cpu::container::CompressOptions {
+                    codec,
+                    encoder,
+                    checksums: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            // One batch, then several (both buffer sets in use).
+            for budget in [crate::encode::DEFAULT_GPU_MEMORY, 1 << 20] {
+                let decoder = GpuDecoder::new(&ctx).with_memory_budget(budget);
+                assert!(decoder.decompress(&ctx, &file, true).unwrap() == input);
+                let allocations = decoder.buffer_allocations();
+                assert!(allocations > 0);
+                for _ in 0..2 {
+                    assert!(decoder.decompress(&ctx, &file, true).unwrap() == input);
+                }
+                assert_eq!(
+                    decoder.buffer_allocations(),
+                    allocations,
+                    "{codec:?}, budget {budget}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -12,11 +12,19 @@ const COMMON_SHADER: &str = include_str!("../../shaders/encode_common.wgsl");
 const MATCHES_SHADER: &str = include_str!("../../shaders/encode_matches.wgsl");
 const PARSE_SHADER: &str = include_str!("../../shaders/encode_parse.wgsl");
 const PARSE_SEG_SHADER: &str = include_str!("../../shaders/encode_parse_seg.wgsl");
+const DEEP_SHADER: &str = include_str!("../../shaders/encode_deep.wgsl");
+const DEEP_PASS_SHADER: &str = include_str!("../../shaders/encode_deep_pass.wgsl");
+/// Invocations per workgroup of encode_deep_pass.wgsl (one per position).
+const DEEP_PASS_WG: u32 = 256;
 const EMIT_SHARED: &str = include_str!("../../shaders/encode_emit_shared.wgsl");
 const LZ4_EMIT: &str = include_str!("../../shaders/lz4_emit.wgsl");
 const GLZ_EMIT: &str = include_str!("../../shaders/glz_emit.wgsl");
 const PACK_SHADER: &str = include_str!("../../shaders/encode_pack.wgsl");
+const GLZE_HIST_SHADER: &str = include_str!("../../shaders/glze_hist.wgsl");
+const GLZE_BUILD_SHADER: &str = include_str!("../../shaders/glze_build.wgsl");
 const GLZE_ENCODE_SHADER: &str = include_str!("../../shaders/glze_encode.wgsl");
+/// Invocations per workgroup of glze_build.wgsl (one per chunk and stream).
+const GLZE_BUILD_WG: u32 = 64;
 /// Bytes of the `Params` uniform shared by all encode kernels.
 const PARAMS_SIZE: u64 = 32;
 /// Pack entry flag: this chunk isn't packed by this pass (encode_pack.wgsl).
@@ -141,12 +149,16 @@ impl Default for GpuCompressOptions {
 /// decoder resolves 64 sequences per step, so larger groups can't help it.
 pub const MAX_GROUP: u32 = 64;
 
+/// Words per (chunk, stream) of GLZ-E encoder build data: histogram, rank
+/// order, code lengths and codes, the Huffman tree (see glze_build.wgsl).
+pub const GLZE_BUILD_WORDS: u32 = 2112;
+
 /// Largest hash-chain depth (candidates per position).
 pub const MAX_DEPTH: u32 = 64;
 
 /// Segments per chunk in the parallel parse (one lane each); emit finds a
 /// sequence through the per-chunk table of where each segment's run starts.
-pub const PARSE_SEGMENTS: u32 = 32;
+pub const PARSE_SEGMENTS: u32 = 128;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GpuEncodeError {
@@ -210,6 +222,10 @@ pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions, params: &EncodePara
     if options.independent_groups.is_some() {
         bytes += 8 * u64::from(MAX_GROUP);
     }
+    if options.codec == format::Codec::GlzE {
+        // Per stream: histogram, rank order, Huffman tree, code.
+        bytes += 4 * 4 * u64::from(GLZE_BUILD_WORDS);
+    }
     let extra = filter_candidates(options.level).len() as u64 - 1;
     match options.filters {
         FilterMode::None => {}
@@ -241,7 +257,12 @@ pub struct GpuEncoder {
     matches: wgpu::ComputePipeline,
     lz4: CodecPipelines,
     glz: CodecPipelines,
-    /// GLZ-E: transcodes the GLZ blocks in the output slots.
+    /// DEPTH > 1: every position's deep match, before the parse.
+    deep_pass: wgpu::ComputePipeline,
+    /// GLZ-E: transcodes the GLZ blocks in the output slots (histograms,
+    /// codes, then the GLZ-E blocks).
+    glze_hist: wgpu::ComputePipeline,
+    glze_build: wgpu::ComputePipeline,
     glze_encode: wgpu::ComputePipeline,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
@@ -345,7 +366,7 @@ fn binding(buffer: &wgpu::Buffer, size: u64) -> wgpu::BindingResource<'_> {
 
 /// Maps the first `len` bytes of `buffer`, waiting for the GPU to finish
 /// with it.
-fn map(
+pub(crate) fn map(
     ctx: &Context,
     buffer: &wgpu::Buffer,
     mode: wgpu::MapMode,
@@ -361,7 +382,7 @@ fn map(
 
 /// Maps the first `len` bytes of `buffer` (MAP_READ, already filled by a
 /// submitted copy), hands them to `f` and unmaps.
-fn read_mapped(
+pub(crate) fn read_mapped(
     ctx: &Context,
     buffer: &wgpu::Buffer,
     len: u64,
@@ -399,10 +420,10 @@ impl GpuEncoder {
         if !(1..=MAX_DEPTH).contains(&params.depth) {
             return unsupported(format!("depth {} not in 1..={MAX_DEPTH}", params.depth));
         }
-        // The parse marks visited positions with bit 31 of the match word, so
-        // probe-capped lengths (bits 16..) must stay below 1 << 15.
-        if !(4..=32_767).contains(&params.probe_len) {
-            return unsupported(format!("probe_len {} not in 4..=32767", params.probe_len));
+        // The parse flags match words with bits 31 (visited) and 30 (deep
+        // match computed), so probe-capped lengths (bits 16..) stay below 1 << 14.
+        if !(4..=16_383).contains(&params.probe_len) {
+            return unsupported(format!("probe_len {} not in 4..=16383", params.probe_len));
         }
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
@@ -489,14 +510,14 @@ impl GpuEncoder {
             parse: pipeline(
                 &format!("{name} parse"),
                 &encode_layout,
-                &[COMMON_SHADER, PARSE_SEG_SHADER],
-                &[("CODEC", f64::from(id))],
+                &[COMMON_SHADER, DEEP_SHADER, PARSE_SEG_SHADER],
+                &[("CODEC", f64::from(id)), ("DEPTH", f64::from(params.depth))],
             ),
             parse_serial: pipeline(
                 &format!("{name} serial parse"),
                 &encode_layout,
-                &[COMMON_SHADER, PARSE_SHADER],
-                &[("CODEC", f64::from(id))],
+                &[COMMON_SHADER, DEEP_SHADER, PARSE_SHADER],
+                &[("CODEC", f64::from(id)), ("DEPTH", f64::from(params.depth))],
             ),
             emit: pipeline(
                 &format!("{name} emit"),
@@ -520,6 +541,24 @@ impl GpuEncoder {
             ),
             lz4: codec("lz4", LZ4_EMIT, 0),
             glz: codec("glz", GLZ_EMIT, 1),
+            deep_pass: pipeline(
+                "encode deep matches",
+                &encode_layout,
+                &[COMMON_SHADER, DEEP_SHADER, DEEP_PASS_SHADER],
+                &[("DEPTH", f64::from(params.depth))],
+            ),
+            glze_hist: pipeline(
+                "glz-e histograms",
+                &encode_layout,
+                &[COMMON_SHADER, GLZE_HIST_SHADER],
+                &[],
+            ),
+            glze_build: pipeline(
+                "glz-e codes",
+                &encode_layout,
+                &[COMMON_SHADER, GLZE_BUILD_SHADER],
+                &[],
+            ),
             glze_encode: pipeline(
                 "glz-e encode",
                 &encode_layout,
@@ -1342,9 +1381,12 @@ impl GpuEncoder {
             info_size,
             BufferUsages::STORAGE,
         );
-        // Only the GLZ parse with dependency elimination uses the group lists.
+        // Only the GLZ parse with dependency elimination uses the group lists;
+        // GLZ-E keeps its encoder build data there.
         let group_size = if groups > 0 {
             chunks * u64::from(MAX_GROUP) * 8
+        } else if options.codec == format::Codec::GlzE {
+            chunks * 4 * u64::from(GLZE_BUILD_WORDS) * 4
         } else {
             8
         };
@@ -1469,11 +1511,17 @@ impl GpuEncoder {
             (&kernels.parse, per_chunk)
         };
         pass.set_bind_group(0, bind_group, &[]);
-        for (pipeline, (x, y)) in [
-            (&self.matches, per_chunk),
-            parse,
-            (&kernels.emit, per_chunk),
-        ] {
+        pass.set_pipeline(&self.matches);
+        pass.dispatch_workgroups(per_chunk.0, per_chunk.1, 1);
+        if self.params.depth > 1 {
+            // Every position's deep match, at full occupancy (no workgroup
+            // memory), memoised for the parse.
+            let positions = u32::try_from(p.input_size).unwrap_or(u32::MAX);
+            let (x, y) = dispatch_grid(positions.div_ceil(DEEP_PASS_WG), max);
+            pass.set_pipeline(&self.deep_pass);
+            pass.dispatch_workgroups(x, y, 1);
+        }
+        for (pipeline, (x, y)) in [parse, (&kernels.emit, per_chunk)] {
             pass.set_pipeline(pipeline);
             pass.dispatch_workgroups(x, y, 1);
         }
@@ -1488,8 +1536,15 @@ impl GpuEncoder {
                 timestamp_writes: None,
             });
             pass.set_bind_group(0, bind_group, &[]);
-            pass.set_pipeline(&self.glze_encode);
-            pass.dispatch_workgroups(per_chunk.0, per_chunk.1, 1);
+            let builds = dispatch_grid((p.chunks * 4).div_ceil(GLZE_BUILD_WG), max);
+            for (pipeline, (x, y)) in [
+                (&self.glze_hist, per_chunk),
+                (&self.glze_build, builds),
+                (&self.glze_encode, per_chunk),
+            ] {
+                pass.set_pipeline(pipeline);
+                pass.dispatch_workgroups(x, y, 1);
+            }
         }
     }
 }
@@ -1825,7 +1880,6 @@ mod tests {
             encoder_bytes_per_chunk(&base, &EncodeParams::default()),
             plain
         );
-        // Hash chains keep a link (u32) per input byte.
         // GLZ-E: bigger slots (the GLZ blocks it transcodes are copied into
         // the match scratch, which is free by then).
         let glze = GpuCompressOptions {
@@ -1834,16 +1888,32 @@ mod tests {
         };
         let glze_slot = u64::from(slot_for(format::Codec::GlzE, 65_536));
         assert_eq!(glze_slot, (65_536 * 3 / 2 + 64) as u64);
+        // Plus, per stream, its histogram, rank order, Huffman tree and code
+        // (the group buffer, unused by GLZ-E otherwise).
         assert_eq!(
             encoder_bytes_per_chunk(&glze, &EncodeParams::default()),
-            plain - u64::from(slot_size(65_536)) + glze_slot
+            plain - u64::from(slot_size(65_536)) + glze_slot + 4 * 4 * u64::from(GLZE_BUILD_WORDS)
         );
         assert_eq!(slot_for(format::Codec::Glz, 4096), slot_size(4096));
+        // Hash chains keep a link (u32) per input byte.
         let chained = EncodeParams {
             depth: 4,
             ..EncodeParams::default()
         };
         assert_eq!(encoder_bytes_per_chunk(&base, &chained), plain + 4 * c);
+        let big = GpuCompressOptions {
+            chunk_size: 1 << 20,
+            ..base
+        };
+        let deep = EncodeParams {
+            depth: 16,
+            ..EncodeParams::default()
+        };
+        assert_eq!(
+            encoder_bytes_per_chunk(&big, &deep)
+                - encoder_bytes_per_chunk(&big, &EncodeParams::default()),
+            4 << 20
+        );
         let groups = GpuCompressOptions {
             codec: format::Codec::Glz,
             independent_groups: Some(8),

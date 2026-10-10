@@ -822,3 +822,213 @@ candidates, at least until (a) makes chains cheaper.
 Fixes to try: per-subgroup sub-histograms, fusing the bit count into the histogram
 (Σ count × length), encoding all four streams' tables at once, and more
 invocations per chunk for the long literal stream.
+
+## (a) Faster deep match search: buckets (rejected) and chain rings (kept)
+**Multi-way buckets in workgroup memory, rejected.** Simulated on the CPU twin
+(Silesia, lazy parse):
+- 4 ways at hash_log 10 (16 KB): 2.065×. Chains of 4 (hash_log 12) give 2.214×.
+- 8 ways at hash_log 10 (32 KB): 2.169×.
+- 16 ways at hash_log 9 (32 KB): 2.179×.
+
+Fitting the ways into workgroup memory costs more hash bits than the extra candidates
+win back.
+
+**Chain rings, same output and speed, less memory.** A chain walk from the current
+head only visits block winners (the latest position with the hash in its block), and
+each winner's link is the head it displaced. So per hash slot, a ring of the last
+DEPTH − 1 displaced heads holds exactly the chain's candidates, newest first:
+- each (slot, block) winner pushes its displaced head once;
+- the ring and its push count sit in DEPTH contiguous words per slot (in the
+  `chain` binding), cleared by the workgroup at chunk start.
+
+Output is byte-identical (all chain twin tests). Lookups read one slot's contiguous
+words instead of following DEPTH − 1 scattered links, but kernel time didn't move:
+2 / 4 / 8 / 16 candidates take 121 / 169 / 249 / 363 ms against 117 / 162 / 239 /
+355 ms before. **Link latency was never the cost.** Each extra candidate costs ~27 ms
+of verification (unaligned input loads at random earlier positions) plus SIMD
+divergence. The ring is kept for memory: `(1 << hash_log) × depth` words per chunk
+instead of 4 bytes per input byte, i.e. 64 KB instead of 256 KB per 64 KiB chunk at
+level 2, and 256 KB instead of 4 MB per 1 MiB chunk at level 3.
+
+**Next idea, not done:** evaluate deep candidates only at the ~40% of positions the
+parse visits (literal positions, match starts and their lazy look-ahead). That needs
+the per-position chain links back, plus memoising the result in the match word
+inside the segmented parse.
+
+## GLZ-E entropy stages: occupancy and serial work
+Profiled by temporarily patching the shader source at pipeline creation to skip
+stages, then timing the dispatch on Silesia (212 MB).
+
+**Encode (65 ms → ~18 ms).**
+- **Before:** one 32-lane workgroup per chunk ran every stream in turn, with the
+  Huffman tree built on invocation 0 while 31 lanes waited. That build alone cost
+  ~30 ms; the bit-count and encode passes 17 ms; the 256×256 rank sort 8 ms; the
+  histogram 4.5 ms.
+- **Now three kernels:**
+  1. `glze_hist`: word-wise histograms of all four streams (the offset words feed
+     both offset streams), then a bitonic sort of `count << 8 | symbol` keys gives
+     the rank order.
+  2. `glze_build`: **one invocation per (chunk, stream)** builds the tree and
+     canonical codes in global build data, so ~13,000 independent serial builds hide
+     each other's latency (~2 ms).
+  3. `glze_encode`: 128 invocations, a 32-lane group per stream, with all four
+     streams at once.
+- **Build data lives in the group buffer,** unused by GLZ-E, because the encoder was
+  already at WebGPU's limit of 8 storage buffers. That needed **`group_buf` to
+  become `array<u32>`.** As `array<vec2<u32>>`, a one-component store compiled to a
+  read-modify-write of both words, and neighbouring invocations writing neighbouring
+  words lost updates (68 symbols got length 0 on a random chunk). The serial GLZ
+  parse now stores its (start, end) pairs as two words.
+- **Tried and not kept as wins** (each changed nothing measurable):
+  - a one-word cache in the bit-count and encode loops;
+  - four streams concurrently in the write kernel.
+
+**Decode (entropy kernel alone, 29 ms → 17 ms).**
+- The kernel is one 32-lane SIMD group per chunk, and lane decoding is a dependency
+  chain (table lookup, then the next peek).
+- **What didn't help** (both kept as harmless):
+  - a two-word bit reader;
+  - collecting output bytes into words (one `atomicOr` per word instead of per
+    byte).
+- **What did:**
+  - halving the decode table to 16-bit entries, two per word, filled with atomics
+    into a zeroed table: 29 → 20.3 ms;
+  - packing the code lengths (a byte each) and codes (16 bits each): 20.3 → 17.2 ms.
+- **Why:** workgroup memory went from ~10 KB to ~5 KB per workgroup, so more SIMD
+  groups are resident per core to hide the chains' latency. **On this GPU,
+  workgroup memory per SIMD group is the lever for latency-bound kernels.**
+- **What's left:** lane decoding ~8 ms, table fill ~3.3 ms (unbalanced by symbol),
+  invocation 0's validation and codes ~3.1 ms.
+
+## Decoder buffer reuse
+Every decode call used to allocate its GPU buffers fresh: the upload
+(`create_buffer_init`), output, status, descriptor and image buffers, and a new
+readback staging buffer per batch. On a 212 MB decode that's hundreds of MB of new
+memory, page-faulted on first touch, every call.
+
+Now the decoder keeps **two sets** of reusable buffers. Batches alternate between
+them, so batch k + 1 never touches what batch k still has in flight.
+- Bindings and clears use exact sizes, because kernels take their chunk counts from
+  `arrayLength`.
+- Uploads go through a reused mapped staging buffer and a GPU copy.
+- `prepare_file` (the bench's kernel-only path) keeps fresh buffers.
+- Test: a warmed-up decoder allocates nothing on repeat calls, single-batch and
+  multi-batch.
+
+Silesia GPU decode, end to end, same binary with and without the cache:
+- GLZ: 2.06 → **3.38 GB/s** (103 → 62.7 ms).
+- GLZ-E: 1.82 → **2.68 GB/s** (116.5 → 78.9 ms).
+- A 64 KB file: ~3.5 ms either way. Fixed latencies dominate there; the extra
+  map/poll for the upload costs nothing measurable.
+
+## Parse segments: 32 → 128
+Segments are internal to the encoder (not part of the format), so more of them just
+means shorter serial walks and more lanes in flight per chunk. Level-1 LZ4 kernels on
+Silesia, same session: 32 / 64 / 128 segments = 78.0 / 76.1 / 74.7 ms. **128 kept
+(−4.3%).** Each chunk's segment table grows to 512 B.
+
+Going past 32 exposed a **latent bug**: the fix-up rounds tracked "needs cooperative
+extension" in one u32 bitmask (`1u << k`). For k ≥ 32 that wraps, so the wrong lane's
+long match got extended. It wasn't caught at 64, and 4 parse tests failed at 128. It's
+now one word per 32 segments. (The first 64-segment timing, 73.8 ms, came from the
+buggy kernel.) The stitching tests now take their boundaries from `PARSE_SEGMENTS`.
+
+## Small experiments (negative or minor)
+- **Hash table size at level 1.** Silesia kernels:
+
+  | hash_log | Table | LZ4 | GLZ-E |
+  |---|---|---|---|
+  | 12 (kept) | 16 KB | 1.993× in 74.5 ms | 2.503× in 93.9 ms |
+  | 11 | 8 KB | 1.902× in 66.9 ms | 2.417× in 86.7 ms |
+  | 10 | 4 KB | 1.798× in 65.8 ms | 2.320× in 86.6 ms |
+  | 13 | 32 KB | 2.056× in 117.7 ms | 2.562× in 137.3 ms |
+
+  Occupancy costs the match kernel ~8 ms at 16 KB, but recovering it costs 4.6% of
+  ratio. 32 KB buys +3% ratio for +58% time, a worse trade than chain candidates.
+- **Repeat offsets as a pure re-coding** (code an offset equal to the previous one as
+  0). Only 3.6% of matches repeat the last offset, and 1.8–2.1% the one before. The
+  offset streams would shrink 23.3 → 23.0 MB (~0.3% of the output). Not worth a format
+  change. zstd's gain comes from a parser that seeks repeat-offset matches, which is
+  path-dependent and doesn't fit the segmented parse.
+- **Chain candidates compared against p's 16 bytes held in registers** (`extend16`,
+  for `probe_len` ≤ 16). 2 / 4 / 16 candidates: 115.2 / 162.5 / 350.2 →
+  116.6 / 159.1 / 335.0 ms. Kept (exact and harmless). The per-candidate cost is the
+  candidate side's unaligned loads and divergence.
+
+## Deep matches: separate full-occupancy pass (replaces the ring)
+The ring (above) made chain lookups contiguous, but the deep candidate loop still ran
+inside the match kernel, whose 16 KB hash table limits occupancy.
+
+**Two alternatives tried, both byte-identical to the twin:**
+1. **Deferred into the parse.** The match kernel stores the first candidate's match
+   and a per-position link. The parse computes a position's deep match the first time
+   it visits it (about 40% of positions) and memoises it in the match word: DEEP is
+   bit 30, so `probe_len` ≤ 16383. **No gain:** 2 / 4 / 16 candidates in 117.5 /
+   158.0 / 313.7 ms. The evaluations sit on the walks' serial path, so 2.5× fewer of
+   them cost as much.
+2. **A separate deep pass,** one invocation per position and no workgroup memory,
+   between match finding and the parse; it memoises every position, so the parse
+   finds them computed. **111.7 / 144.1 / 277.4 ms**, against 116.6 / 159.1 / 335.0
+   for the ring: −4% / −9% / −17%. **Kept.**
+
+The first extra candidate still costs ~37 ms. Reading every position's links and
+random earlier input is close to memory-bound here.
+
+**Cost:** links take 4 bytes per input byte again (the ring's memory saving is gone).
+The memory model sizes batches accordingly. `deep_match` (encode_deep.wgsl) is shared
+by the deep pass and both parse kernels; in the parse it normally just returns the
+memo.
+
+## Decoder: wait for each batch's own submission
+`finish` used to poll with `wait_indefinitely`, which also waited for the next
+batch's kernel (already dispatched), so the 2-deep pipeline overlapped little. Now:
+- `dispatch` puts the output and status readback copies in the batch's own
+  submission and records its index;
+- `finish` waits for that submission alone (`PollType::Wait { submission_index }`);
+- the reused upload staging buffer waits only for its own last copy.
+
+Single batch (Silesia): GLZ 62.7 → 60.2 ms, GLZ-E 78.9 → 73.1 ms.
+
+**Smaller batches to overlap transfers didn't pay off** (budgets forcing 1–8
+batches): GLZ 60.2 → 56.0 ms at the smallest, but GLZ-E 73.1 → 84.5 ms. The
+remaining overhead is mostly the CPU copy out of the mapped staging, which doesn't
+overlap well. The default budget stays.
+
+## Numeric data: GLZ-E with filter selection vs zstd
+The bench's numeric inputs, 32 MiB each, 64 KiB chunks (GLZ-E encoded by the CPU
+twin; the GPU writes the same files):
+
+| Input | GLZ + auto | GLZ-E | GLZ-E + auto | GLZ-E + auto, level 3 | zstd -1 | zstd -3 | zstd -19 |
+|---|---|---|---|---|---|---|---|
+| f32-points | 1.38× | 1.14× | **1.42×** | 1.56× | 1.15× | 1.15× | 1.41× |
+| i16-audio | 1.08× | 1.03× | **1.19×** | 1.24× | 1.04× | 1.04× | 1.04× |
+| sorted-u32 | 1.99× | 1.29× | **4.08×** | 4.12× | 1.31× | 1.32× | 2.91× |
+| u64-timestamps | 2.54× | 2.81× | 3.17× | **8.96×** | 3.90× | 3.90× | 3.90× |
+
+Byte-shuffle groups slowly changing bytes, and the entropy stage then exploits them.
+LZ alone (GLZ + auto) or zstd's general-purpose modelling can't. At level 1, GLZ-E +
+auto beats zstd -19 on three of four inputs. On timestamps, level 3's deeper matches
+find the structure (8.96×).
+
+## CPU reference on this Mac (12 cores), Silesia
+| | Ratio | Compress | Decompress |
+|---|---|---|---|
+| zstd -1 -T0 (whole file) | 2.891× | 6.47 GB/s | 1.84 GB/s (single-threaded) |
+| zstd -3 -T0 | 3.201× | 3.13 GB/s | 1.67 GB/s |
+| zstd -1, 64 KiB independent blocks | 2.763× | 0.74 GB/s (1 thread) | 1.64 GB/s |
+| lz4 -1, 64 KiB blocks | 2.069× | 0.84 GB/s (1 thread) | 4.74 GB/s |
+
+Multi-threaded zstd compresses ~3× faster than gpucomp's GPU GLZ-E path on this Mac,
+at a better ratio (whole-file, so no random access). gpucomp's GPU decode (2.7–3.4
+GB/s end to end) beats zstd's single-threaded decoder, but not a multi-threaded CPU
+decode of independent chunks (lz4_flex 12.8 GB/s).
+- **GLZ decode short copies a word at a time** (assemble each output word in a
+  register, one `atomicOr` per word, taking overlapping match bytes from the
+  register): **slower**. Silesia GLZ kernel 43.0 → 47.6 ms, GLZ-E 58.0 → 62.3 ms.
+  The byte-wise atomics weren't the bottleneck; the branchier loops cost more.
+  Reverted.
+- **probe_len at level 1:** 16 / 12 / 8 / 4 give LZ4 1.9932 / 1.9924 / 1.9892 /
+  1.9433× in 74.7 / 72.5 / 70.6 / 69.1 ms (GLZ-E 2.5025 / 2.5018 / 2.4997 /
+  2.4753×). Probe 8 saves ~5% for −0.1–0.2% ratio. Not adopted: it changes
+  level-1 output for little. At probe 4 the lazy rule degrades, because every capped
+  length ties.

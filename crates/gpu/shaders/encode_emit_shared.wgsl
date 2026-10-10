@@ -14,8 +14,8 @@ var<workgroup> seg_first: array<u32, PARSE_SEGMENTS>;
 
 // Loads the chunk's segment table. Call in uniform control flow.
 fn load_segs(chunk: u32, lid: u32) {
-    if (lid < PARSE_SEGMENTS) {
-        seg_first[lid] = segs[chunk * PARSE_SEGMENTS + lid];
+    for (var k = lid; k < PARSE_SEGMENTS; k += WG_SIZE) {
+        seg_first[k] = segs[chunk * PARSE_SEGMENTS + k];
     }
     workgroupBarrier();
 }

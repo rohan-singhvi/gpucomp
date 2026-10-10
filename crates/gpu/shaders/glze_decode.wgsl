@@ -46,9 +46,20 @@ const RAW: u32 = 0u;
 const RLE: u32 = 1u;
 const HUFFMAN: u32 = 2u;
 
-var<workgroup> lengths: array<u32, 256>;
-var<workgroup> codes: array<u32, 256>;
-var<workgroup> table: array<u32, TABLE>;
+// Code lengths, a byte each (four per word), and codes, 16 bits each (two
+// per word): packed to keep workgroup memory, and so occupancy, up.
+var<workgroup> lengths: array<u32, 64>;
+var<workgroup> codes: array<u32, 128>;
+
+fn length_of(s: u32) -> u32 {
+    return (lengths[s >> 2u] >> ((s & 3u) * 8u)) & 0xFFu;
+}
+
+fn code_of(s: u32) -> u32 {
+    return (codes[s >> 1u] >> ((s & 1u) * 16u)) & 0xFFFFu;
+}
+// Decode table, two 16-bit entries (symbol | length << 8) per word.
+var<workgroup> table: array<atomic<u32>, TABLE / 2u>;
 var<workgroup> bl: array<u32, 12>;
 var<workgroup> next_code: array<u32, 12>;
 var<workgroup> lane_words: array<u32, WG>;
@@ -82,6 +93,18 @@ fn sbyte(c: Chunk, at: u32) -> u32 {
 fn put(c: Chunk, at: u32, value: u32) {
     let b = c.i + at;
     atomicOr(&image[b >> 2u], value << ((b & 3u) * 8u));
+}
+
+// Raw offset bytes: image word j of the offsets array gets this stream's
+// byte of offsets 2j (`first`) and, if it exists, 2j + 1 (payload byte
+// `second_at`).
+fn put_pair(c: Chunk, dest: u32, j: u32, first: u32, n: u32, second_at: u32) {
+    let sh = 8u * (dest & 1u);
+    var v = first << sh;
+    if (2u * j + 1u < n) {
+        v |= sbyte(c, second_at) << (16u + sh);
+    }
+    atomicOr(&image[(c.i + dest - (dest & 1u)) / 4u + j], v);
 }
 
 fn lanes(n: u32) -> u32 {
@@ -127,16 +150,38 @@ fn stream(c: Chunk, at: u32, n: u32, dest: u32, stride: u32, lid: u32) {
     }
     let mode = workgroupUniformLoad(&w_mode);
     if (mode == RAW) {
-        for (var i = lid; i < n; i += WG) {
-            put(c, dest + i * stride, sbyte(c, at + 4u + i));
+        if (stride == 1u) {
+            // Tokens and literals: whole words (both sides 4-aligned).
+            for (var w = lid; w < (n + 3u) / 4u; w += WG) {
+                let tail = min(n - 4u * w, 4u);
+                let keep = select(0xFFFFFFFFu, (1u << (8u * tail)) - 1u, tail < 4u);
+                atomicOr(&image[(c.i + dest) / 4u + w], sword(c, at + 4u + 4u * w) & keep);
+            }
+        } else {
+            // Offset low or high bytes: two per image word.
+            for (var j = lid; j < (n + 1u) / 2u; j += WG) {
+                put_pair(c, dest, j, sbyte(c, at + 4u + 2u * j), n, at + 4u + 2u * j + 1u);
+            }
         }
         return;
     }
     if (mode == RLE) {
         let sym = (sword(c, at) >> 8u) & 0xFFu;
         if (sym != 0u) {
-            for (var i = lid; i < n; i += WG) {
-                put(c, dest + i * stride, sym);
+            if (stride == 1u) {
+                for (var w = lid; w < (n + 3u) / 4u; w += WG) {
+                    let tail = min(n - 4u * w, 4u);
+                    let keep = select(0xFFFFFFFFu, (1u << (8u * tail)) - 1u, tail < 4u);
+                    atomicOr(&image[(c.i + dest) / 4u + w], (sym * 0x01010101u) & keep);
+                }
+            } else {
+                for (var j = lid; j < (n + 1u) / 2u; j += WG) {
+                    var v = sym << (8u * (dest & 1u));
+                    if (2u * j + 1u < n) {
+                        v |= sym << (8u * (2u + (dest & 1u)));
+                    }
+                    atomicOr(&image[(c.i + dest - (dest & 1u)) / 4u + j], v);
+                }
             }
         }
         return;
@@ -144,8 +189,11 @@ fn stream(c: Chunk, at: u32, n: u32, dest: u32, stride: u32, lid: u32) {
 
     // Huffman: the code lengths, then (invocation 0) checks, canonical codes
     // and the lane layout.
-    for (var s = lid; s < 256u; s += WG) {
-        lengths[s] = (sbyte(c, at + 4u + s / 2u) >> ((s & 1u) * 4u)) & 15u;
+    // Four lengths per word: two bytes of the nibble table.
+    for (var w = lid; w < 64u; w += WG) {
+        let pair = sbyte(c, at + 4u + 2u * w) | (sbyte(c, at + 5u + 2u * w) << 8u);
+        lengths[w] = (pair & 15u) | (((pair >> 4u) & 15u) << 8u)
+            | (((pair >> 8u) & 15u) << 16u) | ((pair >> 12u) << 24u);
     }
     workgroupBarrier();
     if (lid == 0u) {
@@ -155,7 +203,7 @@ fn stream(c: Chunk, at: u32, n: u32, dest: u32, stride: u32, lid: u32) {
             bl[l] = 0u;
         }
         for (var s = 0u; s < 256u; s++) {
-            let len = lengths[s];
+            let len = length_of(s);
             if (len > MAX_LEN) {
                 bad = true;
             } else if (len > 0u) {
@@ -172,9 +220,11 @@ fn stream(c: Chunk, at: u32, n: u32, dest: u32, stride: u32, lid: u32) {
                 next_code[l] = code;
             }
             for (var s = 0u; s < 256u; s++) {
-                let len = lengths[s];
+                let len = length_of(s);
                 if (len > 0u) {
-                    codes[s] = reverseBits(next_code[len]) >> (32u - len);
+                    let code = reverseBits(next_code[len]) >> (32u - len);
+                    codes[s >> 1u] = (codes[s >> 1u] & ~(0xFFFFu << ((s & 1u) * 16u)))
+                        | (code << ((s & 1u) * 16u));
                     next_code[len] += 1u;
                 }
             }
@@ -204,13 +254,18 @@ fn stream(c: Chunk, at: u32, n: u32, dest: u32, stride: u32, lid: u32) {
         return;
     }
     // Decode table: entry = symbol | length << 8, indexed by the next MAX_LEN
-    // bits (least significant first).
+    // bits (least significant first); 16 bits each, two per word.
+    for (var w = lid; w < TABLE / 2u; w += WG) {
+        atomicStore(&table[w], 0u);
+    }
+    workgroupBarrier();
     for (var s = lid; s < 256u; s += WG) {
-        let len = lengths[s];
+        let len = length_of(s);
         if (len > 0u) {
             let entry = s | (len << 8u);
             for (var f = 0u; f < (1u << (MAX_LEN - len)); f++) {
-                table[codes[s] | (f << len)] = entry;
+                let idx = code_of(s) | (f << len);
+                atomicOr(&table[idx >> 1u], entry << ((idx & 1u) * 16u));
             }
         }
     }
@@ -220,24 +275,55 @@ fn stream(c: Chunk, at: u32, n: u32, dest: u32, stride: u32, lid: u32) {
         let words = lane_words[lid];
         let base = lane_at[lid];
         let limit = 32u * words;
+        // Bit reader: the words holding bits [32 * cur, 32 * cur + 64) (zero
+        // past the lane's last word); codes are at most 11 bits, so it moves
+        // at most one word per symbol.
+        var cur = 0u;
+        var w0 = 0u;
+        var w1 = 0u;
+        if (words > 0u) {
+            w0 = sword(c, base);
+        }
+        if (words > 1u) {
+            w1 = sword(c, base + 4u);
+        }
+        // Output: bytes are collected per image word and merged once.
+        var out_word = NONE;
+        var acc = 0u;
         var pos = 0u;
         for (var i = lid * n / ln; i < (lid + 1u) * n / ln; i++) {
-            let w = pos >> 5u;
+            if ((pos >> 5u) != cur) {
+                cur++;
+                w0 = w1;
+                w1 = 0u;
+                if (cur + 1u < words) {
+                    w1 = sword(c, base + 4u * cur + 4u);
+                }
+            }
             let shift = pos & 31u;
-            var peek = 0u;
-            if (w < words) {
-                peek = sword(c, base + 4u * w) >> shift;
+            var peek = w0 >> shift;
+            if (shift > 0u) {
+                peek |= w1 << (32u - shift);
             }
-            if (shift > 0u && w + 1u < words) {
-                peek |= sword(c, base + 4u * w + 4u) << (32u - shift);
-            }
-            let e = table[peek & (TABLE - 1u)];
+            let idx = peek & (TABLE - 1u);
+            let e = (atomicLoad(&table[idx >> 1u]) >> ((idx & 1u) * 16u)) & 0xFFFFu;
             pos += e >> 8u;
             if (pos > limit) {
                 atomicMin(&overrun, lid);
                 break;
             }
-            put(c, dest + i * stride, e & 0xFFu);
+            let b = c.i + dest + i * stride;
+            if ((b >> 2u) != out_word) {
+                if (out_word != NONE) {
+                    atomicOr(&image[out_word], acc);
+                }
+                out_word = b >> 2u;
+                acc = 0u;
+            }
+            acc |= (e & 0xFFu) << ((b & 3u) * 8u);
+        }
+        if (out_word != NONE) {
+            atomicOr(&image[out_word], acc);
         }
     }
     workgroupBarrier();

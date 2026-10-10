@@ -37,8 +37,10 @@ var<workgroup> changed: atomic<u32>;
 var<workgroup> flag: u32;
 // Lanes whose confirmed exit needs its last match extended (bit k), with the
 // match's extension so far and offset; extended by the whole workgroup.
-var<workgroup> pending: atomic<u32>;
-var<workgroup> pending_now: u32;
+// One bit per segment, 32 segments per word.
+const MASK_WORDS: u32 = PARSE_SEGMENTS / 32u;
+var<workgroup> pending: array<atomic<u32>, MASK_WORDS>;
+var<workgroup> pending_now: array<u32, MASK_WORDS>;
 var<workgroup> fin_from: array<u32, PARSE_SEGMENTS>;
 var<workgroup> fin_off: array<u32, PARSE_SEGMENTS>;
 var<workgroup> coop_min: atomic<u32>;
@@ -62,14 +64,18 @@ struct Chunk {
 // parse also reads the match word at p + 1; at p + 1 == seg_end that's
 // `look` unless NONE (the next lane may be overwriting it in phase C).
 fn greedy_step(c: Chunk, p: u32, limit: u32, seg_end: u32, look: u32) -> vec2<u32> {
-    let m = scratch[c.sbase + p] & ~MARK;
+    // Deep matches (encode_deep.wgsl), memoised for this lane's own positions.
+    let m = deep_match(c.start, c.sbase, p, c.match_limit, true);
     if ((m >> 16u) < MIN_MATCH) {
         return vec2<u32>(p + 1u, 0u);
     }
     if (params.lazy != 0u && p + 1u + MFLIMIT <= c.n) {
-        var next = scratch[c.sbase + p + 1u] & ~MARK;
-        if (p + 1u == seg_end && look != NONE) {
-            next = look;
+        var next = 0u;
+        if (p + 1u == seg_end) {
+            // The next lane's position: not memoised here.
+            next = select(deep_match(c.start, c.sbase, p + 1u, c.match_limit, false), look, look != NONE);
+        } else {
+            next = deep_match(c.start, c.sbase, p + 1u, c.match_limit, true);
         }
         if ((next >> 16u) > (m >> 16u)) {
             return vec2<u32>(p + 1u, 0u);
@@ -229,7 +235,9 @@ fn main(
     exits[k] = select(spec_end, NONE, spec_inexact);
     if (k == 0u) {
         atomicStore(&changed, 0u);
-        atomicStore(&pending, 0u);
+        for (var w = 0u; w < MASK_WORDS; w++) {
+            atomicStore(&pending[w], 0u);
+        }
     }
 
     // ---- B: fix-up rounds ----
@@ -249,7 +257,7 @@ fn main(
                 // below with the whole workgroup.
                 fin_from[k] = spec_end;
                 fin_off[k] = spec.y;
-                atomicOr(&pending, 1u << k);
+                atomicOr(&pending[k / 32u], 1u << (k % 32u));
             } else {
                 var x = w.x;
                 if (w.y != 0u) {
@@ -263,22 +271,26 @@ fn main(
         }
         workgroupBarrier();
         if (k == 0u) {
-            pending_now = atomicLoad(&pending);
-            atomicStore(&pending, 0u);
-        }
-        var todo = workgroupUniformLoad(&pending_now);
-        loop {
-            if (todo == 0u) {
-                break;
+            for (var w = 0u; w < MASK_WORDS; w++) {
+                pending_now[w] = atomicLoad(&pending[w]);
+                atomicStore(&pending[w], 0u);
             }
-            let j = firstTrailingBit(todo);
-            todo &= todo - 1u;
-            let end = coop_extend(c, fin_from[j], fin_off[j], c.match_limit, k);
-            if (k == j) {
-                spec_end = end;
-                spec_inexact = false;
-                exits[k] = end;
-                atomicStore(&changed, 1u);
+        }
+        for (var w = 0u; w < MASK_WORDS; w++) {
+            var todo = workgroupUniformLoad(&pending_now[w]);
+            loop {
+                if (todo == 0u) {
+                    break;
+                }
+                let j = 32u * w + firstTrailingBit(todo);
+                todo &= todo - 1u;
+                let end = coop_extend(c, fin_from[j], fin_off[j], c.match_limit, k);
+                if (k == j) {
+                    spec_end = end;
+                    spec_inexact = false;
+                    exits[k] = end;
+                    atomicStore(&changed, 1u);
+                }
             }
         }
         workgroupBarrier();
@@ -296,7 +308,7 @@ fn main(
     // its sequences over it.
     var look = 0u;
     if (seg_end + MFLIMIT <= n) {
-        look = scratch[c.sbase + seg_end] & ~MARK;
+        look = deep_match(c.start, c.sbase, seg_end, c.match_limit, false);
     }
     workgroupBarrier();
     var count = 0u;

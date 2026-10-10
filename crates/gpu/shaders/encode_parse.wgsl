@@ -20,7 +20,7 @@ fn source_room(gbase: u32, src: u32, len: u32) -> u32 {
             break;
         }
         let mid = (lo + hi) / 2u;
-        if (group_buf[gbase + mid].y <= src) {
+        if (group_buf[2u * (gbase + mid) + 1u] <= src) {
             lo = mid + 1u;
         } else {
             hi = mid;
@@ -29,11 +29,11 @@ fn source_room(gbase: u32, src: u32, len: u32) -> u32 {
     if (lo == len) {
         return 0xFFFFFFFFu;
     }
-    let o = group_buf[gbase + lo];
-    if (o.x <= src) {
+    let o_start = group_buf[2u * (gbase + lo)];
+    if (o_start <= src) {
         return 0u;
     }
-    return o.x - src;
+    return o_start - src;
 }
 
 // Sequence k is written over scratch[4k .. 4k + 4] (lit_start, lit_len,
@@ -62,10 +62,12 @@ fn parse(chunk: u32) {
         if (p + MFLIMIT > n) {
             break;
         }
-        let m = scratch[sbase + p];
+        // Deep matches (encode_deep.wgsl), memoised.
+        let m = deep_match(start, sbase, p, match_limit, true);
         // Lazy: skip it if the next position's match is longer.
         if ((m >> 16u) < MIN_MATCH
-            || (params.lazy != 0u && p + 1u + MFLIMIT <= n && (scratch[sbase + p + 1u] >> 16u) > (m >> 16u))) {
+            || (params.lazy != 0u && p + 1u + MFLIMIT <= n
+                && (deep_match(start, sbase, p + 1u, match_limit, true) >> 16u) > (m >> 16u))) {
             p++;
             continue;
         }
@@ -94,7 +96,8 @@ fn parse(chunk: u32) {
         let limit = min(match_limit, p + min(cap, n));
         let end = extend(start, p + min(m >> 16u, cap), offset, limit);
         if (params.groups > 0u) {
-            group_buf[gbase + group_len] = vec2<u32>(p, end);
+            group_buf[2u * (gbase + group_len)] = p;
+            group_buf[2u * (gbase + group_len) + 1u] = end;
             group_len++;
         }
         let q = sbase + 4u * count;
