@@ -74,6 +74,68 @@ pub fn plan(index: &Index, chunks: Range<usize>, limit: u64) -> Result<DecodePla
     })
 }
 
+/// One GLZ-E chunk as the entropy-decode shader sees it (`GlzeDesc` in
+/// glze_decode.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GlzeDesc {
+    pub src_offset: u32,
+    /// Payload size, with [`STORED_BIT`] set for stored chunks.
+    pub comp_size: u32,
+    /// Where the chunk's rebuilt GLZ block goes in the image buffer (4-aligned).
+    pub image_offset: u32,
+    pub image_size: u32,
+    pub uncomp_size: u32,
+    pub _pad: u32,
+}
+
+/// Image layout for the GLZ-E chunks `descs` of the uploaded span `src`: each
+/// chunk's GLZ block size from its header (a stored chunk's image is its
+/// payload; a missing or invalid header gives 0, and the shader reports the
+/// error). Returns the descriptors and the image buffer's size.
+pub fn glze_layout(descs: &[ChunkDesc], src: &[u8]) -> (Vec<GlzeDesc>, u64) {
+    const WIDE_BIT: u32 = 1 << 31;
+    let word = |at: usize| u32::from_le_bytes(src[at..at + 4].try_into().unwrap());
+    let mut total = 0u64;
+    let out = descs
+        .iter()
+        .map(|d| {
+            let comp = d.comp_size & !STORED_BIT;
+            let n = d.uncomp_size;
+            let image_size = if d.comp_size & STORED_BIT != 0 {
+                comp
+            } else if comp < 12 {
+                0
+            } else {
+                // Same checks as the shader (and cpu::glze::to_glz).
+                let at = d.src_offset as usize;
+                let (head, ext, lit) = (word(at), word(at + 4), word(at + 8));
+                let count = head & !WIDE_BIT;
+                if count == 0 || count > n / 4 + 1 || ext > 2 * count || lit > n {
+                    0
+                } else {
+                    let ext_bytes = ext * if head & WIDE_BIT != 0 { 4 } else { 2 };
+                    8 + pad4(u64::from(count)) as u32
+                        + pad4(2 * u64::from(count)) as u32
+                        + pad4(u64::from(ext_bytes)) as u32
+                        + lit
+                }
+            };
+            let g = GlzeDesc {
+                src_offset: d.src_offset,
+                comp_size: d.comp_size,
+                image_offset: total as u32,
+                image_size,
+                uncomp_size: n,
+                _pad: 0,
+            };
+            total += pad4(u64::from(image_size));
+            g
+        })
+        .collect();
+    (out, total)
+}
+
 /// GPU bytes one batch of `entries` needs: the uploaded payloads, the output
 /// three times over (output buffer, inverse-filter scratch, readback staging)
 /// and 20 bytes per chunk (descriptor and status).
@@ -97,7 +159,15 @@ pub fn batches(index: &Index, chunks: Range<usize>, budget: u64, limit: u64) -> 
         while end < chunks.end {
             let e = &index.chunks[end];
             let (s, d) = (pad4(u64::from(e.comp_size)), u64::from(e.uncomp_size));
-            let next = bytes + batch_bytes(std::slice::from_ref(e));
+            // GLZ-E also holds each chunk's rebuilt GLZ block; budget it at
+            // the uncompressed size (typical blocks are smaller; prepare
+            // checks the real total against the binding limit).
+            let image = if index.header.codec == format::Codec::GlzE {
+                d
+            } else {
+                0
+            };
+            let next = bytes + batch_bytes(std::slice::from_ref(e)) + image;
             let fits = next <= budget && src + s <= limit && dst + d <= limit;
             if end > start && !fits {
                 break;
@@ -213,6 +283,63 @@ mod tests {
         // Payloads padded to 4: 104 + 4096 + 52; outputs 10_000.
         assert_eq!(batch_bytes(&idx.chunks), 4252 + 3 * 10_000 + 3 * 20);
         assert_eq!(batch_bytes(&idx.chunks[1..2]), 4096 + 3 * 4096 + 20);
+    }
+
+    fn glze_header(count: u32, ext: u32, lit: u32) -> Vec<u8> {
+        [count, ext, lit]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn glze_images_are_sized_from_headers() {
+        // Chunk 0: 10 sequences, 3 u16 extension values, 50 literals:
+        // 8 + pad4(10) + pad4(20) + pad4(6) + 50 = 8 + 12 + 20 + 8 + 50 = 98.
+        // Chunk 1: stored, 40 bytes. Chunk 2: wide (u32) extension values.
+        // Chunk 3: invalid (no sequences). Chunk 4: shorter than a header.
+        let mut src = glze_header(10, 3, 50);
+        src.resize(64, 0);
+        src.extend(vec![7u8; 40]);
+        src.extend(glze_header(5 | 1 << 31, 2, 0));
+        src.resize(src.len() + 4, 0);
+        src.extend(glze_header(0, 0, 0));
+        src.extend([1, 2, 3, 4]);
+        let desc = |src_offset, comp_size, uncomp_size| ChunkDesc {
+            src_offset,
+            comp_size,
+            dst_offset: 0,
+            uncomp_size,
+        };
+        let descs = [
+            desc(0, 64, 4096),
+            desc(64, 40 | STORED_BIT, 40),
+            desc(104, 16, 4096),
+            desc(120, 12, 4096),
+            desc(132, 4, 4096),
+        ];
+        let (g, total) = glze_layout(&descs, &src);
+        let sizes: Vec<_> = g.iter().map(|d| d.image_size).collect();
+        // Chunk 2: 8 + pad4(5) + pad4(10) + pad4(8) + 0 = 8 + 8 + 12 + 8 = 36.
+        assert_eq!(sizes, [98, 40, 36, 0, 0]);
+        let offsets: Vec<_> = g.iter().map(|d| d.image_offset).collect();
+        assert_eq!(offsets, [0, 100, 140, 176, 176]);
+        assert_eq!(total, 176);
+        assert_eq!(g[1].comp_size, 40 | STORED_BIT);
+        assert_eq!((g[0].src_offset, g[0].uncomp_size), (0, 4096));
+    }
+
+    #[test]
+    fn glze_batches_reserve_room_for_the_images() {
+        // GLZ-E chunks also need their rebuilt GLZ blocks (bounded here by
+        // the uncompressed size), so the budget that fits all three LZ4
+        // chunks doesn't fit them.
+        let lz4 = index();
+        let mut glze = index();
+        glze.header.codec = Codec::GlzE;
+        let all = batch_bytes(&lz4.chunks);
+        assert_eq!(batches(&lz4, 0..3, all, u64::MAX).len(), 1);
+        assert!(batches(&glze, 0..3, all, u64::MAX).len() > 1);
     }
 
     #[test]

@@ -251,7 +251,8 @@ pub fn gpu_encode(
 /// GLZ (codec 2) in both directions, plain and with dependency elimination
 /// over groups of 64 sequences (`glz-g64`): CPU encoder and reference decoder
 /// (multi-threaded), and with a GPU, kernel-only and end-to-end encode and
-/// decode. 64 KiB chunks.
+/// decode. Also GLZ-E (codec 3, `glze`): CPU both ways, GPU decode. 64 KiB
+/// chunks.
 pub fn glz(
     ctx: Option<&Context>,
     inputs: &[(String, Vec<u8>)],
@@ -283,9 +284,13 @@ pub fn glz(
             continue;
         }
         let n = data.len() as u64;
-        for (label, groups) in [("glz", None), ("glz-g64", Some(64))] {
+        for (label, codec, groups) in [
+            ("glz", format::Codec::Glz, None),
+            ("glz-g64", format::Codec::Glz, Some(64)),
+            ("glze", format::Codec::GlzE, None),
+        ] {
             let cpu_options = CompressOptions {
-                codec: format::Codec::Glz,
+                codec,
                 encoder: Encoder::Glz(cpu::glz::GlzParams {
                     independent_groups: groups,
                     ..Default::default()
@@ -322,14 +327,18 @@ pub fn glz(
                 continue;
             };
             let gpu_options = GpuCompressOptions {
-                codec: format::Codec::Glz,
+                codec,
                 independent_groups: groups,
                 ..GpuCompressOptions::default()
             };
-            anyhow::ensure!(
-                encoder.compress(ctx, data, &gpu_options)? == file,
-                "GPU GLZ file differs from the CPU twin"
-            );
+            // The GPU GLZ-E encoder comes in M9e step 3.
+            let gpu_encodes = codec == format::Codec::Glz;
+            if gpu_encodes {
+                anyhow::ensure!(
+                    encoder.compress(ctx, data, &gpu_options)? == file,
+                    "GPU GLZ file differs from the CPU twin"
+                );
+            }
             anyhow::ensure!(
                 decoder.decompress(ctx, &file, false)? == *data,
                 "GPU GLZ decode"
@@ -355,12 +364,14 @@ pub fn glz(
                         ),
                     })
                 };
-            let prepared = encoder.prepare(ctx, data, &gpu_options)?;
-            let (t, timing) = kernel(&|timer| encoder.dispatch(ctx, &prepared, timer))?;
-            drop(prepared);
-            row("gpu.compress.kernel", t, timing);
-            let t = time(&|| Ok(encoder.compress(ctx, data, &gpu_options).map(drop)?))?;
-            row("gpu.compress.e2e", t, Timing::WallE2e);
+            if gpu_encodes {
+                let prepared = encoder.prepare(ctx, data, &gpu_options)?;
+                let (t, timing) = kernel(&|timer| encoder.dispatch(ctx, &prepared, timer))?;
+                drop(prepared);
+                row("gpu.compress.kernel", t, timing);
+                let t = time(&|| Ok(encoder.compress(ctx, data, &gpu_options).map(drop)?))?;
+                row("gpu.compress.e2e", t, Timing::WallE2e);
+            }
             if let Some(prepared) = decoder.prepare_file(ctx, &file)? {
                 let (t, timing) = kernel(&|timer| decoder.dispatch(ctx, &prepared, timer))?;
                 row("gpu.decompress.kernel", t, timing);

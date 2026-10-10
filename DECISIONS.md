@@ -722,3 +722,50 @@ up to 6 words per chunk over GLZ (the literal count, four mode words, padding). 
 bounds this.
 
 The GPU encoder and decoder still reject codec 3; they're steps 2 and 3.
+
+## M9e step 2: GLZ-E GPU decoder
+**Design:** two kernels in one pass.
+1. **`glze_decode.wgsl`:** one 32-lane workgroup per chunk rebuilds the chunk's
+   exact GLZ block in a zeroed image buffer (bytes merged with `atomicOr`).
+   - The host sizes each image from the chunk's 12-byte header
+     (`plan::glze_layout`). A stored chunk's image is its payload; an invalid
+     header gives 0, and the kernel reports the error.
+   - Per stream, invocation 0 decides everything (mode, sizes, table validity,
+     canonical codes, lane layout) and broadcasts it, so barriers stay uniform.
+     The workgroup then copies raw streams, fills RLE streams, or fills a
+     2048-entry decode table and decodes one Huffman lane per invocation.
+2. **The unchanged GLZ kernel** decodes the images.
+
+**Statuses:** the entropy kernel writes its own status buffer, and the host prefers
+its error over the GLZ kernel's, which decoded a partial image (it bounds-checks
+everything, so that's safe). Statuses 7–10 are new (stream truncated / bad mode / bad
+table / lane overrun). Header errors reuse Truncated / BadSequence / SizeMismatch in
+FORMAT.md's order. All 17 malformed-block cases give the same status as
+`cpu::glze::decode_block`.
+
+**Memory:** batch planning budgets each GLZ-E chunk's image at its uncompressed
+size, and `prepare` checks the real total against the binding limit.
+
+**Recorded (M9e-decode), Silesia:**
+
+| | GLZ (1.955×) | GLZ-E (2.503×) |
+|---|---|---|
+| CPU compress, multi-threaded | 1.18 GB/s | 0.91 |
+| CPU decode, multi-threaded | 7.20 | 2.89 |
+| GPU decode, kernel | 4.87 | 2.92 |
+| GPU decode, end to end | 2.10 | 1.64 |
+
+Text: 1.92× → 3.01×. Mixed: 1.97× → 2.25×.
+
+**The entropy stage is slow.** It costs ~29 ms on Silesia, about 7 GB/s, against tens
+of GB/s for published GPU entropy decoders. Likely causes:
+- invocation 0 validates and builds canonical codes serially (256 symbols × 4
+  streams per chunk);
+- table filling is unbalanced (a 1-bit code is 1024 entries written by one lane);
+- ~6 barriers per stream;
+- byte-wise `atomicOr` output.
+
+Fixes to try: parallel code assignment (a prefix sum over lengths), filling the
+table by index instead of by symbol, decoding 2 symbols per lookup, word-assembled
+output, and decoding all four streams' tables at once. Random data (all chunks stored)
+also pays an extra copy into the image (GLZ-E decode kernel 21 vs 57 GB/s).

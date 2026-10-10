@@ -141,6 +141,10 @@ fn glz_suite_measures_both_directions_with_and_without_groups() {
             "gpu.glz-g64.compress.e2e",
             "gpu.glz-g64.decompress.kernel",
             "gpu.glz-g64.decompress.e2e",
+            "cpu.glze.compress.mt",
+            "cpu.glze.decompress.mt",
+            "gpu.glze.decompress.kernel",
+            "gpu.glze.decompress.e2e",
         ]
     );
     for m in &rows {
@@ -165,7 +169,9 @@ fn glz_suite_without_gpu_measures_the_cpu_paths() {
         [
             "cpu.glz.compress.mt",
             "cpu.glz.decompress.mt",
-            "cpu.glz-g64.compress.mt"
+            "cpu.glz-g64.compress.mt",
+            "cpu.glze.compress.mt",
+            "cpu.glze.decompress.mt",
         ]
     );
 }

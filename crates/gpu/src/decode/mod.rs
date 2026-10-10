@@ -15,6 +15,7 @@ use crate::{dispatch_grid, Context, GpuError};
 const NAIVE_SHADER: &str = include_str!("../../shaders/lz4_decode_naive.wgsl");
 const COOP_SHADER: &str = include_str!("../../shaders/lz4_decode_coop.wgsl");
 const GLZ_SHADER: &str = include_str!("../../shaders/glz_decode.wgsl");
+const GLZE_SHADER: &str = include_str!("../../shaders/glze_decode.wgsl");
 /// Invocations per workgroup for GLZ (one sequence each). At most 64: the
 /// shader tracks pending matches in a 64-bit mask.
 const GLZ_WORKGROUP: u32 = 64;
@@ -31,6 +32,14 @@ pub enum ChunkStatus {
     SizeMismatch = 5,
     /// GLZ only: invalid sequence count, extension count or final sequence.
     BadSequence = 6,
+    /// GLZ-E only: an entropy-coded stream ends early.
+    StreamTruncated = 7,
+    /// GLZ-E only: unknown stream mode or nonzero reserved bits.
+    StreamBadMode = 8,
+    /// GLZ-E only: code lengths over 11 or not a complete prefix code.
+    StreamBadTable = 9,
+    /// GLZ-E only: a Huffman lane decodes past its words.
+    StreamLaneOverrun = 10,
     /// The shader read an unknown code; shouldn't happen.
     Unknown = u32::MAX,
 }
@@ -67,6 +76,10 @@ impl ChunkStatus {
             4 => ChunkStatus::OutputOverflow,
             5 => ChunkStatus::SizeMismatch,
             6 => ChunkStatus::BadSequence,
+            7 => ChunkStatus::StreamTruncated,
+            8 => ChunkStatus::StreamBadMode,
+            9 => ChunkStatus::StreamBadTable,
+            10 => ChunkStatus::StreamLaneOverrun,
             _ => ChunkStatus::Unknown,
         })
     }
@@ -106,6 +119,8 @@ impl Default for DecoderConfig {
 pub struct GpuDecoder {
     pipeline: wgpu::ComputePipeline,
     glz_pipeline: wgpu::ComputePipeline,
+    /// GLZ-E entropy decode (rebuilds GLZ blocks for `glz_pipeline`).
+    glze_pipeline: wgpu::ComputePipeline,
     filters: FilterKernels,
     config: DecoderConfig,
     memory_budget: u64,
@@ -170,9 +185,11 @@ impl GpuDecoder {
             GLZ_SHADER,
             &[("WG_SIZE", f64::from(GLZ_WORKGROUP))],
         );
+        let glze_pipeline = compute_pipeline(ctx, "glz-e entropy decode", GLZE_SHADER, &[]);
         Ok(GpuDecoder {
             pipeline,
             glz_pipeline,
+            glze_pipeline,
             filters: FilterKernels::new(ctx),
             config,
             memory_budget: crate::encode::DEFAULT_GPU_MEMORY,
@@ -343,11 +360,6 @@ impl GpuDecoder {
         plan: &plan::DecodePlan,
         src: &[u8],
     ) -> Result<Option<PreparedDecode>, GpuDecodeError> {
-        if index.header.codec == format::Codec::GlzE {
-            return Err(GpuDecodeError::Unsupported(
-                "GLZ-E decoding on the GPU is not implemented yet".into(),
-            ));
-        }
         if plan.chunks.is_empty() {
             return Ok(None);
         }
@@ -358,7 +370,18 @@ impl GpuDecoder {
         } else {
             ctx.upload(src, BufferUsages::STORAGE)
         };
-        let desc_buf = ctx.upload(bytemuck::cast_slice(&plan.chunks), BufferUsages::STORAGE);
+        // GLZ-E: the entropy stage rebuilds each chunk's GLZ block in an image
+        // buffer, and the GLZ kernel decodes the images.
+        let glze = if index.header.codec == format::Codec::GlzE {
+            Some(self.prepare_glze(ctx, plan, src, &src_buf)?)
+        } else {
+            None
+        };
+        let desc_buf = match &glze {
+            Some(g) => ctx.upload(bytemuck::cast_slice(&g.glz_descs), BufferUsages::STORAGE),
+            None => ctx.upload(bytemuck::cast_slice(&plan.chunks), BufferUsages::STORAGE),
+        };
+        let glz_src = glze.as_ref().map_or(&src_buf, |g| &g.image_buf);
         let dst_size = format::pad4(plan.dst_len).max(4);
         let dst_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("decode output"),
@@ -379,7 +402,7 @@ impl GpuDecoder {
                 .pipeline_for(index.header.codec)
                 .get_bind_group_layout(0),
             entries: &[
-                (0, &src_buf),
+                (0, glz_src),
                 (1, &desc_buf),
                 (2, &dst_buf),
                 (3, &status_buf),
@@ -398,7 +421,73 @@ impl GpuDecoder {
             status_buf,
             bind_group,
             unfilter,
+            glze,
         }))
+    }
+
+    /// The GLZ-E entropy stage: image layout from the chunk headers, the
+    /// image and status buffers, and the GLZ descriptors that point at the
+    /// images.
+    fn prepare_glze(
+        &self,
+        ctx: &Context,
+        plan: &plan::DecodePlan,
+        src: &[u8],
+        src_buf: &wgpu::Buffer,
+    ) -> Result<GlzeStage, GpuDecodeError> {
+        let (descs, image_len) = plan::glze_layout(&plan.chunks, src);
+        let limit = batch_limit(ctx);
+        if image_len > limit {
+            return Err(plan::TooLarge {
+                what: "GLZ-E image",
+                bytes: image_len,
+                limit,
+            }
+            .into());
+        }
+        let image_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glz-e images"),
+            size: image_len.max(4),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let status_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glz-e status"),
+            size: 4 * descs.len() as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let desc_buf = ctx.upload(bytemuck::cast_slice(&descs), BufferUsages::STORAGE);
+        let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("glz-e entropy decode"),
+            layout: &self.glze_pipeline.get_bind_group_layout(0),
+            entries: &[
+                (0, src_buf),
+                (1, &desc_buf),
+                (2, &image_buf),
+                (3, &status_buf),
+            ]
+            .map(|(binding, buffer)| wgpu::BindGroupEntry {
+                binding,
+                resource: buffer.as_entire_binding(),
+            }),
+        });
+        let glz_descs = plan
+            .chunks
+            .iter()
+            .zip(&descs)
+            .map(|(c, g)| plan::ChunkDesc {
+                src_offset: g.image_offset,
+                comp_size: g.image_size | (c.comp_size & format::STORED_BIT),
+                ..*c
+            })
+            .collect();
+        Ok(GlzeStage {
+            image_buf,
+            status_buf,
+            bind_group,
+            glz_descs,
+        })
     }
 
     /// For chunks with a filter: the decoded (still filtered) bytes are copied
@@ -461,6 +550,9 @@ impl GpuDecoder {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.clear_buffer(&p.dst_buf, 0, None);
+        if let Some(g) = &p.glze {
+            encoder.clear_buffer(&g.image_buf, 0, None);
+        }
         // With an unfilter stage, the timer spans decode, copies and filters.
         let decode_writes = match (timer, &p.unfilter) {
             (Some(t), Some(_)) => Some(t.begin_writes()),
@@ -472,12 +564,19 @@ impl GpuDecoder {
                 label: Some("lz4 decode"),
                 timestamp_writes: decode_writes,
             });
+            let chunks = p.chunks.len() as u32;
+            let max = ctx.device_limits().max_compute_workgroups_per_dimension;
+            if let Some(g) = &p.glze {
+                pass.set_pipeline(&self.glze_pipeline);
+                pass.set_bind_group(0, &g.bind_group, &[]);
+                let (x, y) = dispatch_grid(chunks, max);
+                pass.dispatch_workgroups(x, y, 1);
+            }
             pass.set_pipeline(self.pipeline_for(p.index.header.codec));
             pass.set_bind_group(0, &p.bind_group, &[]);
-            let chunks = p.chunks.len() as u32;
             let (x, y) = dispatch_grid(
                 match (p.index.header.codec, self.config.kernel) {
-                    (format::Codec::Glz, _) => chunks,
+                    (format::Codec::Glz | format::Codec::GlzE, _) => chunks,
                     (_, DecodeKernel::Naive) => chunks.div_ceil(self.config.workgroup),
                     (_, DecodeKernel::Cooperative) => chunks,
                 },
@@ -505,8 +604,19 @@ impl GpuDecoder {
         p: &PreparedDecode,
         verify: bool,
     ) -> Result<Vec<u8>, GpuDecodeError> {
-        let status: Vec<u32> =
+        let mut status: Vec<u32> =
             bytemuck::pod_collect_to_vec(&ctx.read_buffer(&p.status_buf, p.status_buf.size())?);
+        if let Some(g) = &p.glze {
+            // An entropy-stage error comes first: the GLZ kernel then decoded
+            // a partial image.
+            let entropy: Vec<u32> =
+                bytemuck::pod_collect_to_vec(&ctx.read_buffer(&g.status_buf, g.status_buf.size())?);
+            for (s, &e) in status.iter_mut().zip(&entropy) {
+                if e != 0 {
+                    *s = e;
+                }
+            }
+        }
         if let Some((k, s)) = status
             .iter()
             .enumerate()
@@ -547,6 +657,16 @@ pub struct PreparedDecode {
     status_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     unfilter: Option<Unfilter>,
+    glze: Option<GlzeStage>,
+}
+
+/// The entropy stage of a GLZ-E decode (see `GpuDecoder::prepare_glze`).
+struct GlzeStage {
+    image_buf: wgpu::Buffer,
+    status_buf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    /// Descriptors for the GLZ kernel, pointing at the images.
+    glz_descs: Vec<plan::ChunkDesc>,
 }
 
 /// The inverse-filter stage of a decode (see `GpuDecoder::prepare_unfilter`).

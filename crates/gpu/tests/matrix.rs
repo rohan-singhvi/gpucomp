@@ -37,6 +37,9 @@ enum Enc {
     /// GPU encoders with filter selection at level 2, twins of the CPU ones.
     GpuAuto2,
     GpuGlzGroupsAuto2,
+    /// M9e: the CPU GLZ-E encoder (level 1, and level 3 with filters).
+    CpuGlze,
+    CpuGlzeL3Auto2,
 }
 
 impl Enc {
@@ -48,6 +51,7 @@ impl Enc {
             | Enc::CpuLz4FlexAuto
             | Enc::CpuGreedyAuto2
             | Enc::GpuAuto2 => Codec::Lz4,
+            Enc::CpuGlze | Enc::CpuGlzeL3Auto2 => Codec::GlzE,
             _ => Codec::Glz,
         }
     }
@@ -63,7 +67,7 @@ enum Dec {
     Gpu,
 }
 
-const ENCODERS: [Enc; 13] = [
+const ENCODERS: [Enc; 15] = [
     Enc::CpuLz4Flex,
     Enc::CpuGreedy,
     Enc::Gpu,
@@ -77,12 +81,14 @@ const ENCODERS: [Enc; 13] = [
     Enc::CpuGlzGroupsAuto2,
     Enc::GpuAuto2,
     Enc::GpuGlzGroupsAuto2,
+    Enc::CpuGlze,
+    Enc::CpuGlzeL3Auto2,
 ];
 const DECODERS: [Dec; 3] = [Dec::CpuHandWritten, Dec::CpuLz4Flex, Dec::Gpu];
 
-/// lz4_flex reads only LZ4; the hand-written CPU decoder and the GPU read both.
+/// lz4_flex reads only LZ4; the hand-written CPU decoder and the GPU read all.
 fn reads(dec: Dec, codec: Codec) -> bool {
-    !(matches!(dec, Dec::CpuLz4Flex) && codec == Codec::Glz)
+    !(matches!(dec, Dec::CpuLz4Flex) && codec != Codec::Lz4)
 }
 const CHUNK_SIZES: [u32; 3] = [4 << 10, 64 << 10, 1 << 20];
 
@@ -173,6 +179,14 @@ impl Paths<'_> {
             Enc::CpuGlzAuto => compress(input, &auto(Codec::Glz, glz(None), 1)).unwrap(),
             Enc::CpuGlzGroupsAuto2 => {
                 compress(input, &auto(Codec::Glz, glz(Some(GROUPS)), 2)).unwrap()
+            }
+            Enc::CpuGlze => compress(input, &cpu(Codec::GlzE, glz(None))).unwrap(),
+            Enc::CpuGlzeL3Auto2 => {
+                let l3 = Encoder::Glz(cpu::glz::GlzParams {
+                    lz: cpu::lz4::encode::Params::for_level(3),
+                    independent_groups: None,
+                });
+                compress(input, &auto(Codec::GlzE, l3, 2)).unwrap()
             }
         }
     }

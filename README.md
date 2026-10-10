@@ -42,7 +42,7 @@ Useful options (see `gpucomp <command> --help` for all of them):
 
 | Option | Meaning |
 |---|---|
-| `--codec lz4\|glz\|stored` | Block codec (default `lz4`) |
+| `--codec lz4\|glz\|glze\|stored` | Block codec (default `lz4`). `glze` adds Huffman coding to GLZ: much smaller, slower to decode (GPU encoding coming) |
 | `--level 1\|2\|3` | Compression level: more match candidates per position (1, 4, 16) for a smaller file; default 1 |
 | `--chunk-size 64K` | Chunk size, a power of two from 4K to 1M |
 | `--filters none\|auto\|exhaustive` | Per-chunk filter selection |
