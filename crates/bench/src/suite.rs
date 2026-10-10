@@ -251,8 +251,7 @@ pub fn gpu_encode(
 /// GLZ (codec 2) in both directions, plain and with dependency elimination
 /// over groups of 64 sequences (`glz-g64`): CPU encoder and reference decoder
 /// (multi-threaded), and with a GPU, kernel-only and end-to-end encode and
-/// decode. Also GLZ-E (codec 3, `glze`): CPU both ways, GPU decode. 64 KiB
-/// chunks.
+/// decode. Also GLZ-E (codec 3, `glze`), both ways. 64 KiB chunks.
 pub fn glz(
     ctx: Option<&Context>,
     inputs: &[(String, Vec<u8>)],
@@ -331,14 +330,10 @@ pub fn glz(
                 independent_groups: groups,
                 ..GpuCompressOptions::default()
             };
-            // The GPU GLZ-E encoder comes in M9e step 3.
-            let gpu_encodes = codec == format::Codec::Glz;
-            if gpu_encodes {
-                anyhow::ensure!(
-                    encoder.compress(ctx, data, &gpu_options)? == file,
-                    "GPU GLZ file differs from the CPU twin"
-                );
-            }
+            anyhow::ensure!(
+                encoder.compress(ctx, data, &gpu_options)? == file,
+                "GPU {label} file differs from the CPU twin"
+            );
             anyhow::ensure!(
                 decoder.decompress(ctx, &file, false)? == *data,
                 "GPU GLZ decode"
@@ -364,14 +359,12 @@ pub fn glz(
                         ),
                     })
                 };
-            if gpu_encodes {
-                let prepared = encoder.prepare(ctx, data, &gpu_options)?;
-                let (t, timing) = kernel(&|timer| encoder.dispatch(ctx, &prepared, timer))?;
-                drop(prepared);
-                row("gpu.compress.kernel", t, timing);
-                let t = time(&|| Ok(encoder.compress(ctx, data, &gpu_options).map(drop)?))?;
-                row("gpu.compress.e2e", t, Timing::WallE2e);
-            }
+            let prepared = encoder.prepare(ctx, data, &gpu_options)?;
+            let (t, timing) = kernel(&|timer| encoder.dispatch(ctx, &prepared, timer))?;
+            drop(prepared);
+            row("gpu.compress.kernel", t, timing);
+            let t = time(&|| Ok(encoder.compress(ctx, data, &gpu_options).map(drop)?))?;
+            row("gpu.compress.e2e", t, Timing::WallE2e);
             if let Some(prepared) = decoder.prepare_file(ctx, &file)? {
                 let (t, timing) = kernel(&|timer| decoder.dispatch(ctx, &prepared, timer))?;
                 row("gpu.decompress.kernel", t, timing);

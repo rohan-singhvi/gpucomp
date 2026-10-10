@@ -16,6 +16,7 @@ const EMIT_SHARED: &str = include_str!("../../shaders/encode_emit_shared.wgsl");
 const LZ4_EMIT: &str = include_str!("../../shaders/lz4_emit.wgsl");
 const GLZ_EMIT: &str = include_str!("../../shaders/glz_emit.wgsl");
 const PACK_SHADER: &str = include_str!("../../shaders/encode_pack.wgsl");
+const GLZE_ENCODE_SHADER: &str = include_str!("../../shaders/glze_encode.wgsl");
 /// Bytes of the `Params` uniform shared by all encode kernels.
 const PARAMS_SIZE: u64 = 32;
 /// Pack entry flag: this chunk isn't packed by this pass (encode_pack.wgsl).
@@ -174,6 +175,15 @@ pub enum EncodedBlock {
     },
 }
 
+/// Output slot bytes per chunk for `codec`: [`slot_size`], or for GLZ-E room
+/// for the largest GLZ block (about 1.27 × chunk + 20) that gets transcoded.
+pub fn slot_for(codec: format::Codec, chunk_size: u32) -> u32 {
+    match codec {
+        format::Codec::GlzE => format::pad4(u64::from(chunk_size) * 3 / 2 + 64) as u32,
+        _ => slot_size(chunk_size),
+    }
+}
+
 /// Bytes reserved per chunk for its compressed output: the LZ4 worst case
 /// (`n + n/255 + 16`), rounded up to whole words.
 pub fn slot_size(chunk_size: u32) -> u32 {
@@ -191,7 +201,7 @@ pub const DEFAULT_GPU_MEMORY: u64 = 3 << 30;
 /// buffer (sampled) or two per extra candidate (exhaustive).
 pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions, params: &EncodeParams) -> u64 {
     let c = u64::from(options.chunk_size);
-    let slot = |n: u64| u64::from(slot_size(n as u32));
+    let slot = |n: u64| u64::from(slot_for(options.codec, n as u32));
     let mut bytes = 8 * c + slot(c) + 32 + 4 * u64::from(PARSE_SEGMENTS);
     if params.depth > 1 {
         // Hash-chain links, one per input byte.
@@ -231,6 +241,8 @@ pub struct GpuEncoder {
     matches: wgpu::ComputePipeline,
     lz4: CodecPipelines,
     glz: CodecPipelines,
+    /// GLZ-E: transcodes the GLZ blocks in the output slots.
+    glze_encode: wgpu::ComputePipeline,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
     /// Forward filters for per-chunk filter selection.
@@ -508,6 +520,12 @@ impl GpuEncoder {
             ),
             lz4: codec("lz4", LZ4_EMIT, 0),
             glz: codec("glz", GLZ_EMIT, 1),
+            glze_encode: pipeline(
+                "glz-e encode",
+                &encode_layout,
+                &[COMMON_SHADER, GLZE_ENCODE_SHADER],
+                &[],
+            ),
             pack: pipeline(
                 "encode pack",
                 &pipeline_layout(&pack_layout),
@@ -774,7 +792,7 @@ impl GpuEncoder {
     ) -> Result<Encoded, GpuEncodeError> {
         check_options(options)?;
         let chunk_size = options.chunk_size;
-        let slot = slot_size(chunk_size) as usize;
+        let slot = slot_for(options.codec, chunk_size) as usize;
         let chunk_count = input.len().div_ceil(chunk_size as usize);
         let mut encoded = Encoded {
             sizes: Vec::with_capacity(chunk_count),
@@ -1238,7 +1256,7 @@ impl GpuEncoder {
         let device = &ctx.device;
         let chunk_size = options.chunk_size;
         let chunks = (batch.len() as u64).div_ceil(u64::from(chunk_size)).max(1);
-        let slot = slot_size(chunk_size);
+        let slot = slot_for(options.codec, chunk_size);
         let c = &mut *cache;
         let mut ensure = |slot: &mut Option<wgpu::Buffer>, label, size, usage| {
             BufferCache::ensure(slot, &mut c.allocations, device, label, size, usage)
@@ -1282,7 +1300,8 @@ impl GpuEncoder {
             &mut c.scratch,
             "encode scratch",
             scratch_size,
-            BufferUsages::STORAGE,
+            // COPY_DST: GLZ-E copies the GLZ blocks here to transcode them.
+            BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
         let output_size = chunks * u64::from(slot);
         let output_buf = ensure(
@@ -1305,7 +1324,7 @@ impl GpuEncoder {
             self.params.probe_len,
             groups,
             u32::from(self.params.lazy),
-            0,
+            u32::from(options.codec == format::Codec::GlzE),
             0,
         ];
         let params_buf = ensure(
@@ -1458,6 +1477,20 @@ impl GpuEncoder {
             pass.set_pipeline(pipeline);
             pass.dispatch_workgroups(x, y, 1);
         }
+        if p.codec == format::Codec::GlzE {
+            // Transcode the GLZ blocks back into the slots. The match scratch
+            // is free after emit and bigger than the slots (4 bytes per input
+            // byte), so the blocks are copied there.
+            drop(pass);
+            encoder.copy_buffer_to_buffer(output, 0, &p.scratch.0, 0, p.output_size);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("glz-e encode"),
+                timestamp_writes: None,
+            });
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_pipeline(&self.glze_encode);
+            pass.dispatch_workgroups(per_chunk.0, per_chunk.1, 1);
+        }
     }
 }
 
@@ -1607,9 +1640,9 @@ fn layout_payloads(sizes: &[u32], batch_len: usize, chunk_size: u32) -> PayloadL
 
 fn check_options(options: &GpuCompressOptions) -> Result<(), GpuEncodeError> {
     check_chunk_size(options.chunk_size)?;
-    if matches!(options.codec, format::Codec::Stored | format::Codec::GlzE) {
+    if options.codec == format::Codec::Stored {
         return Err(GpuEncodeError::Unsupported(
-            "the GPU encodes LZ4 or GLZ".into(),
+            "the GPU encodes LZ4, GLZ or GLZ-E".into(),
         ));
     }
     match options.independent_groups {
@@ -1793,6 +1826,19 @@ mod tests {
             plain
         );
         // Hash chains keep a link (u32) per input byte.
+        // GLZ-E: bigger slots (the GLZ blocks it transcodes are copied into
+        // the match scratch, which is free by then).
+        let glze = GpuCompressOptions {
+            codec: format::Codec::GlzE,
+            ..base
+        };
+        let glze_slot = u64::from(slot_for(format::Codec::GlzE, 65_536));
+        assert_eq!(glze_slot, (65_536 * 3 / 2 + 64) as u64);
+        assert_eq!(
+            encoder_bytes_per_chunk(&glze, &EncodeParams::default()),
+            plain - u64::from(slot_size(65_536)) + glze_slot
+        );
+        assert_eq!(slot_for(format::Codec::Glz, 4096), slot_size(4096));
         let chained = EncodeParams {
             depth: 4,
             ..EncodeParams::default()

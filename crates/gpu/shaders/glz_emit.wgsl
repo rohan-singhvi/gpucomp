@@ -39,8 +39,9 @@ fn main(
     load_segs(chunk, lid);
     let count = shape.x;
     let total = shape.y;
-    if (total >= n) {
-        // Won't shrink the chunk; the parse already reported its size.
+    if (total >= n && params.glze == 0u) {
+        // Won't shrink the chunk; the parse already reported its size. (GLZ-E
+        // transcodes every block, so it needs them all.)
         return;
     }
     let ext_count = shape.z;

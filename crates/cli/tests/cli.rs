@@ -434,3 +434,45 @@ fn glze_codec_round_trips_on_the_cpu_and_beats_glz() {
         size(&glz)
     );
 }
+
+#[test]
+fn gpu_glze_compress_matches_the_cpu() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, gpu_packed, cpu_packed, out) = (
+        temp("ge.txt"),
+        temp("ge.gpu.gpcz"),
+        temp("ge.cpu.gpcz"),
+        temp("ge.out"),
+    );
+    std::fs::write(&input, sample()).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    for level in ["1", "3"] {
+        gpucomp(&[
+            "compress",
+            &s(&input),
+            &s(&gpu_packed),
+            "--gpu",
+            "--codec",
+            "glze",
+            "--level",
+            level,
+        ]);
+        gpucomp(&[
+            "compress",
+            &s(&input),
+            &s(&cpu_packed),
+            "--codec",
+            "glze",
+            "--level",
+            level,
+        ]);
+        assert!(
+            std::fs::read(&gpu_packed).unwrap() == std::fs::read(&cpu_packed).unwrap(),
+            "level {level}"
+        );
+        gpucomp(&["decompress", &s(&gpu_packed), &s(&out), "--gpu"]);
+        assert!(std::fs::read(&out).unwrap() == sample());
+    }
+}

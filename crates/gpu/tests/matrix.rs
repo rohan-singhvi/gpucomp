@@ -40,6 +40,9 @@ enum Enc {
     /// M9e: the CPU GLZ-E encoder (level 1, and level 3 with filters).
     CpuGlze,
     CpuGlzeL3Auto2,
+    /// The GPU GLZ-E encoder, plain and with filter selection at level 2.
+    GpuGlze,
+    GpuGlzeAuto2,
 }
 
 impl Enc {
@@ -51,7 +54,7 @@ impl Enc {
             | Enc::CpuLz4FlexAuto
             | Enc::CpuGreedyAuto2
             | Enc::GpuAuto2 => Codec::Lz4,
-            Enc::CpuGlze | Enc::CpuGlzeL3Auto2 => Codec::GlzE,
+            Enc::CpuGlze | Enc::CpuGlzeL3Auto2 | Enc::GpuGlze | Enc::GpuGlzeAuto2 => Codec::GlzE,
             _ => Codec::Glz,
         }
     }
@@ -67,7 +70,7 @@ enum Dec {
     Gpu,
 }
 
-const ENCODERS: [Enc; 15] = [
+const ENCODERS: [Enc; 17] = [
     Enc::CpuLz4Flex,
     Enc::CpuGreedy,
     Enc::Gpu,
@@ -83,6 +86,8 @@ const ENCODERS: [Enc; 15] = [
     Enc::GpuGlzGroupsAuto2,
     Enc::CpuGlze,
     Enc::CpuGlzeL3Auto2,
+    Enc::GpuGlze,
+    Enc::GpuGlzeAuto2,
 ];
 const DECODERS: [Dec; 3] = [Dec::CpuHandWritten, Dec::CpuLz4Flex, Dec::Gpu];
 
@@ -181,6 +186,8 @@ impl Paths<'_> {
                 compress(input, &auto(Codec::Glz, glz(Some(GROUPS)), 2)).unwrap()
             }
             Enc::CpuGlze => compress(input, &cpu(Codec::GlzE, glz(None))).unwrap(),
+            Enc::GpuGlze => gpu(Codec::GlzE, None),
+            Enc::GpuGlzeAuto2 => gpu_with(Codec::GlzE, None, 2, gpu::encode::FilterMode::Auto),
             Enc::CpuGlzeL3Auto2 => {
                 let l3 = Encoder::Glz(cpu::glz::GlzParams {
                     lz: cpu::lz4::encode::Params::for_level(3),

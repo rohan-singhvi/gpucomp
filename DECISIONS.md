@@ -769,3 +769,56 @@ Fixes to try: parallel code assignment (a prefix sum over lengths), filling the
 table by index instead of by symbol, decoding 2 symbols per lookup, word-assembled
 output, and decoding all four streams' tables at once. Random data (all chunks stored)
 also pays an extra copy into the image (GLZ-E decode kernel 21 vs 57 GB/s).
+
+## M9e step 3: GLZ-E GPU encoder (codec 3 complete)
+**Design.** GLZ emit already writes each chunk's GLZ block into its output slot. For
+GLZ-E:
+- the slots are copied into the match scratch (free after emit, 4 bytes per input
+  byte, always larger than the slots);
+- `glze_encode.wgsl` (one 32-lane workgroup per chunk) transcodes each block back
+  into its slot and sets `sizes[chunk]`.
+
+Everything downstream is unchanged: sizes readback, stored-chunk decisions, packing,
+`encode_blocks`, and filter-candidate selection (which compares GLZ-E sizes, as the
+CPU does).
+
+Details:
+- **`params.glze`** makes GLZ emit write every block, including ones not smaller than
+  the chunk, because the CPU transcodes every block.
+- **`slot_for(GlzE)` = 1.5 × chunk + 64.** The largest GLZ block is about 1.27 ×
+  chunk + 20 (literal runs of 15 each need an extension value, wide extensions cost
+  4 bytes), and GLZ-E adds at most ~32 bytes.
+- **No new binding.** A separate copy buffer would have been a 9th storage buffer,
+  over WebGPU's default limit of 8.
+
+**The kernel** mirrors `cpu::huffman::encode_stream` exactly:
+1. a histogram with workgroup atomics;
+2. a parallel rank sort by (count, symbol);
+3. invocation 0 builds the two-queue tree (leaf first on ties), applies the JPEG K.3
+   fold, hands out lengths in rank order and assigns canonical codes;
+4. per-lane bit counts decide Huffman against raw (strictly smaller wins);
+5. every invocation writes whole words it owns: table words, lane sizes, its lane's
+   bitstream.
+
+Tests show byte-identical output to the CPU twin at levels 1/3, 4/64 KiB chunks and
+all three filter modes, in the matrix and in the CLI.
+
+**Recorded (M9e), Silesia:**
+- GPU GLZ-E compress: 2.503× at 1.48 GB/s kernel, 1.36 end to end.
+- GPU GLZ compress: 1.955× at 2.67 / 2.26.
+- Text: 3.01× at 1.34 end to end.
+
+GLZ-E level 1 now beats LZ4 levels 2 and 3 on both axes (2.21× at 1.20, 2.32× at
+0.56). That makes the entropy stage the better use of GPU time than more match
+candidates, at least until (a) makes chains cheaper.
+
+**The encode stage is slow** (~64 ms on Silesia, ~3.3 GB/s). Likely causes:
+- histogram atomics contend on skewed streams (32 lanes hitting a few bins);
+- three passes over each stream's symbols (histogram, bit counts, encode) with
+  byte reads;
+- invocation 0's serial tree build, about 10 barriers per stream;
+- 32 lanes per chunk.
+
+Fixes to try: per-subgroup sub-histograms, fusing the bit count into the histogram
+(Σ count × length), encoding all four streams' tables at once, and more
+invocations per chunk for the long literal stream.

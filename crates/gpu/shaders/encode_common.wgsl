@@ -21,7 +21,7 @@ struct Params {
     probe_len: u32,  // phase-1 match extension cap
     groups: u32,     // GLZ dependency-elimination group size; 0 = off
     lazy: u32,       // 1 = lazy parse (cpu::lz4::encode::defer_match)
-    _pad1: u32,
+    glze: u32,       // 1 = GLZ-E: emit every GLZ block (it gets transcoded)
     _pad2: u32,
 }
 

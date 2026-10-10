@@ -273,7 +273,7 @@ Revised 2026-10-08 after a research pass (literature on GPU LZ, entropy coding, 
 - Done with the chains: `--level N` in the CLI and the header, wider filter candidates from level 2 (already in M7), and a CPU twin for every level.
 - **Accept when:** every level round-trips in the M4 matrix, ratio improves monotonically with level on Silesia, and `BENCHMARKS.md` has a ratio-vs-throughput table for each level next to `lz4_flex` and zstd 1/3.
 
-### M9e — GLZ v2: entropy stage (format change, both directions)
+### M9e — GLZ v2: entropy stage (format change, both directions) — DONE as GLZ-E, codec 3 (see DECISIONS "M9e step 1–3")
 Promoted from M11. It's the biggest single ratio lever: zstd -1 at 64 KiB chunks is 2.76× against lz4 -1 at 2.07×. An entropy bound on GLZ's own streams gives 2.53× with today's matches and 2.72× with better ones.
 - Lengths and offsets become log2-bucket codes plus raw extra bits.
 - Each chunk gets a static order-0 table per stream (literals, length codes, offset codes), with raw, RLE and entropy modes per stream.

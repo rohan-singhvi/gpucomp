@@ -42,7 +42,7 @@ Useful options (see `gpucomp <command> --help` for all of them):
 
 | Option | Meaning |
 |---|---|
-| `--codec lz4\|glz\|glze\|stored` | Block codec (default `lz4`). `glze` adds Huffman coding to GLZ: much smaller, slower to decode (GPU encoding coming) |
+| `--codec lz4\|glz\|glze\|stored` | Block codec (default `lz4`). `glze` adds Huffman coding to GLZ: much smaller, slower to decode |
 | `--level 1\|2\|3` | Compression level: more match candidates per position (1, 4, 16) for a smaller file; default 1 |
 | `--chunk-size 64K` | Chunk size, a power of two from 4K to 1M |
 | `--filters none\|auto\|exhaustive` | Per-chunk filter selection |
@@ -83,8 +83,10 @@ Apple M4 Pro, [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=si
 | GPU compress, LZ4, `--level 3` | 2.32× | 0.56 |
 | GPU compress, LZ4, `--filters auto` | 2.05× | 1.43 |
 | GPU compress, GLZ | 1.96× | 2.29 |
+| GPU compress, GLZ-E (Huffman-coded GLZ) | 2.50× | 1.36 |
 | GPU decompress, LZ4 (kernel only) | — | 3.3 |
 | GPU decompress, GLZ (kernel only) | — | 4.9 |
+| GPU decompress, GLZ-E (kernel only) | — | 2.9 |
 
 The GPU doesn't beat a good multi-threaded CPU yet. The parse now runs 32 lanes per chunk, so match finding is the largest encoder kernel. Host↔GPU transfers (6–10 GB/s here) also cap end-to-end throughput. The roadmap to better ratio and speed is in [plan.md](plan.md) (M9, M9e). Full results and history are in [BENCHMARKS.md](BENCHMARKS.md), and the reasoning behind design choices, including negative results, is in [DECISIONS.md](DECISIONS.md).
 

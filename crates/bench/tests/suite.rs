@@ -143,6 +143,8 @@ fn glz_suite_measures_both_directions_with_and_without_groups() {
             "gpu.glz-g64.decompress.e2e",
             "cpu.glze.compress.mt",
             "cpu.glze.decompress.mt",
+            "gpu.glze.compress.kernel",
+            "gpu.glze.compress.e2e",
             "gpu.glze.decompress.kernel",
             "gpu.glze.decompress.e2e",
         ]

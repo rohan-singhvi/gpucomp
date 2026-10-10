@@ -206,3 +206,89 @@ fn malformed_glze_blocks_report_the_same_error_as_the_cpu_decoder() {
         }
     }
 }
+
+// ---- Step 3: the GPU GLZ-E encoder equals the CPU twin ----
+
+use gpu::encode::{EncodeParams, EncodedBlock, GpuCompressOptions, GpuEncoder};
+
+fn varied(n: usize) -> Vec<u8> {
+    (0..n as u32)
+        .flat_map(|i| format!("row {} col {}; ", (i * 7919) % 1013, i % 37).into_bytes())
+        .take(n)
+        .collect()
+}
+
+#[test]
+fn gpu_glze_blocks_equal_the_cpu_twin() {
+    let Some(ctx) = context() else { return };
+    let mut inputs = fixtures();
+    inputs.push(("varied", varied(300_000)));
+    inputs.push((
+        "mixed",
+        [
+            varied(70_000),
+            random(20_000, 9),
+            vec![3; 50_000],
+            text(60_000),
+        ]
+        .concat(),
+    ));
+    for level in [1, 3] {
+        let encoder = GpuEncoder::new(&ctx, EncodeParams::for_level(level)).unwrap();
+        let twin = GlzParams {
+            lz: Params::for_level(level),
+            independent_groups: None,
+        };
+        for chunk in [CHUNK, 1 << 16] {
+            let options = GpuCompressOptions {
+                codec: Codec::GlzE,
+                chunk_size: chunk,
+                level,
+                ..GpuCompressOptions::default()
+            };
+            for (name, input) in &inputs {
+                let blocks = encoder.encode_blocks(&ctx, input, &options).unwrap();
+                for (i, (block, c)) in blocks.iter().zip(input.chunks(chunk as usize)).enumerate() {
+                    let want = cpu::glze::encode_block(c, &twin);
+                    let ok = match block {
+                        EncodedBlock::Compressed(b) => *b == want,
+                        EncodedBlock::Incompressible { size } => {
+                            *size as usize == want.len() && want.len() >= c.len()
+                        }
+                    };
+                    assert!(ok, "l{level} chunk {chunk} {name}: block {i} differs");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn gpu_glze_files_equal_cpu_files() {
+    let Some(ctx) = context() else { return };
+    let input = [varied(150_000), random(30_000, 4), vec![0; 40_000]].concat();
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+    for (filters, gpu_filters) in [
+        (FilterMode::None, gpu::encode::FilterMode::None),
+        (FilterMode::Auto, gpu::encode::FilterMode::Auto),
+        (FilterMode::Exhaustive, gpu::encode::FilterMode::Exhaustive),
+    ] {
+        for chunk in [CHUNK, 1 << 16] {
+            let cpu_file = compress(&input, &glze(1, filters, chunk)).unwrap();
+            let gpu_file = encoder
+                .compress(
+                    &ctx,
+                    &input,
+                    &GpuCompressOptions {
+                        codec: Codec::GlzE,
+                        chunk_size: chunk,
+                        checksums: true,
+                        filters: gpu_filters,
+                        ..GpuCompressOptions::default()
+                    },
+                )
+                .unwrap();
+            assert!(gpu_file == cpu_file, "{filters:?} chunk {chunk}");
+        }
+    }
+}
