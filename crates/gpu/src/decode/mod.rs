@@ -64,6 +64,8 @@ pub enum GpuDecodeError {
     Unsupported(String),
     #[error("writing decoded output: {0}")]
     Write(std::io::Error),
+    #[error(transparent)]
+    Cpu(#[from] cpu::container::CpuError),
 }
 
 impl ChunkStatus {
@@ -518,6 +520,36 @@ impl GpuDecoder {
             },
         )?;
         Ok(out)
+    }
+
+    /// Decodes chunks `chunks` of the in-memory `file`, handing the output to
+    /// `sink` in order, a batch at a time. For callers that split a file's
+    /// chunks between decoders (`gpu::hybrid`).
+    pub fn decompress_chunks(
+        &self,
+        ctx: &Context,
+        file: &[u8],
+        chunks: Range<usize>,
+        verify: bool,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), GpuDecodeError>,
+    ) -> Result<(), GpuDecodeError> {
+        let index = Index::parse(file)?;
+        let data = &file[index.data_offset() as usize..];
+        index.validate(data.len() as u64)?;
+        if chunks.end > index.chunks.len() || chunks.start > chunks.end {
+            return Err(GpuDecodeError::Unsupported(format!(
+                "chunks {chunks:?} of a {}-chunk file",
+                index.chunks.len()
+            )));
+        }
+        self.decode_batches(
+            ctx,
+            &index,
+            chunks,
+            verify,
+            &mut |span| Ok(Cow::Borrowed(&data[span.start as usize..span.end as usize])),
+            &mut |bytes| sink(&bytes),
+        )
     }
 
     /// Decompresses `[offset, offset + len)`, reading only the index and the

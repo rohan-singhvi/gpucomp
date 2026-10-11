@@ -32,6 +32,11 @@ pub struct CompressArgs {
     /// twin: `--encoder greedy` for LZ4, the GLZ encoder for GLZ.
     #[arg(long, conflicts_with = "encoder")]
     pub gpu: bool,
+    /// With --gpu: compress on the CPU at the same time (the GPU encoder's
+    /// twin, on every core), sharing the chunks between them by speed. The
+    /// output is identical to --gpu alone. Reads the whole input into memory.
+    #[arg(long, requires = "gpu")]
+    pub hybrid: bool,
     /// GPU backend (with --gpu).
     #[arg(long, value_enum, requires = "gpu")]
     pub backend: Option<crate::BackendArg>,
@@ -78,6 +83,11 @@ pub struct DecompressArgs {
     /// Decompress on the GPU.
     #[arg(long)]
     pub gpu: bool,
+    /// With --gpu: decompress on the CPU at the same time, sharing the chunks
+    /// between them by speed. The GPU joins only when the CPU alone would be
+    /// slow enough for it to help. Reads the whole file into memory.
+    #[arg(long, requires = "gpu", conflicts_with = "offset")]
+    pub hybrid: bool,
     /// GPU backend (with --gpu).
     #[arg(long, value_enum, requires = "gpu")]
     pub backend: Option<crate::BackendArg>,
@@ -215,6 +225,12 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
                 FiltersArg::Exhaustive => gpu::encode::FilterMode::Exhaustive,
             },
         };
+        if args.hybrid {
+            let input = std::fs::read(&args.input)?;
+            let file = gpu::hybrid::compress(&ctx, &encoder, &input, &options)?;
+            std::fs::write(&args.output, file)?;
+            return Ok(());
+        }
         // Streamed: only one batch of input is in memory at a time.
         let input = std::fs::File::open(&args.input)?;
         let len = input.metadata()?.len();
@@ -272,6 +288,12 @@ pub fn decompress(args: &DecompressArgs) -> anyhow::Result<()> {
         let budget = args.gpu_memory.unwrap_or(gpu::encode::DEFAULT_GPU_MEMORY);
         log::info!("GPU memory budget: {} MiB per batch", budget >> 20);
         let decoder = gpu::decode::GpuDecoder::new(&ctx).with_memory_budget(budget);
+        if args.hybrid {
+            let file = std::fs::read(&args.input)?;
+            let output = gpu::hybrid::decompress(&ctx, &decoder, &file, args.verify)?;
+            std::fs::write(&args.output, output)?;
+            return Ok(());
+        }
         let mut reader = std::io::BufReader::new(std::fs::File::open(&args.input)?);
         match (args.offset, args.length) {
             (Some(offset), Some(length)) => {

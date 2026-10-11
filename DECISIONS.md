@@ -1096,3 +1096,137 @@ Multi-threaded CPU rows still vary ±5–11% between runs with desktop apps open
 - **Numeric data (256 MiB inputs):** GLZ-E with filters beats zstd -3 on the whole
   file for sorted u32 (4.08× vs 1.38×) and i16 audio (1.25× vs 1.04×). zstd stays
   ahead at level 1 on u64 timestamps (3.91× vs 3.17×) and f32 points (1.59× vs 1.45×).
+
+## Optimization research (2026-10-11)
+Started from the M10 profile (bench/REPORT.md, "Where the time goes"). Every change
+below is byte-identical to the CPU twin, so the existing twin and matrix tests guard
+it; none of them could fail first. Kernel times are Silesia medians of 12 (wall
+clock of `dispatch_stages` prefixes), same session.
+
+**Statistics first** (CPU twin over Silesia, level 1): the parse steps through
+55 M literal bytes (26% of input) in 9.7 M runs. 37% of first hash candidates
+are collisions (a different 4-byte prefix), and so are 30% of level-3 chain
+candidates.
+
+**Kept:**
+- **The parse copies phase A's path instead of walking it again.** Splitting the
+  parse showed phase A (speculative walks) ≈ 12.9 ms, phase B (fix-ups) ≈ 1–2 ms and
+  phase C (re-walk to write sequences) ≈ 11–12 ms. Phase C repeated phase A's work.
+  Now phase A records each match it takes in one u32 (start in the segment, 14 bits;
+  length, 18 bits) in the `chain` buffer, which the parse never reads otherwise.
+  Phase B notes where each lane's corrected walk merged into its phase-A walk.
+  Phase C walks only up to that merge point and copies the remaining records,
+  reading each offset back from its match word (still intact: sequences are written
+  behind the matches they describe). **Parse 26.5 → 18.2 ms.** Memory: `chain` now
+  exists at level 1 too, sized c/4 words per chunk (+1 byte per input byte); levels
+  2–3 reuse their links buffer. 256 MiB still fits one batch.
+- **Emit keeps long literal runs in workgroup memory.** After each block of 64
+  sequences, every lane looped over all 64, reading each literal length from global
+  memory, to find the rare runs of 64+ bytes. Each lane now stores its own run
+  (dst, src, len) in workgroup memory. **Emit ~15.5 → ~13.8 ms.**
+- **Emit writes short literal runs a word at a time** (`put_run`: one `atomicOr`
+  per output word, masked at the edges, instead of one per byte). **~13.8 →
+  ~12.0 ms.** The same idea made the GLZ *decoder* 10% slower (above); in emit the
+  loop is simple and each lane owns its run.
+- **Match finding is software-pipelined.** The candidate's first word is loaded
+  before the first barrier and used after the insert; the next block's input word
+  is loaded before the second barrier. **34.2 → 32.6 ms.**
+
+Level-1 kernels: LZ4 75 → 63.4 ms, GLZ-E 95.7 → 82.9 ms.
+
+**Rejected (measured):**
+- **Skipping literal runs in the parse** (scan 4 match words per iteration to the
+  next match, instead of stepping a byte at a time): parse −0.4 ms, within noise.
+  Literal steps were cheap; the walks' cost is the match steps' dependent loads.
+- **16-bit hash-table entries** (two buckets per word, halving the 16 KB table, with
+  a compare-and-swap max): match kernel 34.0 → 35.1–36.7 ms on Silesia, and 51 →
+  119–125 ms on zeros, where every lane contends for one bucket. **Workgroup memory
+  is not what limits match finding**, contrary to the hash_log notes above (hash_log
+  11's speed-up came from finding fewer matches, not from occupancy).
+- **Extension as a separate full-occupancy pass** (the deep pass's recipe, applied
+  to level 1): match kernel 34 → 14.5 ms, but the extend pass took 25 ms (total
+  ~40). The split costs a scratch round trip and the shared input word. It did
+  measure the match kernel: ~14.5 ms hashing and table with barriers, ~9 ms
+  loading each candidate's first word, ~11 ms extension (and the barriers alone
+  ~5 ms).
+
+**A fast CPU twin** (`cpu::lz4::fast::sequences`, used by the LZ4 and GLZ encoders;
+GLZ with dependency groups keeps the reference parse). It returns exactly
+`parse(find_matches(..))`, tested on fixtures at every level and 200 proptest cases
+over block, hash, probe, lazy and depth. Every position is still inserted block by
+block (the GPU's semantics, and cheap: 5.2 GB/s alone), but matches are computed only
+where the parse looks, about 0.42 per input byte with the lazy look-ahead cached,
+comparing 8 bytes at a time, and deep candidates are skipped unless their byte at the
+current best length matches. Single thread, 64 MiB of Silesia:
+
+| Level | Reference find + parse | Fast |
+|---|---|---|
+| 1 | 0.16 GB/s | 0.29 GB/s (1.8×) |
+| 2 | 0.055 GB/s | 0.145 GB/s (2.6×) |
+| 3 | 0.020 GB/s | 0.076 GB/s (3.8×) |
+
+Multi-threaded twin on Silesia: LZ4 1.2 → 2.1 GB/s, GLZ-E 0.97 → 1.7, GLZ-E level 3
+0.15 → 0.6. The reference functions stay: the GPU tests compare intermediate buffers
+with them. Rejected: a branch-free level-1 lookup (one 8-byte compare, length from
+trailing zeros): 0.29 → 0.26 GB/s.
+
+**CPU+GPU together (`gpu::hybrid`, `--hybrid`).** This chains three earlier
+properties: every GPU chunk is byte-identical to its CPU twin's, chunks are
+independent, and container files splice (`format::splice`, a plan of independent
+copies). So the GPU can compress chunks from the front while the CPU compresses
+chunks from the back, and **the file equals the GPU-only file whatever the split**.
+The schedule can then adapt to measured speeds without making the output
+nondeterministic. Decompression is the same with the CPU's own decoders. Silesia,
+same session (a background process used about a core throughout):
+
+| | GPU alone | CPU alone | CPU+GPU |
+|---|---|---|---|
+| Compress LZ4 level 1 | 2.80 | 2.16 (twin) | **3.93** (+40%) |
+| Compress GLZ-E level 1 | 2.27 | 1.68 (twin) | **3.19** (+41%) |
+| Compress GLZ-E level 3 | 0.72 | 0.63 (twin) | **1.19** (+65%) |
+| Decompress LZ4 | 2.41 | 14.97 (lz4_flex) | 14.24 (the GPU stays out) |
+| Decompress GLZ | 3.57 | 7.30 | 7.00 (the GPU stays out) |
+| Decompress GLZ-E | 2.85 | 3.01 | **4.12** (+37%) |
+
+What the scheduler had to learn, with numbers:
+- **An extra GPU batch now costs ~1.4 ms** (Silesia in 1 / 7 / 26 / 51 batches:
+  75.7 / 84.1 / 107.5 / 147.7 ms). The M8 note's 55 ms predates the segmented parse.
+- **A GPU pass has a latency floor:** a chunk is decoded by one workgroup, partly
+  serially. On an idle machine, GPU decode of 64 / 256 / 1024 chunks takes
+  12.4 / 12.7 / 33.7 ms for LZ4 and 4.6 / 6.3 / 25.6 ms for GLZ-E. A 4 MiB probe
+  measures only the floor: GLZ-E's probe looked like 0.5 GB/s, so the GPU wrongly
+  dropped out. **The rule now:** the GPU waits for the CPU's rate, joins only if the
+  CPU alone would need over 40 ms for what's left, starts with half of it, then takes
+  its share by measured rates, and stops below a quarter (it only adds contention).
+  With 4 MiB probes instead, compression was 2.23 / 1.68 GB/s (LZ4 / GLZ-E) against
+  3.87 / 3.22.
+- **CPU side, compression:** one worker per rayon thread but one (the GPU thread
+  needs a core for its copies), each claiming 4 chunks. Groups of 48 chunks
+  compressed by all threads at once waited on their slowest thread: 2.94 against
+  3.44 GB/s.
+- **CPU side, decompression:** one claimant, few large claims (half its share of
+  what's left, all of it once the GPU is out). Each parallel call's tail costs
+  ~0.5 ms on this 8P+4E CPU, which matters at 14 GB/s: LZ4 in 7 calls of 32 MiB ran
+  at ~10.7 GB/s against 14.5 for one call. Per-thread workers with small claims also
+  measured ~10 GB/s, spending ~30% more CPU time per byte. Order of claims, nested
+  rayon calls and pre-faulting the output were ruled out as causes; the reason is
+  not understood.
+- **Joining the parts:** parallel copies and freeing the parts on a background
+  thread took LZ4 from 3.35 to 3.70 GB/s.
+
+**Recorded run `hybrid`** (Silesia; `mediaanalysisd` used ~1–1.5 cores for the whole
+run and didn't settle in over 30 minutes of waiting, but the CPU baselines landed within
+±2% of M10):
+
+| | M10 | `hybrid` |
+|---|---|---|
+| GPU LZ4 level 1 compress, kernel / end to end | 2.81 / 2.36 | **3.41 / 2.80** |
+| GPU GLZ-E level 1 compress, end to end | 1.98 | **2.26** |
+| CPU twin, LZ4 / GLZ-E / GLZ-E level 3 | 1.03 / 0.90 / 0.14 | **1.97 / 1.66 / 0.62** |
+| CPU+GPU compress, LZ4 / GLZ-E / GLZ-E level 3 | | **3.65 / 2.97 / 1.16** |
+| CPU+GPU decompress, LZ4 / GLZ-E / GLZ-E level-3 file | | 14.35 (GPU out) / **4.09 / 4.52** |
+
+Against multi-threaded lz4_flex (5.35 GB/s), GPU LZ4 compression went from 0.43× to
+0.52×, and CPU+GPU reaches 0.68×. bench/REPORT.md's prose was rewritten for these
+numbers. The "same algorithm" lead shrank (GPU over its twin: 2.3× → 1.4× for LZ4),
+because the twin now skips match finding where its serial parse doesn't look.

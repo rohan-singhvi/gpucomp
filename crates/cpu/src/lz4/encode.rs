@@ -235,14 +235,12 @@ fn write_length(out: &mut Vec<u8>, len: usize) {
     out.push(rest as u8);
 }
 
-/// Compresses `input` as one LZ4 block.
+/// Compresses `input` as one LZ4 block: `emit` of `parse` over
+/// `find_matches`, computed by the equivalent (tested) fast path
+/// `lz4::fast::sequences`.
 pub fn encode_block(input: &[u8], params: &Params) -> Vec<u8> {
     let mut out = Vec::with_capacity(super::max_compressed_size(input.len()));
-    emit(
-        input,
-        &parse(input, &find_matches(input, params), params.lazy),
-        &mut out,
-    );
+    emit(input, &super::fast::sequences(input, params), &mut out);
     out
 }
 

@@ -174,6 +174,10 @@ pub enum GpuEncodeError {
     Filter(#[from] crate::filter::FilterError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Cpu(#[from] cpu::container::CpuError),
+    #[error("the split covers {covered} chunks, the input has {chunks}")]
+    BadSplit { covered: u64, chunks: u64 },
 }
 
 /// One chunk's LZ4 block, as reported by [`GpuEncoder::encode_blocks`].
@@ -208,17 +212,22 @@ pub const DEFAULT_GPU_MEMORY: u64 = 3 << 30;
 
 /// GPU bytes the encoder needs per input chunk: input, upload staging,
 /// match scratch (4 bytes per byte), output slot, packed data and its readback,
-/// plus per-chunk sizes, info and pack entries (and, with dependency
-/// elimination, the group lists). Filter selection keeps one extra input-sized
+/// the parse's path records (or hash-chain links, which hold them too), plus
+/// per-chunk sizes, info and pack entries (and, with dependency elimination,
+/// the group lists). Filter selection keeps one extra input-sized
 /// buffer (sampled) or two per extra candidate (exhaustive).
 pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions, params: &EncodeParams) -> u64 {
     let c = u64::from(options.chunk_size);
     let slot = |n: u64| u64::from(slot_for(options.codec, n as u32));
     let mut bytes = 8 * c + slot(c) + 32 + 4 * u64::from(PARSE_SEGMENTS);
-    if params.depth > 1 {
-        // Hash-chain links, one per input byte.
-        bytes += 4 * c;
-    }
+    bytes += if params.depth > 1 {
+        // Hash-chain links, one per input byte (dead by the parse, which
+        // stores its path records there).
+        4 * c
+    } else {
+        // The parse's path records: at most one u32 per 4 positions.
+        c
+    };
     if options.independent_groups.is_some() {
         bytes += 8 * u64::from(MAX_GROUP);
     }
@@ -241,7 +250,7 @@ pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions, params: &EncodePara
 /// Workgroup memory the encoder needs: the larger of the match-finding
 /// kernel's hash table and the emit kernel's scans (the parse uses none).
 pub fn workgroup_bytes(params: &EncodeParams) -> u32 {
-    (4 << params.hash_log).max(16 * EMIT_WG + 16 + 4 * PARSE_SEGMENTS)
+    (4 << params.hash_log).max(28 * EMIT_WG + 16 + 4 * PARSE_SEGMENTS)
 }
 
 /// How many chunks one dispatch may encode so that the input, match scratch
@@ -1404,11 +1413,13 @@ impl GpuEncoder {
             segs_size,
             BufferUsages::STORAGE,
         );
-        // Hash-chain links, one u32 per input byte, only with depth > 1.
+        // Hash-chain links, one u32 per input byte, with depth > 1. The
+        // segmented parse records its speculative path there (a u32 per 4
+        // positions at most), which is all depth 1 allocates.
         let chain_size = if self.params.depth > 1 {
             chunks * u64::from(chunk_size) * 4
         } else {
-            4
+            chunks * u64::from(chunk_size)
         };
         let chain_buf = ensure(
             &mut c.chain,
@@ -1926,10 +1937,9 @@ mod tests {
 
     #[test]
     fn workgroup_memory_is_the_larger_of_the_table_and_the_emit_scans() {
-        // Match finding holds the hash table; emit holds two scans (u32 and
-        // vec2 per invocation), sequence addresses, counters and the segment
-        // table; the parse
-        // holds a few words per segment, less than emit.
+        // Match finding holds the hash table; emit holds two scans and its
+        // long literal runs per invocation, counters and the segment table;
+        // the parse holds a few words per segment, less than emit.
         let p = EncodeParams::default();
         assert_eq!(workgroup_bytes(&p), 4 * 4096);
         // The emit kernel's workgroup is EMIT_WG whatever the match block.
@@ -1938,9 +1948,11 @@ mod tests {
             block: 256,
             ..p
         };
+        // Per emit lane: scan (u32), scan2 (vec2) and long_run (vec3, which
+        // takes 16 bytes in an array).
         assert_eq!(
             workgroup_bytes(&small_table),
-            16 * EMIT_WG + 16 + 4 * PARSE_SEGMENTS
+            28 * EMIT_WG + 16 + 4 * PARSE_SEGMENTS
         );
     }
 
@@ -1949,9 +1961,10 @@ mod tests {
         let c = 65_536u64;
         let base = GpuCompressOptions::default();
         // input, upload staging, scratch (4×), packed, packed readback = 8c,
-        // plus the output slot, 32 bytes (sizes + readback, info, entry) and
-        // the parse's segment table (a u32 per segment).
-        let plain = 8 * c + u64::from(slot_size(65_536)) + 32 + 4 * u64::from(PARSE_SEGMENTS);
+        // the parse's path records (a u32 per 4 positions) = c, plus the
+        // output slot, 32 bytes (sizes + readback, info, entry) and the
+        // parse's segment table (a u32 per segment).
+        let plain = 9 * c + u64::from(slot_size(65_536)) + 32 + 4 * u64::from(PARSE_SEGMENTS);
         assert_eq!(
             encoder_bytes_per_chunk(&base, &EncodeParams::default()),
             plain
@@ -1971,12 +1984,13 @@ mod tests {
             plain - u64::from(slot_size(65_536)) + glze_slot + 4 * 4 * u64::from(GLZE_BUILD_WORDS)
         );
         assert_eq!(slot_for(format::Codec::Glz, 4096), slot_size(4096));
-        // Hash chains keep a link (u32) per input byte.
+        // Hash chains keep a link (u32) per input byte; the path records
+        // reuse the links' buffer, which the parse doesn't read.
         let chained = EncodeParams {
             depth: 4,
             ..EncodeParams::default()
         };
-        assert_eq!(encoder_bytes_per_chunk(&base, &chained), plain + 4 * c);
+        assert_eq!(encoder_bytes_per_chunk(&base, &chained), plain + 3 * c);
         let big = GpuCompressOptions {
             chunk_size: 1 << 20,
             ..base
@@ -1988,7 +2002,7 @@ mod tests {
         assert_eq!(
             encoder_bytes_per_chunk(&big, &deep)
                 - encoder_bytes_per_chunk(&big, &EncodeParams::default()),
-            4 << 20
+            3 << 20
         );
         let groups = GpuCompressOptions {
             codec: format::Codec::Glz,

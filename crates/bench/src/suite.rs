@@ -474,6 +474,73 @@ pub fn profile(
     Ok(rows)
 }
 
+/// CPU and GPU together (`gpu::hybrid`), end to end, for LZ4 and GLZ-E at
+/// level 1 and GLZ-E at level 3: compression (the file must equal the GPU
+/// encoder's) and decompression of that file (all rayon threads plus the GPU,
+/// which joins only when it helps). Rows `hybrid.<codec>[.lN].<direction>.e2e`.
+pub fn hybrid(
+    ctx: &Context,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+) -> anyhow::Result<Vec<Measurement>> {
+    use format::Codec;
+    use gpu::decode::GpuDecoder;
+    use gpu::encode::{EncodeParams, GpuCompressOptions, GpuEncoder};
+
+    let decoder = GpuDecoder::new(ctx);
+    let time = |f: &dyn Fn() -> anyhow::Result<()>| {
+        median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            f()?;
+            Ok(start.elapsed())
+        })
+    };
+    let mut rows = Vec::new();
+    for (label, codec, level) in [
+        ("lz4", Codec::Lz4, 1),
+        ("glze", Codec::GlzE, 1),
+        ("glze.l3", Codec::GlzE, 3),
+    ] {
+        let encoder = GpuEncoder::new(ctx, EncodeParams::for_level(level))?;
+        let options = GpuCompressOptions {
+            codec,
+            level,
+            ..GpuCompressOptions::default()
+        };
+        for (name, data) in inputs {
+            if data.is_empty() {
+                continue;
+            }
+            let n = data.len() as u64;
+            let file = gpu::hybrid::compress(ctx, &encoder, data, &options)?;
+            anyhow::ensure!(
+                file == encoder.compress(ctx, data, &options)?,
+                "hybrid {label} file of {name} differs from the GPU's"
+            );
+            anyhow::ensure!(
+                gpu::hybrid::decompress(ctx, &decoder, &file, false)? == *data,
+                "hybrid {label} decode of {name}"
+            );
+            let ratio = Some(n as f64 / file.len() as f64);
+            let mut row = |direction: &str, elapsed: Duration| {
+                rows.push(Measurement {
+                    name: format!("hybrid.{label}.{direction}.e2e"),
+                    input: name.clone(),
+                    bytes: n,
+                    gbps: gbps(n, elapsed),
+                    ratio,
+                    timing: Timing::WallE2e,
+                });
+            };
+            let t = time(&|| Ok(gpu::hybrid::compress(ctx, &encoder, data, &options).map(drop)?))?;
+            row("compress", t);
+            let t = time(&|| Ok(gpu::hybrid::decompress(ctx, &decoder, &file, false).map(drop)?))?;
+            row("decompress", t);
+        }
+    }
+    Ok(rows)
+}
+
 /// Synthetic benchmark inputs of `n` bytes each: `zeros`, `random`, `text`
 /// (pseudo-English from a fixed vocabulary) and `mixed` (thirds of each).
 pub fn synthetic_inputs(n: usize) -> Vec<(String, Vec<u8>)> {

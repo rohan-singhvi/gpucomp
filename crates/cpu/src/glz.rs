@@ -208,13 +208,20 @@ pub fn emit(input: &[u8], sequences: &[Sequence]) -> Vec<u8> {
     out
 }
 
-/// Compresses `input` as one GLZ block.
+/// Compresses `input` as one GLZ block. Without dependency groups the parse is
+/// LZ4's, so it comes from the equivalent (tested) fast path
+/// `lz4::fast::sequences`.
 pub fn encode_block(input: &[u8], params: &GlzParams) -> Vec<u8> {
-    let matches = find_matches(input, &params.lz);
-    emit(
-        input,
-        &parse(input, &matches, params.independent_groups, params.lz.lazy),
-    )
+    let sequences = match params.independent_groups {
+        None => crate::lz4::fast::sequences(input, &params.lz),
+        groups => parse(
+            input,
+            &find_matches(input, &params.lz),
+            groups,
+            params.lz.lazy,
+        ),
+    };
+    emit(input, &sequences)
 }
 
 /// Decodes one GLZ block into `dst` (exactly the uncompressed size). Header

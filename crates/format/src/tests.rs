@@ -469,3 +469,86 @@ proptest! {
         }
     }
 }
+
+/// A file of `sizes.len()` chunks of a `total`-byte input (4 KiB chunks): payload
+/// i has sizes[i] bytes of value first + i + 1; chunk 2 is stored and chunk 1
+/// filtered (counting from the whole input's first chunk).
+fn sample_file(total: u64, sizes: &[usize], first: usize) -> Vec<u8> {
+    let header = Header {
+        codec: Codec::Lz4,
+        chunk_size: 4096,
+        chunk_count: sizes.len() as u32,
+        total_size: total,
+        checksums: true,
+        level: 2,
+    };
+    let bytes: Vec<Vec<u8>> = sizes
+        .iter()
+        .enumerate()
+        .map(|(i, &n)| vec![(first + i) as u8 + 1; n])
+        .collect();
+    let payloads: Vec<ChunkPayload> = bytes
+        .iter()
+        .enumerate()
+        .map(|(i, b)| ChunkPayload {
+            bytes: b,
+            stored: first + i == 2,
+            checksum: 0x1000 + (first + i) as u32,
+        })
+        .collect();
+    let filters: Vec<Filter> = (0..sizes.len())
+        .map(|i| {
+            if first + i == 1 {
+                Filter::Delta { width: 4 }
+            } else {
+                Filter::None
+            }
+        })
+        .collect();
+    assemble_filtered(header, &payloads, &filters)
+}
+
+#[test]
+fn splicing_parts_gives_the_whole_file() {
+    // 5 chunks of a 4 * 4096 + 100-byte input; payloads of uneven sizes.
+    let sizes = [5, 4096, 4096, 1, 100];
+    let total = 4 * 4096 + 100;
+    let whole = sample_file(total, &sizes, 0);
+    let header = Index::parse(&whole).unwrap().header;
+    for cuts in [vec![2], vec![1, 3], vec![1, 2, 3, 4], vec![]] {
+        let mut bounds = vec![0];
+        bounds.extend(&cuts);
+        bounds.push(sizes.len());
+        let parts: Vec<Vec<u8>> = bounds
+            .windows(2)
+            .map(|w| {
+                let part_total = if w[1] == sizes.len() {
+                    total - 4096 * w[0] as u64
+                } else {
+                    4096 * (w[1] - w[0]) as u64
+                };
+                sample_file(part_total, &sizes[w[0]..w[1]], w[0])
+            })
+            .collect();
+        let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+        assert_eq!(splice(header, &refs).unwrap(), whole, "cuts {cuts:?}");
+    }
+}
+
+#[test]
+fn splicing_rejects_parts_that_do_not_fit() {
+    let whole = sample_file(2 * 4096, &[10, 20], 0);
+    let header = Index::parse(&whole).unwrap().header;
+    let a = sample_file(4096, &[10], 0);
+    // Chunk counts don't add up.
+    assert!(matches!(splice(header, &[&a]), Err(FormatError::Splice(_))));
+    // A part with another codec.
+    let mut b = sample_file(4096, &[20], 1);
+    let mut h = Index::parse(&b).unwrap().header;
+    h.codec = Codec::Glz;
+    b[..HEADER_SIZE].copy_from_slice(&h.to_bytes());
+    assert!(matches!(
+        splice(header, &[&a, &b]),
+        Err(FormatError::Splice(_))
+    ));
+}

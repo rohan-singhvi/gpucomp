@@ -165,6 +165,8 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
                 .extend(bench::suite::gpu_encode(ctx, &inputs, &cfg)?);
             run.measurements
                 .extend(bench::suite::profile(ctx, &profile_inputs(&inputs), &cfg)?);
+            run.measurements
+                .extend(bench::suite::hybrid(ctx, &inputs, &cfg)?);
         }
         drop(inputs);
         let filter_inputs = filter_suite_inputs(cfg.bytes, &corpus);

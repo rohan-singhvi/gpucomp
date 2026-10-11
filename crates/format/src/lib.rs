@@ -41,6 +41,8 @@ pub enum FormatError {
     BadChunk { index: usize, reason: &'static str },
     #[error("range {offset}+{len} is outside the {total}-byte original")]
     RangeOutOfBounds { offset: u64, len: u64, total: u64 },
+    #[error("can't splice: {0}")]
+    Splice(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,6 +359,85 @@ pub fn assemble_filtered(header: Header, payloads: &[ChunkPayload], filters: &[F
         out.resize(pad4(out.len() as u64) as usize, 0);
     }
     out
+}
+
+/// How [`splice`] builds its file: `head` (header and chunk table) followed by
+/// `copies`, each a byte range of one part placed back to back, `len` bytes in
+/// all. The copies are independent, so they can run in parallel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplicePlan {
+    pub head: Vec<u8>,
+    /// (index of the part, byte range within it), in output order.
+    pub copies: Vec<(usize, Range<usize>)>,
+    pub len: usize,
+}
+
+/// Joins files that each hold consecutive chunks of one input, in order, into
+/// the file one encoder writes for the whole input: `header`, the parts' chunk
+/// entries with their offsets moved past the earlier parts' data, then the
+/// parts' data sections back to back. The parts must share `header`'s codec,
+/// chunk size, level and checksum flag, and their chunks must line up with the
+/// whole input's (every part but the last ends on a whole chunk).
+pub fn splice(header: Header, parts: &[&[u8]]) -> Result<Vec<u8>, FormatError> {
+    let plan = splice_plan(header, parts)?;
+    let mut out = plan.head;
+    out.reserve(plan.len - out.len());
+    for (part, range) in plan.copies {
+        out.extend_from_slice(&parts[part][range]);
+    }
+    Ok(out)
+}
+
+/// The [`splice`] of `parts`, as a plan of copies.
+pub fn splice_plan(header: Header, parts: &[&[u8]]) -> Result<SplicePlan, FormatError> {
+    let mut chunks = Vec::with_capacity(header.chunk_count as usize);
+    let mut copies = Vec::with_capacity(parts.len());
+    let mut offset = 0u64;
+    for (i, part) in parts.iter().enumerate() {
+        let index = Index::parse(part)?;
+        let h = index.header;
+        if (h.codec, h.chunk_size, h.level, h.checksums)
+            != (
+                header.codec,
+                header.chunk_size,
+                header.level,
+                header.checksums,
+            )
+        {
+            return Err(FormatError::Splice(
+                "parts differ in codec, chunk size, level or checksums",
+            ));
+        }
+        let data_offset = index.data_offset() as usize;
+        index.validate((part.len() - data_offset) as u64)?;
+        // Payloads are back to back, so a part's data ends at its last
+        // payload's padded end.
+        let used = index
+            .chunks
+            .last()
+            .map_or(0, |c| pad4(c.comp_offset + u64::from(c.comp_size)));
+        chunks.extend(index.chunks.iter().map(|c| ChunkEntry {
+            comp_offset: offset + c.comp_offset,
+            ..*c
+        }));
+        copies.push((i, data_offset..data_offset + used as usize));
+        offset += used;
+    }
+    if chunks.len() != header.chunk_count as usize {
+        return Err(FormatError::Splice("the parts' chunk counts don't add up"));
+    }
+    if chunks
+        .iter()
+        .enumerate()
+        .any(|(i, c)| c.uncomp_size != header.uncomp_size_of(i as u32))
+    {
+        return Err(FormatError::Splice(
+            "the parts' chunks don't line up with the input's",
+        ));
+    }
+    let head = Index { header, chunks }.to_bytes();
+    let len = head.len() + offset as usize;
+    Ok(SplicePlan { head, copies, len })
 }
 
 /// Error from [`read_index`]: I/O or format.

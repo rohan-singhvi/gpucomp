@@ -86,7 +86,7 @@ fn select(runs: &[Run]) -> Vec<&Run> {
 /// The compression ratio-vs-throughput table for `run`, if it measured any
 /// encoder (also shown in `BENCHMARKS.md`).
 pub fn compress_tradeoff(run: &Run) -> Option<String> {
-    tradeoff(run, "Encoder", &COMPRESS)
+    tradeoff(run, "Encoder", COMPRESS)
 }
 
 fn section(name: &str, run: &Run) -> String {
@@ -94,7 +94,7 @@ fn section(name: &str, run: &Run) -> String {
         "setup" => setup(run),
         "versus" => versus(run),
         "compress" => compress_tradeoff(run),
-        "decompress" => tradeoff(run, "Decoder", &DECOMPRESS),
+        "decompress" => tradeoff(run, "Decoder", DECOMPRESS),
         "files-compress" => matrix(run, &corpus_inputs(run), &FILE_COMPRESS),
         "files-decompress" => matrix(run, &corpus_inputs(run), &FILE_DECOMPRESS),
         "synthetic-compress" => matrix(run, &SYNTHETIC, &FILE_COMPRESS),
@@ -199,7 +199,10 @@ const fn path(label: &'static str, e2e: &'static str) -> Path {
     Path { label, e2e }
 }
 
-const COMPRESS: [Path; 23] = [
+const COMPRESS: &[Path] = &[
+    path("CPU+GPU LZ4, level 1", "hybrid.lz4.compress.e2e"),
+    path("CPU+GPU GLZ-E, level 1", "hybrid.glze.compress.e2e"),
+    path("CPU+GPU GLZ-E, level 3", "hybrid.glze.l3.compress.e2e"),
     path("GPU LZ4, level 1", "gpu.lz4.compress.e2e"),
     path("GPU LZ4, level 2", "gpu.lz4.l2.compress.e2e"),
     path("GPU LZ4, level 3", "gpu.lz4.l3.compress.e2e"),
@@ -243,7 +246,13 @@ const COMPRESS: [Path; 23] = [
     ),
 ];
 
-const DECOMPRESS: [Path; 21] = [
+const DECOMPRESS: &[Path] = &[
+    path("CPU+GPU LZ4", "hybrid.lz4.decompress.e2e"),
+    path("CPU+GPU GLZ-E, level 1 file", "hybrid.glze.decompress.e2e"),
+    path(
+        "CPU+GPU GLZ-E, level 3 file",
+        "hybrid.glze.l3.decompress.e2e",
+    ),
     path("GPU LZ4, cooperative kernel", "gpu.lz4.decompress.coop.e2e"),
     path(
         "GPU LZ4, one thread per chunk",
@@ -352,18 +361,20 @@ const fn col(label: &'static str, row: &'static str, cell: Cell) -> Column {
 const SYNTHETIC: [&str; 4] = ["zeros", "random", "text", "mixed"];
 const NUMERIC: [&str; 4] = ["f32-points", "sorted-u32", "i16-audio", "u64-timestamps"];
 
-const FILE_COMPRESS: [Column; 5] = [
+const FILE_COMPRESS: [Column; 6] = [
     col("GPU LZ4 l1", "gpu.lz4.compress.e2e", Cell::Both),
     col("GPU GLZ-E l1", "gpu.glze.compress.e2e", Cell::Both),
     col("GPU GLZ-E l3", "gpu.glze.l3.compress.e2e", Cell::Both),
+    col("CPU+GPU GLZ-E l1", "hybrid.glze.compress.e2e", Cell::Both),
     col("CPU lz4_flex", "cpu.lz4_flex.compress.mt", Cell::Both),
     col("CPU zstd -1, 64 KiB", "cpu.zstd-1.compress.mt", Cell::Both),
 ];
 
-const FILE_DECOMPRESS: [Column; 6] = [
+const FILE_DECOMPRESS: [Column; 7] = [
     col("GPU LZ4", "gpu.lz4.decompress.coop.e2e", Cell::Gbps),
     col("GPU GLZ", "gpu.glz.decompress.e2e", Cell::Gbps),
     col("GPU GLZ-E", "gpu.glze.decompress.e2e", Cell::Gbps),
+    col("CPU+GPU GLZ-E", "hybrid.glze.decompress.e2e", Cell::Gbps),
     col("CPU lz4_flex", "cpu.lz4_flex.decompress.mt", Cell::Gbps),
     col("CPU GLZ-E", "cpu.glze.decompress.mt", Cell::Gbps),
     col(
@@ -434,10 +445,15 @@ fn matrix(run: &Run, inputs: &[&str], columns: &[Column]) -> Option<String> {
 
 /// Headline comparisons: a GPU path end to end against a multi-threaded CPU
 /// path on the headline input.
-const VERSUS: [(&str, &str, &str); 8] = [
+const VERSUS: &[(&str, &str, &str)] = &[
     (
         "Compress to LZ4: GPU level 1 vs lz4_flex",
         "gpu.lz4.compress.e2e",
+        "cpu.lz4_flex.compress.mt",
+    ),
+    (
+        "Compress to LZ4: CPU+GPU vs lz4_flex",
+        "hybrid.lz4.compress.e2e",
         "cpu.lz4_flex.compress.mt",
     ),
     (
@@ -461,6 +477,11 @@ const VERSUS: [(&str, &str, &str); 8] = [
         "cpu.zstd-1.compress.mt",
     ),
     (
+        "Compress, similar ratio: CPU+GPU GLZ-E level 3 vs zstd -1 in 64 KiB chunks",
+        "hybrid.glze.l3.compress.e2e",
+        "cpu.zstd-1.compress.mt",
+    ),
+    (
         "Decompress LZ4: GPU vs lz4_flex",
         "gpu.lz4.decompress.coop.e2e",
         "cpu.lz4_flex.decompress.mt",
@@ -468,6 +489,11 @@ const VERSUS: [(&str, &str, &str); 8] = [
     (
         "Decompress GLZ-E: GPU vs CPU",
         "gpu.glze.decompress.e2e",
+        "cpu.glze.decompress.mt",
+    ),
+    (
+        "Decompress GLZ-E: CPU+GPU vs CPU",
+        "hybrid.glze.decompress.e2e",
         "cpu.glze.decompress.mt",
     ),
     (
@@ -640,6 +666,7 @@ mod tests {
                 // Slower and smaller than lz4_flex: off the frontier.
                 m("cpu.greedy.compress.mt", ALL, 1.0, Some(1.99), Cpu),
                 m("cpu.zstd-1.compress.mt", ALL, 0.7, Some(2.76), Cpu),
+                m("hybrid.lz4.compress.e2e", ALL, 3.9, Some(1.99), WallE2e),
                 m(
                     "gpu.lz4.compress.e2e",
                     "silesia/dickens",
@@ -784,6 +811,8 @@ mod tests {
         assert!(row(&table, "GPU LZ4, level 1").contains("| 2.00× | 3.00 | 2.00 |  |"));
         assert!(row(&table, "CPU LZ4 twin").contains("| 1.99× | — | 1.00 |  |"));
         assert!(row(&table, "CPU zstd -1, 64 KiB").contains("| 2.76× | — | 0.70 | ◆ |"));
+        // Hybrid paths have no kernel time of their own.
+        assert!(row(&table, "CPU+GPU LZ4, level 1").contains("| 1.99× | — | 3.90 |  |"));
         // Paths the run didn't measure are left out.
         assert!(!table.contains("GPU GLZ,"), "{table}");
     }
@@ -816,6 +845,11 @@ mod tests {
         assert!(
             lz4.contains("| 2.00× · 2.04× | 3.00 | 2.00 | 5.00 | 0.40× |"),
             "{lz4}"
+        );
+        let hybrid = row(&table, "Compress to LZ4: CPU+GPU vs lz4_flex");
+        assert!(
+            hybrid.contains("| 1.99× · 2.04× | — | 3.90 | 5.00 | 0.78× |"),
+            "{hybrid}"
         );
         let decode = row(&table, "Decompress LZ4");
         assert!(decode.contains("| 2.60 | 13.00 | 0.20× |"), "{decode}");

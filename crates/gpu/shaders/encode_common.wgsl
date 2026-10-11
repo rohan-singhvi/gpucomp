@@ -47,8 +47,11 @@ struct Params {
 // scratch word seg_len(n) * k of the chunk, 4 words each.
 @group(0) @binding(7) var<storage, read_write> segs: array<u32>;
 // With hash chains (DEPTH > 1): per position, its first candidate (position
-// + 1; 0 = none), written by match finding; the parse follows these links to
-// older candidates (encode_deep.wgsl).
+// + 1; 0 = none), written by match finding; the deep pass follows these links
+// to older candidates (encode_deep.wgsl). The segmented parse (which never
+// reads the links: every position is memoised by then) stores its phase-A
+// path records here, chunk_size / 4 words per chunk; that's all depth 1
+// allocates.
 @group(0) @binding(8) var<storage, read_write> chain: array<u32>;
 
 const MIN_MATCH: u32 = 4u;

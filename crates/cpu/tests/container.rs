@@ -3,8 +3,8 @@
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use cpu::container::{
-    compress, decompress, decompress_range, read_index, CompressOptions, CpuError, Decoder,
-    DecompressOptions, Encoder,
+    compress, decompress, decompress_chunks_into, decompress_range, read_index, CompressOptions,
+    CpuError, Decoder, DecompressOptions, Encoder, FilterMode,
 };
 use cpu::lz4::encode::Params;
 use format::{Codec, Filter, Index};
@@ -536,4 +536,39 @@ fn glze_needs_the_glz_encoder_and_our_decoder() {
         decompress(&file, &dopts(Decoder::Lz4Flex)),
         Err(CpuError::Options(_))
     ));
+}
+
+#[test]
+fn chunk_ranges_decode_into_slices_of_the_original() {
+    // 9 chunks, the last one short.
+    let input = [text(5 * 4096 + 100), random(3 * 4096, 9)].concat();
+    for (codec, encoder) in [
+        (Codec::Lz4, Encoder::Greedy(Params::default())),
+        (Codec::GlzE, Encoder::Glz(Default::default())),
+    ] {
+        let options = CompressOptions {
+            codec,
+            encoder,
+            checksums: true,
+            filters: FilterMode::Auto,
+            ..opts(encoder)
+        };
+        let file = compress(&input, &options).unwrap();
+        let index = Index::parse(&file).unwrap();
+        for range in [0..9, 0..1, 3..7, 8..9, 5..5] {
+            let start = range.start * 4096;
+            let end = (range.end * 4096).min(input.len());
+            let mut dst = vec![0u8; end - start];
+            let verify = DecompressOptions {
+                verify: true,
+                ..Default::default()
+            };
+            decompress_chunks_into(&file, &index, range.clone(), &mut dst, &verify).unwrap();
+            assert!(dst == input[start..end], "{codec:?} {range:?}");
+        }
+        let mut short = vec![0u8; 10];
+        assert!(
+            decompress_chunks_into(&file, &index, 0..1, &mut short, &Default::default()).is_err()
+        );
+    }
 }

@@ -34,33 +34,59 @@ fn main(
     if (n >= MFLIMIT) {
         let last_start = n - MFLIMIT;
         let match_limit = n - LAST_LITERALS;
+        // Software-pipelined: each block's candidate word is loaded before the
+        // first barrier and used after the insert, and the next block's input
+        // word is loaded before the second barrier, so their latency overlaps
+        // the barrier waits.
+        var word = 0u;
+        if (lid <= last_start) {
+            word = in_word(start + lid);
+        }
         for (var block = 0u; block <= last_start; block += WG_SIZE) {
             let p = block + lid;
             let in_range = p <= last_start;
             var h = 0u;
+            var entry = 0u;
+            var offset = 0u;
+            var cword = 0u;
             if (in_range) {
-                h = hash(in_word(start + p));
-                let entry = atomicLoad(&table[h]);
+                h = hash(word);
+                entry = atomicLoad(&table[h]);
                 if (DEPTH > 1u) {
                     chain[sbase + p] = entry;
                 }
-                var m = 0u;
                 if (entry != 0u) {
-                    let offset = p - (entry - 1u);
+                    offset = p - (entry - 1u);
                     if (offset <= MAX_OFFSET) {
-                        let limit = min(p + params.probe_len, match_limit);
-                        let end = extend(start, p, offset, limit);
-                        if (end - p >= MIN_MATCH) {
-                            m = ((end - p) << 16u) | offset;
-                        }
+                        cword = in_word(start + p - offset);
                     }
                 }
-                scratch[sbase + p] = m;
             }
             // All lookups of this block see only earlier blocks' positions.
             workgroupBarrier();
             if (in_range) {
                 atomicMax(&table[h], p + 1u);
+                var m = 0u;
+                if (entry != 0u && offset <= MAX_OFFSET) {
+                    let limit = min(p + params.probe_len, match_limit);
+                    var end = p;
+                    let diff = cword ^ word;
+                    if (diff != 0u) {
+                        end = p + min(countTrailingZeros(diff) / 8u, limit - p);
+                    } else if (p + 4u <= limit) {
+                        end = extend(start, p + 4u, offset, limit);
+                    } else {
+                        end = extend(start, p, offset, limit);
+                    }
+                    if (end - p >= MIN_MATCH) {
+                        m = ((end - p) << 16u) | offset;
+                    }
+                }
+                scratch[sbase + p] = m;
+            }
+            let next = p + WG_SIZE;
+            if (next <= last_start) {
+                word = in_word(start + next);
             }
             workgroupBarrier();
         }

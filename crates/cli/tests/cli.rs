@@ -476,3 +476,51 @@ fn gpu_glze_compress_matches_the_cpu() {
         assert!(std::fs::read(&out).unwrap() == sample());
     }
 }
+
+#[test]
+fn gpu_hybrid_compress_writes_the_gpu_file() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, gpu_packed, hybrid_packed) =
+        (temp("hy.txt"), temp("hy.gpu.gpcz"), temp("hy.hybrid.gpcz"));
+    // Big enough for the GPU to take part (it claims at least 4 MiB).
+    std::fs::write(&input, sample().repeat(30)).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    for (codec, level) in [("lz4", "1"), ("glze", "2")] {
+        let args = |out: &PathBuf| {
+            vec![
+                "compress".to_string(),
+                s(&input),
+                s(out),
+                "--gpu".into(),
+                "--codec".into(),
+                codec.into(),
+                "--level".into(),
+                level.into(),
+            ]
+        };
+        let run = |v: Vec<String>| gpucomp(&v.iter().map(String::as_str).collect::<Vec<_>>());
+        run(args(&gpu_packed));
+        let mut hybrid = args(&hybrid_packed);
+        hybrid.push("--hybrid".into());
+        run(hybrid);
+        assert!(
+            std::fs::read(&gpu_packed).unwrap() == std::fs::read(&hybrid_packed).unwrap(),
+            "{codec} level {level}"
+        );
+        let out = temp("hy.out");
+        gpucomp(&[
+            "decompress",
+            &s(&hybrid_packed),
+            &s(&out),
+            "--gpu",
+            "--hybrid",
+            "--verify",
+        ]);
+        assert!(
+            std::fs::read(&out).unwrap() == std::fs::read(&input).unwrap(),
+            "{codec}"
+        );
+    }
+}

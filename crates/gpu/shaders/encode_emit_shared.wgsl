@@ -5,12 +5,14 @@ override WG_SIZE: u32 = 64u;
 
 var<workgroup> scan: array<u32, WG_SIZE>;
 var<workgroup> scan2: array<vec2<u32>, WG_SIZE>;
-// Scratch word of each sequence in the current block (see seq_addr).
-var<workgroup> qaddr: array<u32, WG_SIZE>;
 // The parse's chunk_info for this chunk, made workgroup-uniform.
 var<workgroup> info: vec4<u32>;
 // The parse's segment table for this chunk (first sequence of each segment).
 var<workgroup> seg_first: array<u32, PARSE_SEGMENTS>;
+// Per lane of the current block: its sequence's literal run if it's long
+// (output position, input position, length), else length 0. The whole
+// workgroup copies these (copy_long_runs).
+var<workgroup> long_run: array<vec3<u32>, WG_SIZE>;
 
 // Loads the chunk's segment table. Call in uniform control flow.
 fn load_segs(chunk: u32, lid: u32) {
@@ -38,6 +40,35 @@ fn load_info(chunk: u32, lid: u32) -> vec4<u32> {
         info = chunk_info[chunk];
     }
     return workgroupUniformLoad(&info);
+}
+
+// output[d .. d + len) = input[s .. s + len) by one invocation, a word at a
+// time: atomicOr of each output word's bytes (masked at the run's edges).
+fn put_run(d: u32, s: u32, len: u32) {
+    if (len == 0u) {
+        return;
+    }
+    let end = d + len;
+    for (var w = d >> 2u; w <= (end - 1u) >> 2u; w++) {
+        let lo = max(4u * w, d);
+        let bytes = min(4u * w + 4u, end) - lo;
+        var value = in_word(s + (lo - d));
+        if (bytes < 4u) {
+            value &= (1u << (bytes * 8u)) - 1u;
+        }
+        atomicOr(&output[w], value << ((lo & 3u) * 8u));
+    }
+}
+
+// Copies the block's long literal runs (long_run, filled for `lanes` lanes),
+// each by the whole workgroup. Call after a barrier that follows the writes.
+fn copy_long_runs(lanes: u32, lid: u32) {
+    for (var j = 0u; j < lanes; j++) {
+        let r = long_run[j];
+        if (r.z != 0u) {
+            copy_literals(r.x, r.y, r.z, lid);
+        }
+    }
 }
 
 // Cooperative: output[d .. d + len) = input[s .. s + len), one output word

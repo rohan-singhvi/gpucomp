@@ -333,3 +333,30 @@ fn profile_suite_times_each_prefix_of_kernels() {
         assert!(m.ratio.unwrap() > 1.5, "{m:?}");
     }
 }
+
+#[test]
+fn hybrid_suite_times_cpu_and_gpu_together_both_ways() {
+    let Some(ctx) = context() else { return };
+    let inputs = vec![(
+        "text".to_string(),
+        bench::suite::synthetic_inputs(SMALL.bytes).remove(2).1,
+    )];
+    let rows = bench::suite::hybrid(&ctx, &inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "hybrid.lz4.compress.e2e",
+            "hybrid.lz4.decompress.e2e",
+            "hybrid.glze.compress.e2e",
+            "hybrid.glze.decompress.e2e",
+            "hybrid.glze.l3.compress.e2e",
+            "hybrid.glze.l3.decompress.e2e",
+        ]
+    );
+    for m in &rows {
+        assert_eq!((m.input.as_str(), m.timing), ("text", Timing::WallE2e));
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+        assert!(m.ratio.unwrap() > 1.5, "{m:?}");
+    }
+}

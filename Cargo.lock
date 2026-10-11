@@ -577,6 +577,7 @@ dependencies = [
  "log",
  "pollster",
  "proptest",
+ "rayon",
  "thiserror",
  "wgpu",
 ]

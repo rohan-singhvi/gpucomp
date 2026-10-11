@@ -6,6 +6,8 @@ license-file = "../../LICENSE"
 
 [dependencies]
 format = { path = "../format" }
+cpu = { path = "../cpu" }
+rayon.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
 bytemuck.workspace = true
@@ -13,7 +15,6 @@ log.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-cpu = { path = "../cpu" }
 proptest.workspace = true
 
 [lints]

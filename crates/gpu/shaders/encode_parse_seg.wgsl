@@ -16,7 +16,9 @@
 //      leaves the segment. Until no exit changes; walks usually merge within
 //      a few bytes (DECISIONS.md, segmented parse).
 //   C. Each lane walks its part of the true path and writes its sequences from
-//      its segment's first scratch word. The j-th match starts at least 4j past
+//      its segment's first scratch word. Only the corrected part is walked
+//      again: from where phase B's walk merged into the phase-A walk, the
+//      matches phase A recorded (in `chain`) are copied. The j-th match starts at least 4j past
 //      the segment start, so writes stay behind the walk (which only reads
 //      ahead), inside the segment, and away from other lanes. The first
 //      sequence's literals start at the last match end before the segment,
@@ -85,14 +87,18 @@ fn greedy_step(c: Chunk, p: u32, limit: u32, seg_end: u32, look: u32) -> vec2<u3
     return vec2<u32>(end, m);
 }
 
-// Phase A: the walk from the segment start, marking visited positions.
-// Returns (exit, offset of the last match, 1 if the exit is inexact: that
-// match reached the SPEC_EXTRA cap). The exit is the first position >= seg_end,
-// or seg_end if the parse ends (no match can start) before that.
-fn speculative_walk(c: Chunk, seg_start: u32, seg_end: u32) -> vec3<u32> {
+// Phase A: the walk from the segment start, marking visited positions and
+// recording each match it takes at chain[rbase..]: its start - seg_start in
+// bits 0..13 (segments are at most 8192 positions) and its length (at most
+// seg_len + SPEC_EXTRA) from bit 14. Returns (exit, offset of the last match,
+// 1 if the exit is inexact: that match reached the SPEC_EXTRA cap, matches
+// recorded). The exit is the first position >= seg_end, or seg_end if the
+// parse ends (no match can start) before that.
+fn speculative_walk(c: Chunk, seg_start: u32, seg_end: u32, rbase: u32) -> vec4<u32> {
     let cap = seg_end + SPEC_EXTRA;
     var p = seg_start;
     var inexact = vec2<u32>(0u, 0u);
+    var count = 0u;
     loop {
         if (p >= seg_end) {
             break;
@@ -103,12 +109,35 @@ fn speculative_walk(c: Chunk, seg_start: u32, seg_end: u32) -> vec3<u32> {
         }
         scratch[c.sbase + p] |= MARK;
         let s = greedy_step(c, p, cap, seg_end, NONE);
-        if (s.y != 0u && s.x >= cap && cap < c.match_limit) {
-            inexact = vec2<u32>(s.y & 0xFFFFu, 1u);
+        if (s.y != 0u) {
+            chain[rbase + count] = (p - seg_start) | ((s.x - p) << 14u);
+            count++;
+            if (s.x >= cap && cap < c.match_limit) {
+                inexact = vec2<u32>(s.y & 0xFFFFu, 1u);
+            }
         }
         p = s.x;
     }
-    return vec3<u32>(p, inexact);
+    return vec4<u32>(p, inexact, count);
+}
+
+// The first of `count` path records at chain[rbase..] whose match starts at
+// or after seg_start + rel (records are in position order).
+fn first_record_from(rbase: u32, count: u32, rel: u32) -> u32 {
+    var lo = 0u;
+    var hi = count;
+    loop {
+        if (lo >= hi) {
+            break;
+        }
+        let mid = (lo + hi) / 2u;
+        if ((chain[rbase + mid] & 0x3FFFu) < rel) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
 }
 
 // Phase B: the walk from entry `e`. Returns (exit, 0), or (_, 1) if it
@@ -227,8 +256,12 @@ fn main(
     let seg_start = k * len;
     let seg_end = seg_start + len;
 
+    // This lane's path records: chunk_size / 4 words per chunk, seg_len / 4
+    // per lane (a match is at least 4 bytes).
+    let rbase = chunk * (params.chunk_size / 4u) + k * (len / 4u);
+
     // ---- A: speculative walks ----
-    let spec = speculative_walk(c, seg_start, seg_end);
+    let spec = speculative_walk(c, seg_start, seg_end, rbase);
     var spec_end = spec.x;
     var spec_inexact = spec.z != 0u;
     // An inexact exit is unknown (NONE) until this lane's walk is confirmed.
@@ -242,6 +275,9 @@ fn main(
 
     // ---- B: fix-up rounds ----
     var entry = NONE; // the entry this lane's exit assumes
+    // Where the walk from `entry` reached a marked position, from where the
+    // true path is phase A's (NONE: it never did).
+    var merge = NONE;
     loop {
         workgroupBarrier();
         var e = 0u;
@@ -252,6 +288,7 @@ fn main(
         if (e != NONE && e != entry) {
             entry = e;
             let w = corrected_walk(c, e, seg_end);
+            merge = select(NONE, w.x, w.y != 0u);
             if (w.y != 0u && spec_inexact) {
                 // Confirmed, but the last match's end is unknown: extend it
                 // below with the whole workgroup.
@@ -319,23 +356,46 @@ fn main(
     var last = NONE;
     let exit = exits[k];
     var p = entry;
+    // Walk the corrected part of the path, up to the merge point; from there,
+    // copy phase A's records.
+    let walk_to = select(seg_end, merge, merge != NONE);
+    var record = 0u;
+    if (merge != NONE) {
+        record = first_record_from(rbase, spec.w, merge - seg_start);
+    }
     loop {
-        if (p >= seg_end || p + MFLIMIT > n) {
-            break;
+        // The next match: (start, end, offset).
+        var s = vec3<u32>(0u, 0u, 0u);
+        if (p < walk_to) {
+            if (p >= seg_end || p + MFLIMIT > n) {
+                break;
+            }
+            let step = greedy_step(c, p, seg_end, seg_end, look);
+            if (step.y == 0u) {
+                p = step.x;
+                continue;
+            }
+            s = vec3<u32>(p, step.x, step.y & 0xFFFFu);
+        } else {
+            if (merge == NONE || record >= spec.w) {
+                break;
+            }
+            let r = chain[rbase + record];
+            record++;
+            let start = seg_start + (r & 0x3FFFu);
+            // Its match word is intact: sequences are written behind the
+            // matches they describe (see above).
+            s = vec3<u32>(start, start + (r >> 14u), scratch[c.sbase + start] & 0xFFFFu);
         }
-        var s = greedy_step(c, p, seg_end, seg_end, look);
-        if (s.y == 0u) {
-            p = s.x;
-            continue;
-        }
-        if (s.x >= seg_end) {
+        p = s.x;
+        if (s.y >= seg_end) {
             // The match leaving the segment ends where the true walk does.
-            s.x = exit;
+            s.y = exit;
         }
-        let match_len = s.x - p;
+        let match_len = s.y - p;
         let q = c.sbase + seg_start + 4u * count;
         scratch[q + 2u] = match_len;
-        scratch[q + 3u] = s.y & 0xFFFFu;
+        scratch[q + 3u] = s.z;
         if (count == 0u) {
             // Literals patched below, once the anchor is known.
             first_p = p;
@@ -359,9 +419,9 @@ fn main(
             acc.z = max(acc.z, e.y);
         }
         count++;
-        anchor = s.x;
-        last = s.x;
-        p = s.x;
+        anchor = s.y;
+        last = s.y;
+        p = s.y;
     }
     last_end[k] = last;
     workgroupBarrier();

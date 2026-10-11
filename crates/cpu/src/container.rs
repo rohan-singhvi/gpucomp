@@ -261,6 +261,45 @@ pub fn decompress(file: &[u8], options: &DecompressOptions) -> Result<Vec<u8>, C
     Ok(out)
 }
 
+/// Decodes chunks `chunks` of `file` (whose index is `index`, already
+/// validated) into `dst`, which must hold exactly their uncompressed bytes.
+/// For callers that split a file's chunks between decoders.
+pub fn decompress_chunks_into(
+    file: &[u8],
+    index: &Index,
+    chunks: std::ops::Range<usize>,
+    dst: &mut [u8],
+    options: &DecompressOptions,
+) -> Result<(), CpuError> {
+    let entries = index
+        .chunks
+        .get(chunks.clone())
+        .ok_or(CpuError::Options("chunk range out of bounds"))?;
+    let expected: u64 = entries.iter().map(|e| u64::from(e.uncomp_size)).sum();
+    if dst.len() as u64 != expected {
+        return Err(CpuError::Options(
+            "destination isn't the chunks' uncompressed size",
+        ));
+    }
+    let data = &file[index.data_offset() as usize..];
+    dst.par_chunks_mut(index.header.chunk_size as usize)
+        .zip(entries)
+        .enumerate()
+        .try_for_each(|(i, (dst, entry))| {
+            let start = entry.comp_offset as usize;
+            let payload = &data[start..start + entry.comp_size as usize];
+            decode_chunk(
+                index.header.codec,
+                chunks.start + i,
+                entry,
+                index.header.checksums,
+                payload,
+                dst,
+                options,
+            )
+        })
+}
+
 /// Decodes one chunk's payload into `dst` (exactly `uncomp_size` bytes).
 fn decode_chunk(
     codec: Codec,

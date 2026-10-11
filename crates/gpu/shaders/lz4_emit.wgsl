@@ -42,9 +42,7 @@ fn emit_sequence(q: u32, chunk_start: u32, pos_in: u32) {
     put_byte(pos, (min(lit_len, 15u) << 4u) | min(match_code, 15u));
     pos = put_length(pos + 1u, lit_len);
     if (lit_len < LONG_LITERALS) {
-        for (var k = 0u; k < lit_len; k++) {
-            put_byte(pos + k, in_byte(chunk_start + lit_start + k));
-        }
+        put_run(pos, chunk_start + lit_start, lit_len);
     }
     pos += lit_len;
     if (match_len > 0u) {
@@ -89,7 +87,6 @@ fn main(
             q_i = seq_addr(sbase, n, i);
             size = sequence_size(q_i);
         }
-        qaddr[lid] = q_i;
         scan[lid] = size;
         workgroupBarrier();
         // Inclusive Hillis–Steele scan over the block's sizes.
@@ -102,19 +99,19 @@ fn main(
             scan[lid] += v;
             workgroupBarrier();
         }
+        var run = vec3<u32>(0u, 0u, 0u);
         if (i < count) {
-            emit_sequence(q_i, start, out_base + running + scan[lid] - size);
-        }
-        // Long literal runs of this block's sequences, by the whole workgroup.
-        let in_block = min(WG_SIZE, count - block);
-        for (var j = 0u; j < in_block; j++) {
-            let q = qaddr[j];
-            let lit_len = scratch[q + 1u];
+            let pos = out_base + running + scan[lid] - size;
+            emit_sequence(q_i, start, pos);
+            let lit_len = scratch[q_i + 1u];
             if (lit_len >= LONG_LITERALS) {
-                let seq_pos = out_base + running + scan[j] - sequence_size(q);
-                copy_literals(seq_pos + 1u + length_extra(lit_len), start + scratch[q], lit_len, lid);
+                run = vec3<u32>(pos + 1u + length_extra(lit_len), start + scratch[q_i], lit_len);
             }
         }
+        // Long literal runs of this block's sequences, by the whole workgroup.
+        long_run[lid] = run;
+        workgroupBarrier();
+        copy_long_runs(min(WG_SIZE, count - block), lid);
         running += scan[WG_SIZE - 1u];
         workgroupBarrier();
     }

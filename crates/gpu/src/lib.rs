@@ -5,6 +5,7 @@ pub mod decode;
 mod dispatch;
 pub mod encode;
 pub mod filter;
+pub mod hybrid;
 mod smoke;
 mod timer;
 

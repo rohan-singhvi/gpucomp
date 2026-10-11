@@ -78,7 +78,6 @@ fn main(
             }
             esc = select(0u, 1u, lit_len >= 15u) + select(0u, 1u, match_code >= 15u);
         }
-        qaddr[lid] = q;
         // Inclusive scan of (escapes, literal bytes).
         scan2[lid] = vec2<u32>(esc, lit_len);
         workgroupBarrier();
@@ -97,6 +96,7 @@ fn main(
         }
         let totals = scan2[WG_SIZE - 1u];
 
+        var run = vec3<u32>(0u, 0u, 0u);
         if (in_range) {
             let lit_nibble = min(lit_len, 15u);
             let match_nibble = min(match_code, 15u);
@@ -110,26 +110,17 @@ fn main(
             if (match_nibble == 15u) {
                 put_ext(ext_at, k, match_code - 15u, wide);
             }
+            let dst = literals_at + lit_base + before.y;
             if (lit_len < LONG_LITERALS) {
-                let dst = literals_at + lit_base + before.y;
-                for (var b = 0u; b < lit_len; b++) {
-                    put_byte(dst + b, in_byte(start + lit_start + b));
-                }
+                put_run(dst, start + lit_start, lit_len);
+            } else {
+                run = vec3<u32>(dst, start + lit_start, lit_len);
             }
         }
         // Long literal runs of this block, by the whole workgroup.
-        let in_block = min(WG_SIZE, count - block);
-        for (var j = 0u; j < in_block; j++) {
-            let q = qaddr[j];
-            let len = scratch[q + 1u];
-            if (len >= LONG_LITERALS) {
-                var lp = lit_base;
-                if (j > 0u) {
-                    lp += scan2[j - 1u].y;
-                }
-                copy_literals(literals_at + lp, start + scratch[q], len, lid);
-            }
-        }
+        long_run[lid] = run;
+        workgroupBarrier();
+        copy_long_runs(min(WG_SIZE, count - block), lid);
         ext_base += totals.x;
         lit_base += totals.y;
         workgroupBarrier();

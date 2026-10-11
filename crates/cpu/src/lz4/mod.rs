@@ -3,6 +3,7 @@
 
 pub mod decode;
 pub mod encode;
+pub mod fast;
 
 /// Minimum match length.
 pub const MIN_MATCH: usize = 4;

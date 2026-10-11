@@ -305,6 +305,8 @@ As built: the prose lives in `bench/REPORT.template.md`, and `gpucomp bench --re
 
 ### M11 (stretch) — Experiments
 Pick based on the M10 results. Each is independent.
+
+Done first, from the M10 profile (DECISIONS "Optimization research (2026-10-11)"): kernel speed-ups (the parse copies its speculative path instead of re-walking it, emit keeps literal-run bookkeeping in workgroup memory and writes words, match finding is software-pipelined), a fast CPU twin with identical output, and **CPU+GPU compression and decompression** (`gpu::hybrid`, `--hybrid`). Because every chunk encodes identically on either device, the two can share one input under an adaptive schedule and still write the GPU-only file.
 - ~~**Entropy stage**~~ (done in M9e as GLZ-E, codec 3).
 - **GDeflate codec (codec id 4; id 3 is GLZ-E):** a GPU encoder (M3-style match finding, then distributing symbols across 32 sub-streams with Huffman coding) and a WGSL decoder ported from the Microsoft HLSL reference. Validate against the reference implementation in both directions.
 - **Multi-byte symbols (from GPULZ):** match on 2- or 4-byte units for numeric data.

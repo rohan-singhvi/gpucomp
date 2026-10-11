@@ -325,3 +325,31 @@ fn stages_name_the_kernels_and_a_prefix_runs_only_those() {
     decoder.dispatch_stages(&ctx, &p, 2);
     assert!(decoder.finish(&ctx, &p, false).unwrap() == input);
 }
+
+#[test]
+fn chunk_ranges_decode_in_order_through_the_sink() {
+    let Some(ctx) = context() else { return };
+    // Small batches, so a range spans several.
+    let decoder = GpuDecoder::new(&ctx).with_memory_budget(64 << 10);
+    let input = [
+        text(5 * CHUNK as usize + 100),
+        random(3 * CHUNK as usize, 9),
+    ]
+    .concat();
+    let file = compress(&input, &glze(1, FilterMode::Auto, CHUNK)).unwrap();
+    let chunk = CHUNK as usize;
+    for range in [0..9, 0..1, 3..7, 8..9, 5..5] {
+        let mut out = Vec::new();
+        decoder
+            .decompress_chunks(&ctx, &file, range.clone(), true, &mut |bytes| {
+                out.extend_from_slice(bytes);
+                Ok(())
+            })
+            .unwrap();
+        let (start, end) = (range.start * chunk, (range.end * chunk).min(input.len()));
+        assert!(out == input[start..end], "{range:?}");
+    }
+    assert!(decoder
+        .decompress_chunks(&ctx, &file, 8..10, false, &mut |_| Ok(()))
+        .is_err());
+}
