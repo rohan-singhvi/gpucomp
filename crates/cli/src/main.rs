@@ -70,6 +70,13 @@ struct BenchArgs {
     results_dir: PathBuf,
     #[arg(long, default_value = "BENCHMARKS.md")]
     report_path: PathBuf,
+    /// Template for the final report (prose with `{{section}}` placeholders);
+    /// --report fills it in when it exists.
+    #[arg(long, default_value = "bench/REPORT.template.md")]
+    report_template: PathBuf,
+    /// Where --report writes the final report.
+    #[arg(long, default_value = "bench/REPORT.md")]
+    final_report_path: PathBuf,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -134,6 +141,7 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
             label: args.label.clone(),
             note: args.note.clone(),
             os: std::env::consts::OS.into(),
+            cpu: bench::host::cpu(),
             adapter,
             backend,
             measurements: bench::suite::platform(ctx.as_ref(), &cfg)?,
@@ -147,6 +155,7 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
         inputs.extend(corpus.iter().cloned());
         run.measurements
             .extend(bench::suite::codecs(&inputs, &cfg)?);
+        run.measurements.extend(bench::suite::zstd(&inputs, &cfg)?);
         run.measurements
             .extend(bench::suite::glz(ctx.as_ref(), &inputs, &cfg)?);
         if let Some(ctx) = &ctx {
@@ -154,8 +163,14 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
                 .extend(bench::suite::gpu_decode(ctx, &inputs, &cfg)?);
             run.measurements
                 .extend(bench::suite::gpu_encode(ctx, &inputs, &cfg)?);
+            run.measurements
+                .extend(bench::suite::profile(ctx, &profile_inputs(&inputs), &cfg)?);
         }
+        drop(inputs);
         let filter_inputs = filter_suite_inputs(cfg.bytes, &corpus);
+        // zstd on the numeric inputs too (the corpus is already measured).
+        let numeric = &filter_inputs[..filter_inputs.len() - corpus.len()];
+        run.measurements.extend(bench::suite::zstd(numeric, &cfg)?);
         drop(corpus);
         run.measurements
             .extend(bench::suite::filters(ctx.as_ref(), &filter_inputs, &cfg)?);
@@ -173,8 +188,42 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
             args.report_path.display(),
             runs.len()
         );
+        if write_final_report(&runs, &args.report_template, &args.final_report_path)? {
+            eprintln!("wrote {}", args.final_report_path.display());
+        } else {
+            eprintln!(
+                "no {}; skipped the final report",
+                args.report_template.display()
+            );
+        }
     }
     Ok(())
+}
+
+/// The one input the per-stage profile runs on: the corpus concatenation
+/// (`<corpus>/all`) if there is one, else `text`.
+fn profile_inputs(inputs: &[(String, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
+    let pick = |want: &dyn Fn(&str) -> bool| inputs.iter().find(|(name, _)| want(name));
+    pick(&|n| n.ends_with("/all"))
+        .or_else(|| pick(&|n| n == "text"))
+        .into_iter()
+        .cloned()
+        .collect()
+}
+
+/// Fills `template` from `runs` into `out`; `false` (writing nothing) when
+/// there's no template.
+fn write_final_report(
+    runs: &[bench::record::Run],
+    template: &std::path::Path,
+    out: &std::path::Path,
+) -> anyhow::Result<bool> {
+    if !template.exists() {
+        return Ok(false);
+    }
+    let template = std::fs::read_to_string(template)?;
+    std::fs::write(out, bench::final_report::render(runs, &template)?)?;
+    Ok(true)
 }
 
 /// Inputs for the M7 filters suite: numeric data of `bytes` each, then the corpus.
@@ -267,6 +316,58 @@ mod tests {
         assert!(!args.record && !args.report && !args.report_only);
         assert_eq!(args.results_dir, PathBuf::from("bench/results"));
         assert_eq!(args.report_path, PathBuf::from("BENCHMARKS.md"));
+        assert_eq!(
+            args.report_template,
+            PathBuf::from("bench/REPORT.template.md")
+        );
+        assert_eq!(args.final_report_path, PathBuf::from("bench/REPORT.md"));
+    }
+
+    #[test]
+    fn the_profile_runs_on_the_corpus_concatenation_else_text() {
+        let named = |names: &[&str]| -> Vec<(String, Vec<u8>)> {
+            names.iter().map(|n| (n.to_string(), vec![1])).collect()
+        };
+        let pick = |names: &[&str]| -> Vec<String> {
+            profile_inputs(&named(names))
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect()
+        };
+        assert_eq!(
+            pick(&["zeros", "text", "silesia/a", "silesia/all"]),
+            ["silesia/all"]
+        );
+        assert_eq!(pick(&["zeros", "text"]), ["text"]);
+        assert!(pick(&["zeros"]).is_empty());
+    }
+
+    #[test]
+    fn the_final_report_is_written_only_when_its_template_exists() {
+        let dir = std::env::temp_dir().join(format!("gpucomp-final-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (template, out) = (dir.join("t.md"), dir.join("REPORT.md"));
+        let runs = [bench::record::Run {
+            date: "2026-10-10T00:00:00Z".into(),
+            commit: "abc1234".into(),
+            label: "M10".into(),
+            note: String::new(),
+            os: "macos".into(),
+            cpu: "Test CPU, 4 threads".into(),
+            adapter: "Test GPU".into(),
+            backend: "metal".into(),
+            measurements: Vec::new(),
+        }];
+        assert!(!write_final_report(&runs, &template, &out).unwrap());
+        assert!(!out.exists());
+        std::fs::write(&template, "# Report\n\n{{setup}}\n").unwrap();
+        assert!(write_final_report(&runs, &template, &out).unwrap());
+        let md = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            md.contains("# Report") && md.contains("Test CPU, 4 threads"),
+            "{md}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

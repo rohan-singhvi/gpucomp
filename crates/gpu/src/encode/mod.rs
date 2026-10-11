@@ -1459,6 +1459,44 @@ impl GpuEncoder {
         }
     }
 
+    /// The kernels an encode of `p` runs, in dispatch order.
+    fn stage_list(&self, p: &PreparedEncode) -> Vec<Stage> {
+        let mut stages = vec![Stage::Match];
+        if self.params.depth > 1 {
+            stages.push(Stage::Deep);
+        }
+        stages.extend([Stage::Parse, Stage::Emit]);
+        if p.codec == format::Codec::GlzE {
+            stages.extend([Stage::GlzeHist, Stage::GlzeBuild, Stage::GlzeWrite]);
+        }
+        stages
+    }
+
+    /// The names of the kernels [`dispatch`](Self::dispatch) runs for `p`, in
+    /// order, for profiling with [`dispatch_stages`](Self::dispatch_stages).
+    /// GLZ-E's `glze-hist` includes copying the GLZ blocks out of the slots.
+    pub fn stages(&self, p: &PreparedEncode) -> Vec<&'static str> {
+        self.stage_list(p).into_iter().map(Stage::name).collect()
+    }
+
+    /// Clears the output slots and submits only the first `count` kernels of
+    /// [`stages`](Self::stages). Timing successive prefixes gives each
+    /// kernel's time; the output is meaningful only for the whole list.
+    pub fn dispatch_stages(&self, ctx: &Context, p: &PreparedEncode, count: usize) {
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        self.record_stages(
+            ctx,
+            &mut encoder,
+            p,
+            (&p.bind_group, &p.output_buf),
+            None,
+            count,
+        );
+        ctx.queue.submit([encoder.finish()]);
+    }
+
     /// Clears the output slots and submits the encode.
     pub fn dispatch(&self, ctx: &Context, p: &PreparedEncode, timer: Option<&crate::GpuTimer>) {
         let mut encoder = ctx
@@ -1493,58 +1531,96 @@ impl GpuEncoder {
         output: &wgpu::Buffer,
         timer: Option<&crate::GpuTimer>,
     ) {
+        self.record_stages(ctx, encoder, p, (bind_group, output), timer, usize::MAX);
+    }
+
+    /// Records clearing `output` and the first `count` encode kernels.
+    fn record_stages(
+        &self,
+        ctx: &Context,
+        encoder: &mut wgpu::CommandEncoder,
+        p: &PreparedEncode,
+        (bind_group, output): (&wgpu::BindGroup, &wgpu::Buffer),
+        timer: Option<&crate::GpuTimer>,
+        count: usize,
+    ) {
         encoder.clear_buffer(output, 0, Some(p.output_size));
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("encode"),
-            timestamp_writes: timer.map(crate::GpuTimer::pass_writes),
-        });
-        // Three kernels; wgpu orders their storage accesses.
+        // The kernels share a pass; wgpu orders their storage accesses.
+        let mut pass = encoder
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("encode"),
+                timestamp_writes: timer.map(crate::GpuTimer::pass_writes),
+            })
+            .forget_lifetime();
+        pass.set_bind_group(0, bind_group, &[]);
         let max = ctx.device_limits().max_compute_workgroups_per_dimension;
         let per_chunk = dispatch_grid(p.chunks, max);
         let kernels = self.kernels(p.codec);
-        let parse = if p.serial_parse {
-            (
-                &kernels.parse_serial,
-                dispatch_grid(p.chunks.div_ceil(PARSE_WG), max),
-            )
-        } else {
-            (&kernels.parse, per_chunk)
-        };
-        pass.set_bind_group(0, bind_group, &[]);
-        pass.set_pipeline(&self.matches);
-        pass.dispatch_workgroups(per_chunk.0, per_chunk.1, 1);
-        if self.params.depth > 1 {
-            // Every position's deep match, at full occupancy (no workgroup
-            // memory), memoised for the parse.
-            let positions = u32::try_from(p.input_size).unwrap_or(u32::MAX);
-            let (x, y) = dispatch_grid(positions.div_ceil(DEEP_PASS_WG), max);
-            pass.set_pipeline(&self.deep_pass);
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        for (pipeline, (x, y)) in [parse, (&kernels.emit, per_chunk)] {
+        for stage in self.stage_list(p).into_iter().take(count) {
+            let (pipeline, (x, y)) = match stage {
+                Stage::Match => (&self.matches, per_chunk),
+                Stage::Deep => {
+                    // Every position's deep match, at full occupancy (no
+                    // workgroup memory), memoised for the parse.
+                    let positions = u32::try_from(p.input_size).unwrap_or(u32::MAX);
+                    let grid = dispatch_grid(positions.div_ceil(DEEP_PASS_WG), max);
+                    (&self.deep_pass, grid)
+                }
+                Stage::Parse if p.serial_parse => (
+                    &kernels.parse_serial,
+                    dispatch_grid(p.chunks.div_ceil(PARSE_WG), max),
+                ),
+                Stage::Parse => (&kernels.parse, per_chunk),
+                Stage::Emit => (&kernels.emit, per_chunk),
+                Stage::GlzeHist => {
+                    // Transcode the GLZ blocks back into the slots. The match
+                    // scratch is free after emit and bigger than the slots (4
+                    // bytes per input byte), so the blocks are copied there.
+                    drop(pass);
+                    encoder.copy_buffer_to_buffer(output, 0, &p.scratch.0, 0, p.output_size);
+                    pass = encoder
+                        .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("glz-e encode"),
+                            timestamp_writes: None,
+                        })
+                        .forget_lifetime();
+                    pass.set_bind_group(0, bind_group, &[]);
+                    (&self.glze_hist, per_chunk)
+                }
+                Stage::GlzeBuild => (
+                    &self.glze_build,
+                    dispatch_grid((p.chunks * 4).div_ceil(GLZE_BUILD_WG), max),
+                ),
+                Stage::GlzeWrite => (&self.glze_encode, per_chunk),
+            };
             pass.set_pipeline(pipeline);
             pass.dispatch_workgroups(x, y, 1);
         }
-        if p.codec == format::Codec::GlzE {
-            // Transcode the GLZ blocks back into the slots. The match scratch
-            // is free after emit and bigger than the slots (4 bytes per input
-            // byte), so the blocks are copied there.
-            drop(pass);
-            encoder.copy_buffer_to_buffer(output, 0, &p.scratch.0, 0, p.output_size);
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("glz-e encode"),
-                timestamp_writes: None,
-            });
-            pass.set_bind_group(0, bind_group, &[]);
-            let builds = dispatch_grid((p.chunks * 4).div_ceil(GLZE_BUILD_WG), max);
-            for (pipeline, (x, y)) in [
-                (&self.glze_hist, per_chunk),
-                (&self.glze_build, builds),
-                (&self.glze_encode, per_chunk),
-            ] {
-                pass.set_pipeline(pipeline);
-                pass.dispatch_workgroups(x, y, 1);
-            }
+    }
+}
+
+/// One encode kernel; see [`GpuEncoder::stages`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    Match,
+    Deep,
+    Parse,
+    Emit,
+    GlzeHist,
+    GlzeBuild,
+    GlzeWrite,
+}
+
+impl Stage {
+    fn name(self) -> &'static str {
+        match self {
+            Stage::Match => "match",
+            Stage::Deep => "deep",
+            Stage::Parse => "parse",
+            Stage::Emit => "emit",
+            Stage::GlzeHist => "glze-hist",
+            Stage::GlzeBuild => "glze-build",
+            Stage::GlzeWrite => "glze-write",
         }
     }
 }
@@ -1961,6 +2037,49 @@ mod tests {
                 "{filters:?}: {chunks} chunks per batch"
             );
         }
+    }
+
+    #[test]
+    fn stages_name_the_kernels_and_a_prefix_runs_only_those() {
+        let Some(ctx) = gpu() else { return };
+        let level1 = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+        let level2 = GpuEncoder::new(&ctx, EncodeParams::for_level(2)).unwrap();
+        let lz4 = GpuCompressOptions {
+            chunk_size: 4096,
+            ..GpuCompressOptions::default()
+        };
+        let glze = GpuCompressOptions {
+            codec: format::Codec::GlzE,
+            ..lz4
+        };
+        // Whole compressible chunks: the parse sets the sizes of chunks that
+        // won't shrink, emit all others.
+        let input = text(4 * 4096);
+        let p = level1.prepare(&ctx, &input, &lz4).unwrap();
+        assert_eq!(level1.stages(&p), ["match", "parse", "emit"]);
+        let deep = level2.prepare(&ctx, &input, &lz4).unwrap();
+        assert_eq!(level2.stages(&deep), ["match", "deep", "parse", "emit"]);
+        let entropy = level1.prepare(&ctx, &input, &glze).unwrap();
+        assert_eq!(
+            level1.stages(&entropy),
+            [
+                "match",
+                "parse",
+                "emit",
+                "glze-hist",
+                "glze-build",
+                "glze-write"
+            ]
+        );
+
+        // Emit writes the chunk sizes: stopping before it leaves them zero.
+        let sizes = |p: &PreparedEncode| -> Vec<u32> {
+            bytemuck::pod_collect_to_vec(&ctx.read_buffer(&p.sizes_buf, 16).unwrap())
+        };
+        level1.dispatch_stages(&ctx, &p, 2);
+        assert_eq!(sizes(&p), [0; 4]);
+        level1.dispatch_stages(&ctx, &p, 3);
+        assert!(sizes(&p).iter().all(|&n| n > 0), "{:?}", sizes(&p));
     }
 
     #[test]

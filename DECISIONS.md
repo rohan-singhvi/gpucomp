@@ -954,6 +954,16 @@ buggy kernel.) The stitching tests now take their boundaries from `PARSE_SEGMENT
   for `probe_len` ≤ 16). 2 / 4 / 16 candidates: 115.2 / 162.5 / 350.2 →
   116.6 / 159.1 / 335.0 ms. Kept (exact and harmless). The per-candidate cost is the
   candidate side's unaligned loads and divergence.
+- **GLZ decode short copies a word at a time** (assemble each output word in a
+  register, one `atomicOr` per word, taking overlapping match bytes from the
+  register): **slower**. Silesia GLZ kernel 43.0 → 47.6 ms, GLZ-E 58.0 → 62.3 ms.
+  The byte-wise atomics weren't the bottleneck; the branchier loops cost more.
+  Reverted.
+- **probe_len at level 1:** 16 / 12 / 8 / 4 give LZ4 1.9932 / 1.9924 / 1.9892 /
+  1.9433× in 74.7 / 72.5 / 70.6 / 69.1 ms (GLZ-E 2.5025 / 2.5018 / 2.4997 /
+  2.4753×). Probe 8 saves ~5% for −0.1–0.2% ratio. Not adopted: it changes
+  level-1 output for little. At probe 4 the lazy rule degrades, because every capped
+  length ties.
 
 ## Deep matches: separate full-occupancy pass (replaces the ring)
 The ring (above) made chain lookups contiguous, but the deep candidate loop still ran
@@ -1022,13 +1032,67 @@ Multi-threaded zstd compresses ~3× faster than gpucomp's GPU GLZ-E path on this
 at a better ratio (whole-file, so no random access). gpucomp's GPU decode (2.7–3.4
 GB/s end to end) beats zstd's single-threaded decoder, but not a multi-threaded CPU
 decode of independent chunks (lz4_flex 12.8 GB/s).
-- **GLZ decode short copies a word at a time** (assemble each output word in a
-  register, one `atomicOr` per word, taking overlapping match bytes from the
-  register): **slower**. Silesia GLZ kernel 43.0 → 47.6 ms, GLZ-E 58.0 → 62.3 ms.
-  The byte-wise atomics weren't the bottleneck; the branchier loops cost more.
-  Reverted.
-- **probe_len at level 1:** 16 / 12 / 8 / 4 give LZ4 1.9932 / 1.9924 / 1.9892 /
-  1.9433× in 74.7 / 72.5 / 70.6 / 69.1 ms (GLZ-E 2.5025 / 2.5018 / 2.4997 /
-  2.4753×). Probe 8 saves ~5% for −0.1–0.2% ratio. Not adopted: it changes
-  level-1 output for little. At probe 4 the lazy rule degrades, because every capped
-  length ties.
+
+## M10: final report
+**A generated report with hand-written prose.** `bench/REPORT.md` is rendered by
+`bench::final_report` from `bench/REPORT.template.md`. The template holds the prose;
+its `{{section}}` placeholders (setup, versus, compress, decompress, per-file,
+synthetic, numeric, profile, platform) are filled from the newest corpus run of each
+adapter. An unknown placeholder is an error. `gpucomp bench --report` writes it
+whenever the template exists. A run on another machine, such as a discrete GPU,
+regenerates every number without touching the prose. With several adapters, each
+section repeats per adapter.
+
+**Bench additions:**
+- **zstd baselines** through the `zstd` crate (0.14.2, `zstdmt` feature), in the
+  bench crate only. `cpu.zstd-N` compresses 64 KiB chunks as separate frames on all
+  rayon threads, the same random access as a `.gpcz` file. `cpu.zstd-N-file`
+  compresses the whole input as one frame with zstd's own workers (like `zstd
+  -T0`) and decodes it on one thread. Levels 1 and 3. They also run on the numeric
+  inputs. This closes M9's acceptance gap: `BENCHMARKS.md` now has a
+  ratio-vs-throughput table with zstd next to every level.
+- **GLZ-E at levels 2 and 3** in both directions on CPU and GPU (the GPU file must
+  equal the twin's, as at level 1), and **GLZ-E in the filters suite**.
+- **Per-stage profile.** `GpuEncoder::stages` / `dispatch_stages` and
+  `GpuDecoder::stages` / `dispatch_stages` run a prefix of the kernel list, so the
+  bench times each prefix (`gpu.<path>.upto.<stage>`) and the report subtracts
+  neighbours. This replaces the temporary `take(upto)` hacks of earlier profiling.
+  Prefixes are timed by wall clock around submit and wait, since a prefix can't
+  carry timestamps; the submit overhead cancels in the differences.
+- **Host CPU** in each run (`cpu`, e.g. `Apple M4 Pro, 12 threads`). Older runs
+  load with it empty.
+
+**The recorded run, and one discarded attempt.** The first M10 run measured 2–5%
+below `deep-pass` on unchanged GPU rows, and up to 10–13% below on multi-threaded
+CPU rows and upload/readback. Spotlight (`mds_stores`) and `mediaanalysisd` were
+using ~1.5 cores. A same-session A/B of the last commit against the working tree
+(Silesia, median of 15, three alternating rounds) showed the M10 changes cost
+nothing:
+
+| Kernel | `8144d84` | M10 tree |
+|---|---|---|
+| LZ4 encode | 74.6–74.8 ms | 74.7–74.8 ms |
+| GLZ-E encode | 93.7–93.8 ms | 93.8–94.0 ms |
+| LZ4 decode | 61.8–62.5 ms | 62.3–62.7 ms |
+| GLZ-E decode | 57.9–58.6 ms | 57.8–58.5 ms |
+
+That run was deleted. It was re-recorded once those services had finished, keeping
+the second run whatever it showed. Its GPU rows are within ±3% of `deep-pass`.
+Multi-threaded CPU rows still vary ±5–11% between runs with desktop apps open.
+
+**Findings** (Silesia, end to end; details in bench/REPORT.md):
+- **zstd in-process agrees with its CLI:** 64 KiB chunks give 2.763× at level 1 (the
+  CLI's `-B64K` bench gave 2.763×), and the whole file 2.891×. Multi-threaded whole-file
+  compression measured 5.90 GB/s here against 6.47 from `zstd -T0`.
+- **GPU compression doesn't beat the CPU on this Mac.** GPU LZ4 level 1 runs at
+  2.36 GB/s against lz4_flex's 5.43 (0.43×). GLZ-E level 3 matches zstd -1's ratio on
+  64 KiB chunks (2.75× vs 2.76×) at 0.68 GB/s against 5.80.
+- **Against the same algorithm, the GPU wins:** 2.3× the LZ4 twin, 2.2× the GLZ-E
+  twin at level 1, and 4.9× at level 3. The twin itself is 5.3× slower than
+  lz4_flex, so the gap is the parallel algorithm's extra work per byte.
+- **Profile, level 1 LZ4 encode:** match 34 ms, parse 26 ms, emit 15 ms, transfers
+  and host work 15 ms (16%). The deep pass is ~200 ms, about two thirds of level 3.
+  GLZ-E adds ~18 ms to encoding and ~16 ms to decoding. Decode transfers are 20–30%.
+- **Numeric data (256 MiB inputs):** GLZ-E with filters beats zstd -3 on the whole
+  file for sorted u32 (4.08× vs 1.38×) and i16 audio (1.25× vs 1.04×). zstd stays
+  ahead at level 1 on u64 timestamps (3.91× vs 3.17×) and f32 points (1.59× vs 1.45×).

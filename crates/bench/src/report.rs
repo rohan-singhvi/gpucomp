@@ -88,6 +88,15 @@ pub fn render(runs: &[Run]) -> String {
             .map(|m| format!("{} {}", m.input, human_bytes(m.bytes)))
             .collect();
         let _ = writeln!(md, "\nInput sizes: {}.", sizes.join(", "));
+        if let Some(table) = crate::final_report::compress_tradeoff(latest) {
+            let _ = writeln!(
+                md,
+                "\n### Compression: ratio vs throughput\n\n\
+                 Fastest first; ◆ marks the Pareto frontier (nothing else is both faster and smaller). \
+                 CPU rows are multi-threaded unless they say otherwise.\n\n{}",
+                table.trim_end()
+            );
+        }
 
         // History: one headline input per measurement, across recent runs.
         let recent = &runs[runs.len().saturating_sub(HISTORY_RUNS)..];
@@ -378,6 +387,33 @@ mod tests {
         assert_eq!(rows.len(), 2, "{history}");
         assert!(rows[0].starts_with("| cpu.x (silesia/all)") && rows[0].contains("2.00"));
         assert!(rows[1].starts_with("| cpu.y (random)") && rows[1].contains("3.00"));
+    }
+
+    #[test]
+    fn latest_run_shows_compression_ratio_against_throughput() {
+        let row = |name: &str, gbps, ratio| Measurement {
+            ratio: Some(ratio),
+            ..on(name, "silesia/all", gbps)
+        };
+        let md = render(&[with(vec![
+            row("gpu.lz4.compress.e2e", 2.3, 1.99),
+            row("cpu.zstd-1.compress.mt", 0.7, 2.76),
+        ])]);
+        let start = md
+            .find("### Compression: ratio vs throughput")
+            .unwrap_or_else(|| panic!("{md}"));
+        let section = &md[start..md.find("### History").unwrap()];
+        assert!(
+            section.contains("| CPU zstd -1, 64 KiB chunks | 2.76× |"),
+            "{section}"
+        );
+        assert!(
+            section.contains("| GPU LZ4, level 1 | 1.99× |"),
+            "{section}"
+        );
+        // Runs without codec rows have no such section.
+        let md = render(&[with(vec![on("cpu.memcpy", "random", 60.0)])]);
+        assert!(!md.contains("ratio vs throughput"), "{md}");
     }
 
     #[test]

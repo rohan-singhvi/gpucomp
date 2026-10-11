@@ -816,10 +816,46 @@ impl GpuDecoder {
         }))
     }
 
+    /// The names of the stages [`dispatch`](Self::dispatch) runs for `p`, in
+    /// order, for profiling with [`dispatch_stages`](Self::dispatch_stages):
+    /// GLZ-E's entropy kernel, the decode kernel, then the inverse filters
+    /// (with their copies) when any chunk is filtered.
+    pub fn stages(&self, p: &PreparedDecode) -> Vec<&'static str> {
+        let mut stages = Vec::new();
+        if p.glze.is_some() {
+            stages.push("glze-entropy");
+        }
+        stages.push("decode");
+        if p.unfilter.is_some() {
+            stages.push("unfilter");
+        }
+        stages
+    }
+
+    /// [`dispatch`](Self::dispatch) of only the first `count`
+    /// [`stages`](Self::stages), without a timer. Timing successive prefixes
+    /// gives each stage's time; the output is meaningful only for all of them.
+    pub fn dispatch_stages(&self, ctx: &Context, p: &PreparedDecode, count: usize) {
+        self.dispatch_with(ctx, p, None, count);
+    }
+
     /// Records and submits the decode. The output buffer must be zero (fresh
     /// from [`prepare_file`](Self::prepare_file)), so dispatching again first
     /// clears it.
     pub fn dispatch(&self, ctx: &Context, p: &PreparedDecode, timer: Option<&crate::GpuTimer>) {
+        self.dispatch_with(ctx, p, timer, usize::MAX);
+    }
+
+    /// [`dispatch`](Self::dispatch) of the first `count` stages.
+    fn dispatch_with(
+        &self,
+        ctx: &Context,
+        p: &PreparedDecode,
+        timer: Option<&crate::GpuTimer>,
+        count: usize,
+    ) {
+        // Stage indices: the entropy kernel (GLZ-E only), decode, unfilter.
+        let decode_stage = usize::from(p.glze.is_some());
         let mut encoder = ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -840,25 +876,27 @@ impl GpuDecoder {
             });
             let chunks = p.chunks.len() as u32;
             let max = ctx.device_limits().max_compute_workgroups_per_dimension;
-            if let Some(g) = &p.glze {
+            if let Some(g) = p.glze.as_ref().filter(|_| count > 0) {
                 pass.set_pipeline(&self.glze_pipeline);
                 pass.set_bind_group(0, &g.bind_group, &[]);
                 let (x, y) = dispatch_grid(chunks, max);
                 pass.dispatch_workgroups(x, y, 1);
             }
-            pass.set_pipeline(self.pipeline_for(p.index.header.codec));
-            pass.set_bind_group(0, &p.bind_group, &[]);
-            let (x, y) = dispatch_grid(
-                match (p.index.header.codec, self.config.kernel) {
-                    (format::Codec::Glz | format::Codec::GlzE, _) => chunks,
-                    (_, DecodeKernel::Naive) => chunks.div_ceil(self.config.workgroup),
-                    (_, DecodeKernel::Cooperative) => chunks,
-                },
-                ctx.device_limits().max_compute_workgroups_per_dimension,
-            );
-            pass.dispatch_workgroups(x, y, 1);
+            if count > decode_stage {
+                pass.set_pipeline(self.pipeline_for(p.index.header.codec));
+                pass.set_bind_group(0, &p.bind_group, &[]);
+                let (x, y) = dispatch_grid(
+                    match (p.index.header.codec, self.config.kernel) {
+                        (format::Codec::Glz | format::Codec::GlzE, _) => chunks,
+                        (_, DecodeKernel::Naive) => chunks.div_ceil(self.config.workgroup),
+                        (_, DecodeKernel::Cooperative) => chunks,
+                    },
+                    ctx.device_limits().max_compute_workgroups_per_dimension,
+                );
+                pass.dispatch_workgroups(x, y, 1);
+            }
         }
-        if let Some(u) = &p.unfilter {
+        if let Some(u) = p.unfilter.as_ref().filter(|_| count > decode_stage + 1) {
             for &(from, to, bytes) in &u.copies {
                 encoder.copy_buffer_to_buffer(&p.dst_buf, from, &u.scratch, to, bytes);
             }

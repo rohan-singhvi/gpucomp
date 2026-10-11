@@ -43,6 +43,10 @@ pub struct Run {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
     pub os: String,
+    /// The host CPU and its thread count, e.g. `Apple M4 Pro, 12 threads`.
+    /// Empty in runs recorded before it was added.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cpu: String,
     pub adapter: String,
     pub backend: String,
     pub measurements: Vec<Measurement>,
@@ -74,6 +78,7 @@ pub(crate) fn sample_run() -> Run {
         label: "M0".into(),
         note: String::new(),
         os: "macos".into(),
+        cpu: "Apple M4 Pro, 12 threads".into(),
         adapter: "Apple M4 Pro".into(),
         backend: "metal".into(),
         measurements: vec![Measurement {
@@ -96,6 +101,14 @@ mod tests {
         let run = sample_run();
         let json = serde_json::to_string_pretty(&run).unwrap();
         assert_eq!(serde_json::from_str::<Run>(&json).unwrap(), run);
+    }
+
+    #[test]
+    fn runs_recorded_before_the_cpu_field_load_with_it_empty() {
+        let mut old = serde_json::to_value(sample_run()).unwrap();
+        old.as_object_mut().unwrap().remove("cpu");
+        let run: Run = serde_json::from_value(old).unwrap();
+        assert_eq!(run.cpu, "");
     }
 
     #[test]

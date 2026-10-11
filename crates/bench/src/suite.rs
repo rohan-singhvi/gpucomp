@@ -251,7 +251,9 @@ pub fn gpu_encode(
 /// GLZ (codec 2) in both directions, plain and with dependency elimination
 /// over groups of 64 sequences (`glz-g64`): CPU encoder and reference decoder
 /// (multi-threaded), and with a GPU, kernel-only and end-to-end encode and
-/// decode. Also GLZ-E (codec 3, `glze`), both ways. 64 KiB chunks.
+/// decode. Also GLZ-E (codec 3, `glze`), both ways, at levels 1 to 3 (`glze`,
+/// `glze.l2`, `glze.l3`). Names read `<device>.<codec>.<direction>.<timing>`.
+/// 64 KiB chunks.
 pub fn glz(
     ctx: Option<&Context>,
     inputs: &[(String, Vec<u8>)],
@@ -259,12 +261,14 @@ pub fn glz(
 ) -> anyhow::Result<Vec<Measurement>> {
     use cpu::container::{compress, decompress, CompressOptions, DecompressOptions, Encoder};
     use gpu::decode::GpuDecoder;
-    use gpu::encode::{GpuCompressOptions, GpuEncoder};
+    use gpu::encode::{EncodeParams, GpuCompressOptions, GpuEncoder};
 
     let gpu = match ctx {
         Some(ctx) => Some((
             ctx,
-            GpuEncoder::new(ctx, Default::default())?,
+            (1..=3)
+                .map(|level| GpuEncoder::new(ctx, EncodeParams::for_level(level)))
+                .collect::<Result<Vec<_>, _>>()?,
             GpuDecoder::new(ctx),
             GpuTimer::new(ctx),
         )),
@@ -283,23 +287,27 @@ pub fn glz(
             continue;
         }
         let n = data.len() as u64;
-        for (label, codec, groups) in [
-            ("glz", format::Codec::Glz, None),
-            ("glz-g64", format::Codec::Glz, Some(64)),
-            ("glze", format::Codec::GlzE, None),
+        for (label, codec, groups, level) in [
+            ("glz", format::Codec::Glz, None, 1),
+            ("glz-g64", format::Codec::Glz, Some(64), 1),
+            ("glze", format::Codec::GlzE, None, 1),
+            ("glze.l2", format::Codec::GlzE, None, 2),
+            ("glze.l3", format::Codec::GlzE, None, 3),
         ] {
             let cpu_options = CompressOptions {
                 codec,
                 encoder: Encoder::Glz(cpu::glz::GlzParams {
+                    lz: cpu::lz4::encode::Params::for_level(level),
                     independent_groups: groups,
-                    ..Default::default()
                 }),
+                level,
                 ..CompressOptions::default()
             };
             let file = compress(data, &cpu_options)?;
             let mut row = |kind: &str, elapsed: Duration, timing| {
+                let (device, rest) = kind.split_once('.').unwrap();
                 rows.push(Measurement {
-                    name: format!("{label}.{kind}"),
+                    name: format!("{device}.{label}.{rest}"),
                     input: name.clone(),
                     bytes: n,
                     gbps: gbps(n, elapsed),
@@ -322,12 +330,14 @@ pub fn glz(
                 row("cpu.decompress.mt", t, Timing::Cpu);
             }
 
-            let Some((ctx, encoder, decoder, timer)) = &gpu else {
+            let Some((ctx, encoders, decoder, timer)) = &gpu else {
                 continue;
             };
+            let encoder = &encoders[usize::from(level) - 1];
             let gpu_options = GpuCompressOptions {
                 codec,
                 independent_groups: groups,
+                level,
                 ..GpuCompressOptions::default()
             };
             anyhow::ensure!(
@@ -373,11 +383,93 @@ pub fn glz(
             row("gpu.decompress.e2e", t, Timing::WallE2e);
         }
     }
-    // Names read `<device>.<codec>.<direction>.<timing>`.
-    for m in &mut rows {
-        let (codec, rest) = m.name.split_once('.').unwrap();
-        let (device, rest) = rest.split_once('.').unwrap();
-        m.name = format!("{device}.{codec}.{rest}");
+    Ok(rows)
+}
+
+/// Per-stage GPU profile of each input. For each encoder (LZ4 and GLZ-E at
+/// levels 1 and 3) and decoder (cooperative LZ4, GLZ, GLZ-E), the median time
+/// of every prefix of its kernels, as wall clock around submit + wait with the
+/// data already on the GPU (prefixes can't be timed with timestamps). Rows are
+/// `gpu.<codec>[.lN].<direction>.upto.<stage>`, with the throughput of the
+/// prefix through that stage and the file's ratio; the report subtracts
+/// consecutive prefixes to get each stage's own time.
+pub fn profile(
+    ctx: &Context,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+) -> anyhow::Result<Vec<Measurement>> {
+    use cpu::container::{compress, CompressOptions, Encoder};
+    use format::Codec;
+    use gpu::decode::GpuDecoder;
+    use gpu::encode::{EncodeParams, GpuCompressOptions, GpuEncoder};
+
+    let time = |dispatch: &dyn Fn()| {
+        median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            dispatch();
+            ctx.wait()?;
+            Ok(start.elapsed())
+        })
+    };
+    let glz = |codec| CompressOptions {
+        codec,
+        encoder: Encoder::Glz(Default::default()),
+        ..CompressOptions::default()
+    };
+    let decoder = GpuDecoder::new(ctx);
+    let mut rows = Vec::new();
+    for (name, data) in inputs {
+        if data.is_empty() {
+            continue;
+        }
+        let n = data.len() as u64;
+        let mut row = |label: String, elapsed: Duration, compressed: usize| {
+            rows.push(Measurement {
+                name: label,
+                input: name.clone(),
+                bytes: n,
+                gbps: gbps(n, elapsed),
+                ratio: Some(n as f64 / compressed as f64),
+                timing: Timing::WallGpu,
+            });
+        };
+        for (label, codec, level) in [
+            ("lz4", Codec::Lz4, 1),
+            ("lz4.l3", Codec::Lz4, 3),
+            ("glze", Codec::GlzE, 1),
+            ("glze.l3", Codec::GlzE, 3),
+        ] {
+            let encoder = GpuEncoder::new(ctx, EncodeParams::for_level(level))?;
+            let options = GpuCompressOptions {
+                codec,
+                level,
+                ..GpuCompressOptions::default()
+            };
+            let size = encoder.compress(ctx, data, &options)?.len();
+            let prepared = encoder.prepare(ctx, data, &options)?;
+            for (k, stage) in encoder.stages(&prepared).into_iter().enumerate() {
+                let t = time(&|| encoder.dispatch_stages(ctx, &prepared, k + 1))?;
+                row(format!("gpu.{label}.compress.upto.{stage}"), t, size);
+            }
+        }
+        for (label, options) in [
+            ("lz4", CompressOptions::default()),
+            ("glz", glz(Codec::Glz)),
+            ("glze", glz(Codec::GlzE)),
+        ] {
+            let file = compress(data, &options)?;
+            let Some(prepared) = decoder.prepare_file(ctx, &file)? else {
+                continue;
+            };
+            for (k, stage) in decoder.stages(&prepared).into_iter().enumerate() {
+                let t = time(&|| decoder.dispatch_stages(ctx, &prepared, k + 1))?;
+                row(
+                    format!("gpu.{label}.decompress.upto.{stage}"),
+                    t,
+                    file.len(),
+                );
+            }
+        }
     }
     Ok(rows)
 }
@@ -507,6 +599,107 @@ pub fn codecs(inputs: &[(String, Vec<u8>)], cfg: &SuiteConfig) -> anyhow::Result
     Ok(rows)
 }
 
+/// zstd baselines at levels 1 and 3, every row with that file's ratio.
+/// - `cpu.zstd-N`: independent 64 KiB chunks, one frame each, across rayon's
+///   threads in both directions. This is the random access a `.gpcz` file
+///   gives; the ratio counts the frames' bytes and no index.
+/// - `cpu.zstd-N-file`: the whole input as one frame, compressed by zstd's own
+///   workers (one per rayon thread, like `zstd -T0`) and decompressed on one
+///   thread, since a single frame decodes serially.
+pub fn zstd(inputs: &[(String, Vec<u8>)], cfg: &SuiteConfig) -> anyhow::Result<Vec<Measurement>> {
+    use rayon::prelude::*;
+    use zstd::bulk::{Compressor, Decompressor};
+
+    let chunk = format::DEFAULT_CHUNK_SIZE as usize;
+    let workers = u32::try_from(rayon::current_num_threads())?;
+    let failed = |e: &mut std::io::Error| anyhow::anyhow!("zstd context: {e}");
+    let compress_chunks = |data: &[u8], level: i32| -> anyhow::Result<Vec<Vec<u8>>> {
+        data.par_chunks(chunk)
+            .map_init(
+                || Compressor::new(level),
+                |c, piece| Ok(c.as_mut().map_err(failed)?.compress(piece)?),
+            )
+            .collect()
+    };
+    let decompress_chunks = |frames: &[Vec<u8>], n: usize| -> anyhow::Result<Vec<u8>> {
+        let mut out = vec![0u8; n];
+        out.par_chunks_mut(chunk).zip(frames).try_for_each_init(
+            Decompressor::new,
+            |d, (dst, frame)| -> anyhow::Result<()> {
+                let len = dst.len();
+                let written = d
+                    .as_mut()
+                    .map_err(failed)?
+                    .decompress_to_buffer(frame, dst)?;
+                anyhow::ensure!(
+                    written == len,
+                    "zstd chunk decoded to {written} bytes, not {len}"
+                );
+                Ok(())
+            },
+        )?;
+        Ok(out)
+    };
+    let compress_file = |data: &[u8], level: i32| -> anyhow::Result<Vec<u8>> {
+        let mut c = Compressor::new(level)?;
+        c.multithread(workers)?;
+        Ok(c.compress(data)?)
+    };
+    let time = |f: &dyn Fn() -> anyhow::Result<()>| {
+        median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            f()?;
+            Ok(start.elapsed())
+        })
+    };
+
+    let mut rows = Vec::new();
+    for (name, data) in inputs {
+        if data.is_empty() {
+            continue;
+        }
+        let n = data.len() as u64;
+        for level in [1, 3] {
+            let mut row = |label: String, elapsed: Duration, compressed: usize| {
+                rows.push(Measurement {
+                    name: label,
+                    input: name.clone(),
+                    bytes: n,
+                    gbps: gbps(n, elapsed),
+                    ratio: Some(n as f64 / compressed as f64),
+                    timing: Timing::Cpu,
+                });
+            };
+            let frames = compress_chunks(data, level)?;
+            let size = frames.iter().map(Vec::len).sum();
+            anyhow::ensure!(
+                decompress_chunks(&frames, data.len())? == *data,
+                "zstd -{level} chunk round trip of {name}"
+            );
+            let t = time(&|| compress_chunks(data, level).map(drop))?;
+            row(format!("cpu.zstd-{level}.compress.mt"), t, size);
+            let t = time(&|| decompress_chunks(&frames, data.len()).map(drop))?;
+            row(format!("cpu.zstd-{level}.decompress.mt"), t, size);
+
+            let file = compress_file(data, level)?;
+            let decompress_file = || Decompressor::new()?.decompress(&file, data.len());
+            anyhow::ensure!(
+                decompress_file()? == *data,
+                "zstd -{level} whole-file round trip of {name}"
+            );
+            let t = time(&|| compress_file(data, level).map(drop))?;
+            row(format!("cpu.zstd-{level}-file.compress.mt"), t, file.len());
+            let t = time(&|| Ok(decompress_file().map(drop)?))?;
+            row(
+                format!("cpu.zstd-{level}-file.decompress.1t"),
+                t,
+                file.len(),
+            );
+        }
+    }
+    Ok(rows)
+}
+
 /// Numeric benchmark inputs of exactly `n` bytes each, the data filters are
 /// for (M7): `f32-points` (xyz of a smooth curve), `sorted-u32` (small random
 /// gaps), `i16-audio` (two sines plus noise) and `u64-timestamps` (≈1 ms
@@ -566,7 +759,7 @@ pub fn numeric_inputs(n: usize) -> Vec<(String, Vec<u8>)> {
     ]
 }
 
-/// M7 filters: for each input and codec (`lz4` = the greedy twin, `glz`),
+/// M7 filters: for each input and codec (`lz4` = the greedy twin, `glz`, `glze`),
 /// CPU multi-threaded compression with filters `none` and `auto` (level 1:
 /// none, shuffle-4, delta-4), each row carrying that file's ratio. With a GPU,
 /// decode of both files (kernel; `auto` also end to end), so the kernels'
@@ -608,6 +801,7 @@ pub fn filters(
         for (codec_name, codec, encoder) in [
             ("lz4", Codec::Lz4, Encoder::Greedy(Default::default())),
             ("glz", Codec::Glz, Encoder::Glz(Default::default())),
+            ("glze", Codec::GlzE, Encoder::Glz(Default::default())),
         ] {
             let options = |filters| CompressOptions {
                 codec,

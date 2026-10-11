@@ -266,7 +266,7 @@ Revised 2026-10-08 after a research pass (literature on GPU LZ, entropy coding, 
 - Ratio and speed need the same fix. The one-lane-per-chunk parse was the encoder's bottleneck, and better parses (lazy, then optimal) are also local rules that parallelise the same way.
 - Most of the ratio gap is match-candidate count, not parse cleverness. The level-1 match finder keeps **one** candidate per hash slot (`probe_len` caps extension, not probes). LZ4 format at 64 KiB: today 1.94×; +lazy 2.00×; +in-block visibility 2.04×; hash chains depth 2/4/16 with lazy 2.17/2.28/2.40×; lz4 -12 2.49×.
 - Steps, each benchmarked:
-  1. **Exact segmented parse** (done: `encode_parse_seg.wgsl`). 32 lanes per chunk, with a merge fix-up. Output is identical to the serial parse.
+  1. **Exact segmented parse** (done: `encode_parse_seg.wgsl`). 32 lanes per chunk at first, 128 since `8144d84` (DECISIONS "Parse segments: 32 → 128"), with a merge fix-up. Output is identical to the serial parse.
   2. **Lazy rule** in the CPU twin and GPU parse (done: 1.943 → 1.993×, same speed).
   3. ~~In-block visibility~~ (dropped: +2.3% ratio but the exact GPU scan cost 3.4× the match kernel, and bounded windows cost more speed than they gain; DECISIONS.md).
   4. **Hash chains** as levels (done): depth 1/4/16 = levels 1/2/3, `--level` in the CLI. Silesia 1.993 / 2.212 / 2.319×. Next for the top level: faster chains (multi-way buckets in workgroup memory instead of dependent global loads), and an optimal parse (+2% over lazy at equal D) via a segmented backward DP.
@@ -275,11 +275,12 @@ Revised 2026-10-08 after a research pass (literature on GPU LZ, entropy coding, 
 
 ### M9e — GLZ v2: entropy stage (format change, both directions) — DONE as GLZ-E, codec 3 (see DECISIONS "M9e step 1–3")
 Promoted from M11. It's the biggest single ratio lever: zstd -1 at 64 KiB chunks is 2.76× against lz4 -1 at 2.07×. An entropy bound on GLZ's own streams gives 2.53× with today's matches and 2.72× with better ones.
-- Lengths and offsets become log2-bucket codes plus raw extra bits.
-- Each chunk gets a static order-0 table per stream (literals, length codes, offset codes), with raw, RLE and entropy modes per stream.
-- Canonical Huffman, length-limited to 11 bits (decode table 4 KB), with **32 independent lanes per stream** in GDeflate's layout. 32 is fixed in the format, so the bitstream doesn't depend on the device's subgroup size. rANS (32-bit state, 16-bit I/O) is the alternative for skewed sequence streams.
+- **As built (Design A, DECISIONS "M9e step 1"):** GLZ's own byte streams (tokens, offset low bytes, offset high bytes, literals) are entropy-coded as they are, and extension values stay raw. The originally planned log2-bucket codes for lengths and offsets (Design B) measured only ~1% better and would have replaced GLZ's arrays, so they were dropped.
+- Each chunk gets a static order-0 table per stream, with raw, RLE and Huffman modes per stream.
+- Canonical Huffman, length-limited to 11 bits (2048-entry decode table), with **up to 32 independent lanes per stream** (one per 512 symbols), each a word-aligned, LSB-first bitstream. The lane layout is fixed in the format, so the bitstream doesn't depend on the device's subgroup size.
 - Integer-only, fully specified table construction, so the CPU twin matches byte for byte.
-- Decoding is two-phase: entropy-decode into scratch, then the existing GLZ copy.
+- Decoding is two-phase: entropy-decode back into the exact GLZ block, then run the existing GLZ decoder.
+- Result: Silesia 2.50 / 2.68 / 2.75× at levels 1 / 2 / 3 (64 KiB chunks).
 - Later: repeat offsets, and optionally a file-level shared table set to cut the ~1–2% per-chunk table cost.
 - **Accept when:** CPU and GPU encode and decode GLZ v2 identically, the M4 matrix covers it, and Silesia is ≥ 2.6× at 64 KiB chunks.
 
@@ -287,7 +288,7 @@ Promoted from M11. It's the biggest single ratio lever: zstd -1 at 64 KiB chunks
 - **Chunk size vs ratio:** with a strong match finder, 64 KiB independence costs 9–10% (lz4 -9: 2.48× at 64 KiB, 2.71× at 1 MiB). Options: 256 KiB chunks with lane-parallel decode, or linked chunk pairs (decode reads at most 2 chunks).
 - **Typed filters** for numeric and columnar data (FOR/bit-packing in FastLanes layout, field split, float encodings), chosen by the existing sampled selector.
 
-### M10 — Final benchmarks and report
+### M10 — Final benchmarks and report — DONE: [bench/REPORT.md](bench/REPORT.md) (see DECISIONS "M10")
 - Run the Silesia corpus (each file and the concatenated tarball) plus synthetic data: zeros, random, and repetitive text.
 - For **both compression and decompression**, measure and report separately:
   - kernel-only time (GPU timestamp queries when the `TIMESTAMP_QUERY` feature is available; otherwise note that kernel time is unavailable)
@@ -300,10 +301,12 @@ Promoted from M11. It's the biggest single ratio lever: zstd -1 at 64 KiB chunks
 
 `BENCHMARKS.md` already holds the history by now. M10 is the full, polished run that `bench/REPORT.md` is generated from.
 
+As built: the prose lives in `bench/REPORT.template.md`, and `gpucomp bench --report` fills its `{{section}}` placeholders from the newest corpus run of each adapter. M10 also added zstd -1/-3 baselines (64 KiB chunks and whole file), GLZ-E at levels 2 and 3, GLZ-E with filters, and a per-stage kernel profile to the bench. With the zstd rows, `BENCHMARKS.md` now has M9's ratio-vs-throughput table.
+
 ### M11 (stretch) — Experiments
 Pick based on the M10 results. Each is independent.
-- **Entropy stage:** interleaved rANS or Huffman, with N independent lanes per chunk, applied to the GLZ literal stream. Encode and decode both on the GPU.
-- **GDeflate codec (codec id 3):** a GPU encoder (M3-style match finding, then distributing symbols across 32 sub-streams with Huffman coding) and a WGSL decoder ported from the Microsoft HLSL reference. Validate against the reference implementation in both directions.
+- ~~**Entropy stage**~~ (done in M9e as GLZ-E, codec 3).
+- **GDeflate codec (codec id 4; id 3 is GLZ-E):** a GPU encoder (M3-style match finding, then distributing symbols across 32 sub-streams with Huffman coding) and a WGSL decoder ported from the Microsoft HLSL reference. Validate against the reference implementation in both directions.
 - **Multi-byte symbols (from GPULZ):** match on 2- or 4-byte units for numeric data.
 - **More filters:** bitpack, float-specific transforms (e.g. XOR with the previous value), and per-chunk selection over them, added to M7's framework.
 - **Zero-copy path on Apple Silicon:** measure whether mapped or shared buffers reduce end-to-end time.

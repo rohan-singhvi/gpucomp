@@ -147,12 +147,28 @@ fn glz_suite_measures_both_directions_with_and_without_groups() {
             "gpu.glze.compress.e2e",
             "gpu.glze.decompress.kernel",
             "gpu.glze.decompress.e2e",
+            "cpu.glze.l2.compress.mt",
+            "cpu.glze.l2.decompress.mt",
+            "gpu.glze.l2.compress.kernel",
+            "gpu.glze.l2.compress.e2e",
+            "gpu.glze.l2.decompress.kernel",
+            "gpu.glze.l2.decompress.e2e",
+            "cpu.glze.l3.compress.mt",
+            "cpu.glze.l3.decompress.mt",
+            "gpu.glze.l3.compress.kernel",
+            "gpu.glze.l3.compress.e2e",
+            "gpu.glze.l3.decompress.kernel",
+            "gpu.glze.l3.decompress.e2e",
         ]
     );
     for m in &rows {
         assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
         assert!(m.ratio.unwrap() > 1.3, "{m:?}");
     }
+    // GLZ-E's ratio improves with level.
+    let ratio = |name: &str| rows.iter().find(|m| m.name == name).unwrap().ratio;
+    assert!(ratio("gpu.glze.l2.compress.e2e") > ratio("gpu.glze.compress.e2e"));
+    assert!(ratio("gpu.glze.l3.compress.e2e") > ratio("gpu.glze.l2.compress.e2e"));
 }
 
 #[test]
@@ -174,6 +190,10 @@ fn glz_suite_without_gpu_measures_the_cpu_paths() {
             "cpu.glz-g64.compress.mt",
             "cpu.glze.compress.mt",
             "cpu.glze.decompress.mt",
+            "cpu.glze.l2.compress.mt",
+            "cpu.glze.l2.decompress.mt",
+            "cpu.glze.l3.compress.mt",
+            "cpu.glze.l3.decompress.mt",
         ]
     );
 }
@@ -206,7 +226,7 @@ fn filters_suite_without_gpu_compares_none_and_auto_and_counts_wins() {
     let inputs = vec![bench::suite::numeric_inputs(1 << 18).remove(1)];
     let rows = bench::suite::filters(None, &inputs, &SMALL).unwrap();
     let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
-    let expected: Vec<String> = ["lz4", "glz"]
+    let expected: Vec<String> = ["lz4", "glz", "glze"]
         .iter()
         .flat_map(|codec| {
             FILTER_CPU_ROWS
@@ -217,7 +237,7 @@ fn filters_suite_without_gpu_compares_none_and_auto_and_counts_wins() {
         })
         .collect();
     assert_eq!(names, expected);
-    for codec in ["lz4", "glz"] {
+    for codec in ["lz4", "glz", "glze"] {
         let get = |r: &str| {
             rows.iter()
                 .find(|m| m.name == format!("cpu.{codec}.{r}"))
@@ -246,7 +266,7 @@ fn filters_suite_with_gpu_times_filtered_decode() {
     let rows = bench::suite::filters(Some(&ctx), &inputs, &SMALL).unwrap();
     let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
     let mut expected = Vec::new();
-    for codec in ["lz4", "glz"] {
+    for codec in ["lz4", "glz", "glze"] {
         expected.extend(
             FILTER_CPU_ROWS[..2]
                 .iter()
@@ -271,5 +291,45 @@ fn filters_suite_with_gpu_times_filtered_decode() {
     assert_eq!(names, expected);
     for m in rows.iter().filter(|m| m.name.starts_with("gpu.")) {
         assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+    }
+}
+
+#[test]
+fn profile_suite_times_each_prefix_of_kernels() {
+    let Some(ctx) = context() else { return };
+    let inputs = vec![(
+        "text".to_string(),
+        bench::suite::synthetic_inputs(SMALL.bytes).remove(2).1,
+    )];
+    let rows = bench::suite::profile(&ctx, &inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    let prefixes = |path: &str, stages: &[&str]| -> Vec<String> {
+        stages
+            .iter()
+            .map(|s| format!("gpu.{path}.upto.{s}"))
+            .collect()
+    };
+    let glze = ["glze-hist", "glze-build", "glze-write"];
+    let expected = [
+        prefixes("lz4.compress", &["match", "parse", "emit"]),
+        prefixes("lz4.l3.compress", &["match", "deep", "parse", "emit"]),
+        prefixes(
+            "glze.compress",
+            &[&["match", "parse", "emit"][..], &glze].concat(),
+        ),
+        prefixes(
+            "glze.l3.compress",
+            &[&["match", "deep", "parse", "emit"][..], &glze].concat(),
+        ),
+        prefixes("lz4.decompress", &["decode"]),
+        prefixes("glz.decompress", &["decode"]),
+        prefixes("glze.decompress", &["glze-entropy", "decode"]),
+    ]
+    .concat();
+    assert_eq!(names, expected);
+    for m in &rows {
+        assert_eq!((m.input.as_str(), m.timing), ("text", Timing::WallGpu));
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+        assert!(m.ratio.unwrap() > 1.5, "{m:?}");
     }
 }

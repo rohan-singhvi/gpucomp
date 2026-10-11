@@ -56,3 +56,35 @@ fn incompressible_input_has_ratio_just_under_one() {
         assert!((0.99..=1.0).contains(&ratio), "{m:?}");
     }
 }
+
+#[test]
+fn zstd_suite_measures_64k_chunks_and_whole_files_at_levels_1_and_3() {
+    let inputs = vec![(
+        "text".to_string(),
+        synthetic_inputs(SMALL.bytes).remove(2).1,
+    )];
+    let rows = bench::suite::zstd(&inputs, &SMALL).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "cpu.zstd-1.compress.mt",
+            "cpu.zstd-1.decompress.mt",
+            "cpu.zstd-1-file.compress.mt",
+            "cpu.zstd-1-file.decompress.1t",
+            "cpu.zstd-3.compress.mt",
+            "cpu.zstd-3.decompress.mt",
+            "cpu.zstd-3-file.compress.mt",
+            "cpu.zstd-3-file.decompress.1t",
+        ]
+    );
+    for m in &rows {
+        assert_eq!((m.input.as_str(), m.timing), ("text", Timing::Cpu));
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+        assert!(m.ratio.expect("zstd rows carry a ratio") > 1.5, "{m:?}");
+    }
+    let ratio = |name: &str| rows.iter().find(|m| m.name == name).unwrap().ratio.unwrap();
+    // A whole file also matches across chunk boundaries; level 3 searches harder.
+    assert!(ratio("cpu.zstd-1-file.compress.mt") > ratio("cpu.zstd-1.compress.mt"));
+    assert!(ratio("cpu.zstd-3.compress.mt") > ratio("cpu.zstd-1.compress.mt"));
+}

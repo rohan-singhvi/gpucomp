@@ -292,3 +292,36 @@ fn gpu_glze_files_equal_cpu_files() {
         }
     }
 }
+
+#[test]
+fn stages_name_the_kernels_and_a_prefix_runs_only_those() {
+    let Some(ctx) = context() else { return };
+    let decoder = GpuDecoder::new(&ctx);
+    let stages = |file: &[u8]| {
+        let p = decoder.prepare_file(&ctx, file).unwrap().unwrap();
+        decoder.stages(&p)
+    };
+    let input = text(10 * CHUNK as usize);
+    let lz4 = CompressOptions {
+        chunk_size: CHUNK,
+        ..CompressOptions::default()
+    };
+    assert_eq!(stages(&compress(&input, &lz4).unwrap()), ["decode"]);
+    // Sorted integers: auto filtering picks delta, so the decode unfilters.
+    let sorted: Vec<u8> = (0..10 * CHUNK)
+        .step_by(4)
+        .flat_map(|i| (i * 3).to_le_bytes())
+        .collect();
+    let filtered = compress(&sorted, &glze(1, FilterMode::Auto, CHUNK)).unwrap();
+    assert_eq!(stages(&filtered), ["glze-entropy", "decode", "unfilter"]);
+
+    // The entropy kernel alone leaves the output zero; with decode it's exact.
+    let file = compress(&input, &glze(1, FilterMode::None, CHUNK)).unwrap();
+    let p = decoder.prepare_file(&ctx, &file).unwrap().unwrap();
+    assert_eq!(decoder.stages(&p), ["glze-entropy", "decode"]);
+    decoder.dispatch_stages(&ctx, &p, 1);
+    let out = decoder.finish(&ctx, &p, false).unwrap();
+    assert!(out.iter().all(|&b| b == 0), "only the entropy stage ran");
+    decoder.dispatch_stages(&ctx, &p, 2);
+    assert!(decoder.finish(&ctx, &p, false).unwrap() == input);
+}
