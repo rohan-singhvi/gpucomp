@@ -37,6 +37,12 @@ pub struct CompressArgs {
     /// output is identical to --gpu alone. Reads the whole input into memory.
     #[arg(long, requires = "gpu")]
     pub hybrid: bool,
+    /// With --hybrid: a fixed split instead. The GPU compresses this fraction
+    /// of the chunks while the CPU compresses the rest, LZ4 with lz4_flex (the
+    /// fastest CPU encoder). The file then differs from --gpu's, but is the
+    /// same for the same settings. ~0.3 suits an Apple M4 Pro.
+    #[arg(long, requires = "hybrid", value_parser = parse_share)]
+    pub gpu_share: Option<f64>,
     /// GPU backend (with --gpu).
     #[arg(long, value_enum, requires = "gpu")]
     pub backend: Option<crate::BackendArg>,
@@ -133,6 +139,14 @@ pub fn parse_bytes(text: &str) -> Result<u64, String> {
         .ok_or_else(|| format!("byte count {text:?} is too large"))
 }
 
+/// Parses a fraction from 0 to 1.
+pub fn parse_share(text: &str) -> Result<f64, String> {
+    match text.parse::<f64>() {
+        Ok(share) if (0.0..=1.0).contains(&share) => Ok(share),
+        _ => Err(format!("{text:?} is not a fraction from 0 to 1")),
+    }
+}
+
 /// Parses `4096`, `64K` or `1M` (binary units).
 pub fn parse_size(text: &str) -> Result<u32, String> {
     let (digits, shift) = match text.chars().last() {
@@ -227,7 +241,16 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         };
         if args.hybrid {
             let input = std::fs::read(&args.input)?;
-            let file = gpu::hybrid::compress(&ctx, &encoder, &input, &options)?;
+            let file = match args.gpu_share {
+                Some(share) => {
+                    let mut cpu = gpu::hybrid::twin_options(&options, encoder.params());
+                    if options.codec == Codec::Lz4 {
+                        cpu.encoder = cpu::container::Encoder::Lz4Flex;
+                    }
+                    gpu::hybrid::compress_static(&ctx, &encoder, &input, &options, share, &cpu)?
+                }
+                None => gpu::hybrid::compress(&ctx, &encoder, &input, &options)?,
+            };
             std::fs::write(&args.output, file)?;
             return Ok(());
         }

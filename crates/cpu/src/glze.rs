@@ -72,37 +72,32 @@ pub fn to_glz(src: &[u8], uncomp_size: usize) -> Result<Vec<u8>, GlzError> {
     {
         return Err(GlzError::BadSequence);
     }
-    let stream = |at: usize, n: usize, out: &mut Vec<u8>| {
-        huffman::decode_stream(src, at, n, out).map_err(GlzError::Stream)
+    // Streams decode straight into the GLZ block, except the offset bytes,
+    // which GLZ interleaves.
+    let (_, offsets_at, ext_at, literals_at) = field_offsets(count, ext_count, wide);
+    let mut glz = vec![0u8; literals_at + lit_count];
+    glz[..4].copy_from_slice(&head.to_le_bytes());
+    glz[4..8].copy_from_slice(&(ext_count as u32).to_le_bytes());
+    let stream = |at: usize, out: &mut [u8]| {
+        huffman::decode_stream_into(src, at, out).map_err(GlzError::Stream)
     };
-    let (mut tokens, mut lo, mut hi, mut literals) = (
-        Vec::with_capacity(count),
-        Vec::with_capacity(count),
-        Vec::with_capacity(count),
-        Vec::with_capacity(lit_count),
-    );
-    let at = stream(12, count, &mut tokens)?;
-    let at = stream(at, count, &mut lo)?;
-    let at = stream(at, count, &mut hi)?;
+    let at = stream(12, &mut glz[8..8 + count])?;
+    let mut offsets = vec![0u8; 2 * count];
+    let (lo, hi) = offsets.split_at_mut(count);
+    let at = stream(at, lo)?;
+    let at = stream(at, hi)?;
+    for (i, (l, h)) in lo.iter().zip(hi.iter()).enumerate() {
+        glz[offsets_at + 2 * i] = *l;
+        glz[offsets_at + 2 * i + 1] = *h;
+    }
     let ext_len = (ext_count * if wide { 4 } else { 2 }).next_multiple_of(4);
     let ext = src.get(at..at + ext_len).ok_or(GlzError::Truncated)?;
-    let at = stream(at + ext_len, lit_count, &mut literals)?;
+    glz[ext_at..ext_at + ext.len()].copy_from_slice(ext);
+    debug_assert_eq!(ext_at + ext_len, literals_at);
+    let at = stream(at + ext_len, &mut glz[literals_at..])?;
     if at != src.len() {
         return Err(GlzError::SizeMismatch);
     }
-    let (_, offsets_at, ext_at, literals_at) = field_offsets(count, ext_count, wide);
-    let mut glz = Vec::with_capacity(literals_at + lit_count);
-    glz.extend_from_slice(&head.to_le_bytes());
-    glz.extend_from_slice(&(ext_count as u32).to_le_bytes());
-    glz.extend_from_slice(&tokens);
-    glz.resize(offsets_at, 0);
-    for (l, h) in lo.iter().zip(&hi) {
-        glz.extend_from_slice(&[*l, *h]);
-    }
-    glz.resize(ext_at, 0);
-    glz.extend_from_slice(ext);
-    debug_assert_eq!(glz.len(), literals_at);
-    glz.extend_from_slice(&literals);
     Ok(glz)
 }
 

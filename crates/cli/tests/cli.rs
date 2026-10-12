@@ -524,3 +524,39 @@ fn gpu_hybrid_compress_writes_the_gpu_file() {
         );
     }
 }
+
+#[test]
+fn gpu_share_compresses_part_with_lz4_flex_deterministically() {
+    if !has_gpu() {
+        return;
+    }
+    let (input, a, b, gpu, out) = (
+        temp("gs.txt"),
+        temp("gs.a.gpcz"),
+        temp("gs.b.gpcz"),
+        temp("gs.gpu.gpcz"),
+        temp("gs.out"),
+    );
+    std::fs::write(&input, sample().repeat(30)).unwrap();
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+    for packed in [&a, &b] {
+        gpucomp(&[
+            "compress",
+            &s(&input),
+            &s(packed),
+            "--gpu",
+            "--hybrid",
+            "--gpu-share",
+            "0.5",
+        ]);
+    }
+    gpucomp(&["compress", &s(&input), &s(&gpu), "--gpu"]);
+    let file = std::fs::read(&a).unwrap();
+    assert!(file == std::fs::read(&b).unwrap(), "deterministic");
+    assert!(
+        file != std::fs::read(&gpu).unwrap(),
+        "half of it is lz4_flex's"
+    );
+    gpucomp(&["decompress", &s(&a), &s(&out)]);
+    assert!(std::fs::read(&out).unwrap() == std::fs::read(&input).unwrap());
+}

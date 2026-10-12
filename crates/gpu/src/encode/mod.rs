@@ -178,6 +178,8 @@ pub enum GpuEncodeError {
     Cpu(#[from] cpu::container::CpuError),
     #[error("the split covers {covered} chunks, the input has {chunks}")]
     BadSplit { covered: u64, chunks: u64 },
+    #[error("GPU share {0} is not in 0..=1")]
+    BadShare(f64),
 }
 
 /// One chunk's LZ4 block, as reported by [`GpuEncoder::encode_blocks`].
@@ -719,6 +721,39 @@ impl GpuEncoder {
         let mut out = sink.out;
         out[..table_len].copy_from_slice(&index.to_bytes());
         Ok(out)
+    }
+
+    /// Appends the data section of `input`'s file (its chunks' payloads,
+    /// padded and back to back) to `out`, and returns the chunk entries, with
+    /// offsets from where the data starts. [`compress`](Self::compress) puts
+    /// the header and table in front; a caller joining several inputs' data
+    /// can write its own. On an error, `out` is left as it was.
+    pub fn compress_into(
+        &self,
+        ctx: &Context,
+        input: &[u8],
+        options: &GpuCompressOptions,
+        out: &mut Vec<u8>,
+    ) -> Result<Vec<format::ChunkEntry>, GpuEncodeError> {
+        let start = out.len();
+        let mut sink = VecSink {
+            out: std::mem::take(out),
+        };
+        let index = self.compress_batches(
+            ctx,
+            &mut SliceSource {
+                data: input,
+                pos: 0,
+            },
+            input.len() as u64,
+            &mut sink,
+            options,
+        );
+        *out = sink.out;
+        if index.is_err() {
+            out.truncate(start);
+        }
+        Ok(index?.chunks)
     }
 
     /// The batch loop shared by [`compress`](Self::compress) and

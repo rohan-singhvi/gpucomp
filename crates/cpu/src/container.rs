@@ -115,14 +115,28 @@ impl Default for DecompressOptions {
 }
 
 pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuError> {
+    let header = header_for(input.len(), options)?;
+    let table_len = Index {
+        header,
+        chunks: Vec::new(),
+    }
+    .data_offset() as usize;
+    let mut out = vec![0u8; table_len];
+    let chunks = compress_into(input, options, &mut out)?;
+    out[..table_len].copy_from_slice(&Index { header, chunks }.to_bytes());
+    Ok(out)
+}
+
+/// The header of `input`'s file, checked (chunk size, chunk count).
+fn header_for(len: usize, options: &CompressOptions) -> Result<Header, CpuError> {
     let chunk_size = options.chunk_size;
-    let chunk_count = format::chunk_count_for(input.len() as u64, chunk_size.max(1));
+    let chunk_count = format::chunk_count_for(len as u64, chunk_size.max(1));
     let header = Header {
         codec: options.codec,
         chunk_size,
         chunk_count: u32::try_from(chunk_count)
             .map_err(|_| CpuError::TooManyChunks(chunk_count))?,
-        total_size: input.len() as u64,
+        total_size: len as u64,
         checksums: options.checksums,
         level: options.level,
     };
@@ -136,7 +150,19 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
         FormatError::ChunkCountMismatch { .. } => Ok(()),
         e => Err(e),
     })?;
+    Ok(header)
+}
 
+/// Appends the data section of `input`'s file (its chunks' payloads, each
+/// padded to 4 bytes, back to back) to `out`, and returns the chunk entries,
+/// with offsets from where the data starts. [`compress`] puts the header and
+/// table in front; a caller joining several inputs' data can write its own.
+pub fn compress_into(
+    input: &[u8],
+    options: &CompressOptions,
+    out: &mut Vec<u8>,
+) -> Result<Vec<ChunkEntry>, CpuError> {
+    let chunk_size = header_for(input.len(), options)?.chunk_size;
     match (options.codec, options.encoder) {
         (Codec::Glz | Codec::GlzE, Encoder::Glz(_)) | (Codec::Stored, _) => {}
         (Codec::Lz4, Encoder::Lz4Flex | Encoder::Greedy(_)) => {}
@@ -183,16 +209,24 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
         })
         .collect();
 
-    let filters: Vec<Filter> = payloads.iter().map(|p| p.3).collect();
-    let payloads: Vec<format::ChunkPayload> = payloads
-        .iter()
-        .map(|(bytes, stored, checksum, _)| format::ChunkPayload {
-            bytes,
+    let start = out.len();
+    out.reserve(payloads.iter().map(|p| p.0.len() + 3).sum());
+    let mut chunks = Vec::with_capacity(payloads.len());
+    for ((bytes, stored, checksum, filter), chunk) in
+        payloads.iter().zip(input.chunks(chunk_size as usize))
+    {
+        chunks.push(ChunkEntry {
+            comp_offset: (out.len() - start) as u64,
+            comp_size: bytes.len() as u32,
             stored: *stored,
+            uncomp_size: chunk.len() as u32,
             checksum: *checksum,
-        })
-        .collect();
-    Ok(format::assemble_filtered(header, &payloads, &filters))
+            filter: *filter,
+        });
+        out.extend_from_slice(bytes);
+        out.resize(start + format::pad4((out.len() - start) as u64) as usize, 0);
+    }
+    Ok(chunks)
 }
 
 /// Encodes one (possibly filtered) chunk with the configured block encoder;

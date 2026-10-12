@@ -52,14 +52,20 @@ fn main(
             if (in_range) {
                 h = hash(word);
                 entry = atomicLoad(&table[h]);
-                if (DEPTH > 1u) {
-                    chain[sbase + p] = entry;
-                }
                 if (entry != 0u) {
                     offset = p - (entry - 1u);
                     if (offset <= MAX_OFFSET) {
                         cword = in_word(start + p - offset);
                     }
+                }
+                if (DEPTH > 1u) {
+                    // The link, tagged with the candidate's prefix (beyond
+                    // MAX_OFFSET a walk stops before looking at the tag).
+                    var link = entry;
+                    if (entry != 0u && offset <= MAX_OFFSET) {
+                        link |= prefix_tag(cword) << LINK_BITS;
+                    }
+                    chain[sbase + p] = link;
                 }
             }
             // All lookups of this block see only earlier blocks' positions.
@@ -73,6 +79,27 @@ fn main(
                     let diff = cword ^ word;
                     if (diff != 0u) {
                         end = p + min(countTrailingZeros(diff) / 8u, limit - p);
+                    } else if (p + 16u <= limit) {
+                        // The next 12 bytes at once: independent loads, where
+                        // extend's loop waits for each word in turn.
+                        let q = start + p - offset;
+                        let d1 = in_word(q + 4u) ^ in_word(start + p + 4u);
+                        let d2 = in_word(q + 8u) ^ in_word(start + p + 8u);
+                        let d3 = in_word(q + 12u) ^ in_word(start + p + 12u);
+                        var len = 16u;
+                        if (d3 != 0u) {
+                            len = 12u + countTrailingZeros(d3) / 8u;
+                        }
+                        if (d2 != 0u) {
+                            len = 8u + countTrailingZeros(d2) / 8u;
+                        }
+                        if (d1 != 0u) {
+                            len = 4u + countTrailingZeros(d1) / 8u;
+                        }
+                        end = p + len;
+                        if (len == 16u && p + 16u < limit) {
+                            end = extend(start, p + 16u, offset, limit);
+                        }
                     } else if (p + 4u <= limit) {
                         end = extend(start, p + 4u, offset, limit);
                     } else {

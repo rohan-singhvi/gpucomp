@@ -8,7 +8,10 @@ use common::{context, fixtures, random, text, CHUNK};
 use format::Codec;
 use gpu::decode::GpuDecoder;
 use gpu::encode::{EncodeParams, FilterMode, GpuCompressOptions, GpuEncoder};
-use gpu::hybrid::{compress, compress_parts, decompress, decompress_parts, Device};
+use gpu::hybrid::{
+    compress, compress_parts, compress_parts_with, compress_static, decompress, decompress_parts,
+    Device,
+};
 
 /// 18 chunks: text, random bytes, zeros, and a short last chunk.
 fn input() -> Vec<u8> {
@@ -161,4 +164,43 @@ fn hybrid_decompression_reports_bad_splits_and_corrupt_chunks() {
         );
     }
     assert!(decompress(&ctx, &decoder, &file, true).is_err());
+}
+
+#[test]
+fn a_fixed_share_splits_the_chunks_deterministically() {
+    let Some(ctx) = context() else { return };
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+    let options = GpuCompressOptions {
+        chunk_size: CHUNK,
+        checksums: true,
+        ..GpuCompressOptions::default()
+    };
+    let input = input(); // 18 chunks
+    let flex = cpu::container::CompressOptions {
+        chunk_size: CHUNK,
+        checksums: true,
+        ..Default::default()
+    };
+    // Share 1: the GPU's file; share 0: the CPU encoder's.
+    let gpu_file = encoder.compress(&ctx, &input, &options).unwrap();
+    let cpu_file = cpu::container::compress(&input, &flex).unwrap();
+    assert!(compress_static(&ctx, &encoder, &input, &options, 1.0, &flex).unwrap() == gpu_file);
+    assert!(compress_static(&ctx, &encoder, &input, &options, 0.0, &flex).unwrap() == cpu_file);
+    // Share 0.5: lz4_flex takes the first 9 chunks, the GPU the last 9.
+    let file = compress_static(&ctx, &encoder, &input, &options, 0.5, &flex).unwrap();
+    let expected = compress_parts_with(
+        &ctx,
+        &encoder,
+        &input,
+        &options,
+        &[(Device::Cpu, 9), (Device::Gpu, 9)],
+        &flex,
+    )
+    .unwrap();
+    assert!(file == expected);
+    assert!(file != gpu_file && file != cpu_file);
+    assert!(compress_static(&ctx, &encoder, &input, &options, 0.5, &flex).unwrap() == file);
+    let decoder = GpuDecoder::new(&ctx);
+    assert!(decompress(&ctx, &decoder, &file, true).unwrap() == input);
+    assert!(compress_static(&ctx, &encoder, &input, &options, 1.5, &flex).is_err());
 }

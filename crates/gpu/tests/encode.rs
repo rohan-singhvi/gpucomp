@@ -501,3 +501,24 @@ fn gpu_filter_modes_equal_the_cpu_at_64k_chunks() {
         }
     }
 }
+
+#[test]
+fn compress_into_appends_the_files_data_section_and_returns_its_entries() {
+    let Some(ctx) = context() else { return };
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+    let input = [text(5 * 4096 + 100), random(3 * 4096, 9)].concat();
+    for options in [gpu_opts(), glz_opts(None)] {
+        let file = encoder.compress(&ctx, &input, &options).unwrap();
+        let index = format::Index::parse(&file).unwrap();
+        let mut out = b"prefix".to_vec();
+        let entries = encoder
+            .compress_into(&ctx, &input, &options, &mut out)
+            .unwrap();
+        assert_eq!(entries, index.chunks, "{options:?}");
+        assert!(out[..6] == *b"prefix");
+        assert!(
+            out[6..] == file[index.data_offset() as usize..],
+            "{options:?}"
+        );
+    }
+}

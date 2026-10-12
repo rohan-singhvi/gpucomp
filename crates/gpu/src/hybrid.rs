@@ -164,13 +164,104 @@ pub fn compress_parts(
     options: &GpuCompressOptions,
     parts: &[(Device, u32)],
 ) -> Result<Vec<u8>, GpuEncodeError> {
+    let twin = twin_options(options, encoder.params());
+    compress_parts_with(ctx, encoder, input, options, parts, &twin)
+}
+
+/// Compresses `input` on a fixed split: the CPU takes the first chunks with
+/// `cpu`'s encoder while the GPU takes the last `gpu_share` of them (rounded
+/// to whole chunks), at the same time. For LZ4 that encoder can be lz4_flex,
+/// the fastest CPU encoder: the file then differs from the GPU-only one, but
+/// depends only on the input and the settings, so it's still deterministic.
+/// Tuning `gpu_share` to the machine (~0.3 on an Apple M4 Pro) makes both
+/// sides finish together. `cpu`'s codec, chunk size, checksums and level are
+/// taken from `options`; its encoder and filters are its own.
+///
+/// The CPU writes its data straight into the file, after room for the chunk
+/// table; only the GPU's (smaller) part is copied after it.
+pub fn compress_static(
+    ctx: &Context,
+    encoder: &GpuEncoder,
+    input: &[u8],
+    options: &GpuCompressOptions,
+    gpu_share: f64,
+    cpu: &CompressOptions,
+) -> Result<Vec<u8>, GpuEncodeError> {
+    if !(0.0..=1.0).contains(&gpu_share) {
+        return Err(GpuEncodeError::BadShare(gpu_share));
+    }
+    let cpu = CompressOptions {
+        codec: options.codec,
+        chunk_size: options.chunk_size,
+        checksums: options.checksums,
+        level: options.level,
+        ..*cpu
+    };
+    let chunk = options.chunk_size.max(1) as usize;
+    let chunks = input.len().div_ceil(chunk);
+    let cpu_chunks = chunks - (chunks as f64 * gpu_share).round() as usize;
+    let (cpu_input, gpu_input) = input.split_at((cpu_chunks * chunk).min(input.len()));
+    let header = header(input.len(), options)?;
+    let table_len = format::Index {
+        header,
+        chunks: Vec::new(),
+    }
+    .data_offset() as usize;
+    // Room for the whole file (payloads are at most their chunks, padded),
+    // so appending the GPU's part doesn't move the CPU's.
+    let mut out = Vec::with_capacity(table_len + input.len() + 4 * chunks);
+    out.resize(table_len, 0);
+    let (gpu, cpu_entries) = std::thread::scope(|s| {
+        let gpu = s.spawn(|| -> Result<_, GpuEncodeError> {
+            let mut data = Vec::new();
+            let entries = if gpu_input.is_empty() {
+                Vec::new()
+            } else {
+                encoder.compress_into(ctx, gpu_input, options, &mut data)?
+            };
+            Ok((entries, data))
+        });
+        let cpu_entries = if cpu_input.is_empty() {
+            Ok(Vec::new())
+        } else {
+            cpu_pool().install(|| cpu::container::compress_into(cpu_input, &cpu, &mut out))
+        };
+        (gpu.join(), cpu_entries)
+    });
+    let (gpu_entries, gpu_data) = gpu.expect("the GPU thread panicked")?;
+    let mut entries = cpu_entries?;
+    let gpu_at = (out.len() - table_len) as u64;
+    entries.extend(gpu_entries.into_iter().map(|e| format::ChunkEntry {
+        comp_offset: gpu_at + e.comp_offset,
+        ..e
+    }));
+    out.extend_from_slice(&gpu_data);
+    std::thread::spawn(move || drop(gpu_data));
+    out[..table_len].copy_from_slice(
+        &format::Index {
+            header,
+            chunks: entries,
+        }
+        .to_bytes(),
+    );
+    Ok(out)
+}
+
+/// [`compress_parts`] with `cpu`'s encoder for the CPU's parts.
+pub fn compress_parts_with(
+    ctx: &Context,
+    encoder: &GpuEncoder,
+    input: &[u8],
+    options: &GpuCompressOptions,
+    parts: &[(Device, u32)],
+    cpu: &CompressOptions,
+) -> Result<Vec<u8>, GpuEncodeError> {
     let chunk = options.chunk_size.max(1) as usize;
     let chunks = input.len().div_ceil(chunk) as u64;
     let covered: u64 = parts.iter().map(|&(_, n)| u64::from(n)).sum();
     if covered != chunks {
         return Err(GpuEncodeError::BadSplit { covered, chunks });
     }
-    let twin = twin_options(options, encoder.params());
     let mut files = Vec::with_capacity(parts.len());
     let mut first = 0;
     for &(device, n) in parts {
@@ -182,11 +273,24 @@ pub fn compress_parts(
         let slice = chunk_range(input, &range, chunk);
         let file = match device {
             Device::Gpu => encoder.compress(ctx, slice, options)?,
-            Device::Cpu => cpu::container::compress(slice, &twin)?,
+            Device::Cpu => cpu::container::compress(slice, cpu)?,
         };
         files.push((range.start, file));
     }
     splice(input.len(), options, &files)
+}
+
+/// Every rayon thread but one, so the GPU's thread keeps a core for its
+/// copies and submissions.
+fn cpu_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism().map_or(2, usize::from);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads.saturating_sub(1).max(1))
+            .build()
+            .expect("a rayon pool")
+    })
 }
 
 /// Decompresses `file` on the GPU and the CPU together, splitting its chunks
@@ -357,15 +461,10 @@ fn chunk_range<'a>(input: &'a [u8], range: &Range<usize>, chunk: usize) -> &'a [
     &input[range.start * chunk..(range.end * chunk).min(input.len())]
 }
 
-/// Joins the parts (files of consecutive chunk ranges, in order) into the
-/// file for the whole `len`-byte input.
-fn splice(
-    len: usize,
-    options: &GpuCompressOptions,
-    parts: &[(usize, Vec<u8>)],
-) -> Result<Vec<u8>, GpuEncodeError> {
+/// The header of the whole `len`-byte input's file.
+fn header(len: usize, options: &GpuCompressOptions) -> Result<format::Header, GpuEncodeError> {
     let chunk_count = format::chunk_count_for(len as u64, options.chunk_size.max(1));
-    let header = format::Header {
+    Ok(format::Header {
         codec: options.codec,
         chunk_size: options.chunk_size,
         chunk_count: u32::try_from(chunk_count)
@@ -373,7 +472,17 @@ fn splice(
         total_size: len as u64,
         checksums: options.checksums,
         level: options.level,
-    };
+    })
+}
+
+/// Joins the parts (files of consecutive chunk ranges, in order) into the
+/// file for the whole `len`-byte input.
+fn splice(
+    len: usize,
+    options: &GpuCompressOptions,
+    parts: &[(usize, Vec<u8>)],
+) -> Result<Vec<u8>, GpuEncodeError> {
+    let header = header(len, options)?;
     let files: Vec<&[u8]> = parts.iter().map(|(_, file)| file.as_slice()).collect();
     let plan = format::splice_plan(header, &files)?;
     // The copies in parallel, each into its own slice of the output.

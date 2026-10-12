@@ -10,10 +10,11 @@ Every table comes from the newest recorded benchmark run. `gpucomp bench --repor
 
 - **Both directions work on the GPU, and the files are exact.** Every GPU-compressed file is byte-for-byte the file its CPU twin writes, and every encoder round-trips through every decoder.
 - **Ratio.** On Silesia in 64 KiB chunks, GLZ-E (GLZ plus Huffman coding) reaches 2.50× at level 1 and 2.75× at level 3. Level 3 matches zstd -1 on the same independent chunks (2.76×). LZ4-format output is 1.99× to 2.32× by level, against lz4_flex's 2.04×.
-- **Compression speed: the GPU still loses on this machine, by less.** At level 1 the GPU compresses at about half the speed of multi-threaded lz4_flex end to end, and at about two thirds with the CPU's help. At equal ratio, zstd -1 is about 5× faster than GLZ-E level 3 on the CPU and GPU together.
-- **CPU and GPU together.** Every chunk encodes to the same bytes on either device, so `--hybrid` shares one input between the GPU and every CPU core by their measured speeds, and still writes the GPU-only file. Compression is 30–61% faster than on the GPU alone, and GLZ-E decompression 41% faster than on the CPU alone.
-- **Same algorithm: the GPU leads, but narrowly.** Against a CPU implementation that writes the same files, the GPU is 1.2–1.4× faster than all 12 cores. The CPU can skip work the GPU's parallel parse needs: it computes matches only where its serial parse looks.
-- **Decompression: the GPU alone loses.** The GPU decodes at about 2.7–3.5 GB/s end to end. A multi-threaded CPU decoding the same independent chunks is 4–5× faster with lz4_flex or zstd, and about as fast with gpucomp's own GLZ-E decoder. For LZ4 and GLZ files the CPU finishes before a GPU pass would pay off, so `--hybrid` leaves the GPU out of those.
+- **The fastest LZ4 compressor here is lz4_flex plus the GPU.** With lz4_flex compressing 70% of the chunks and the GPU the other 30% at the same time (`--hybrid --gpu-share 0.3`), LZ4 compression runs about 1.3× faster than multi-threaded lz4_flex alone, at the same ratio. The split is fixed, so the output is deterministic.
+- **The GPU alone still loses.** At level 1 it compresses at about half the speed of multi-threaded lz4_flex or zstd -1 end to end. At equal ratio, zstd -1 is about 4.5× faster than GLZ-E level 3 even with the CPU and GPU together.
+- **CPU and GPU, identical output.** Every chunk encodes to the same bytes on either device, so `--hybrid` shares one input between the GPU and every CPU core by their measured speeds and still writes the GPU-only file: 36–46% faster than the GPU alone.
+- **Same algorithm: the GPU leads by about 1.4×** over a CPU implementation writing the same files on all 12 cores. The CPU can skip work the GPU's parallel parse needs: it computes matches only where its serial parse looks.
+- **Decompression is the CPU's.** The GPU decodes at about 2.7–3.5 GB/s end to end. On all cores, lz4_flex decodes LZ4 at about 14 GB/s, gpucomp's own decoders run GLZ at about 12.6 and GLZ-E at about 6.9, and zstd -1 in 64 KiB chunks at about 10.9. `--hybrid` leaves the GPU out of decoding on this machine: the CPU finishes before a GPU pass would pay off.
 - **Numeric data** is where the format shines. With per-chunk filters, GLZ-E compresses sorted integers 3× smaller than zstd -3 on the whole file.
 - **Not measured: a discrete GPU.** The plan's goal of beating the CPU is defined for one. See [Discrete GPUs vs unified memory](#discrete-gpus-vs-unified-memory).
 
@@ -21,7 +22,7 @@ Every table comes from the newest recorded benchmark run. `gpucomp bench --repor
 
 | Adapter | Backend | Host CPU | OS | Run | Commit | Date | GPU kernel timing |
 |---|---|---|---|---|---|---|---|
-| Apple M4 Pro | metal | Apple M4 Pro, 12 threads | macos | hybrid | `c13f23e-dirty` | 2026-10-11T15:57:02Z | wall clock of submit + wait, data on the GPU (no timestamps) |
+| Apple M4 Pro | metal | Apple M4 Pro, 12 threads | macos | catch-up | `0681fbd-dirty` | 2026-10-11T23:28:28Z | wall clock of submit + wait, data on the GPU (no timestamps) |
 
 - **Data.** The [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) (12 files, 202 MiB, also concatenated as `silesia/all`), four synthetic inputs of 256 MiB (zeros, random bytes, pseudo-English text, and a mix of the three), and four numeric inputs of 256 MiB.
 - **Chunks.** Every file uses 64 KiB independent chunks, so any byte range decodes on its own.
@@ -39,17 +40,18 @@ Input: `silesia/all` (202.1 MiB).
 
 | Comparison | Ratio, GPU · CPU | GPU kernel GB/s | GPU end-to-end GB/s | CPU GB/s | GPU ÷ CPU |
 |---|---:|---:|---:|---:|---:|
-| Compress to LZ4: GPU level 1 vs lz4_flex | 1.99× · 2.04× | 3.41 | 2.80 | 5.35 | 0.52× |
-| Compress to LZ4: CPU+GPU vs lz4_flex | 1.99× · 2.04× | — | 3.65 | 5.35 | 0.68× |
-| Compress, same output: GPU LZ4 level 1 vs its CPU twin | 1.99× · 1.99× | 3.41 | 2.80 | 1.97 | 1.42× |
-| Compress, same output: GPU GLZ-E level 1 vs its CPU twin | 2.50× · 2.50× | 2.60 | 2.26 | 1.66 | 1.36× |
-| Compress, same output: GPU GLZ-E level 3 vs its CPU twin | 2.75× · 2.75× | 0.75 | 0.72 | 0.62 | 1.16× |
-| Compress, similar ratio: GPU GLZ-E level 3 vs zstd -1 in 64 KiB chunks | 2.75× · 2.76× | 0.75 | 0.72 | 5.69 | 0.13× |
-| Compress, similar ratio: CPU+GPU GLZ-E level 3 vs zstd -1 in 64 KiB chunks | 2.75× · 2.76× | — | 1.16 | 5.69 | 0.20× |
-| Decompress LZ4: GPU vs lz4_flex | 2.04× · 2.04× | 3.42 | 2.71 | 13.58 | 0.20× |
-| Decompress GLZ-E: GPU vs CPU | 2.50× · 2.50× | 3.67 | 2.81 | 2.91 | 0.97× |
-| Decompress GLZ-E: CPU+GPU vs CPU | 2.50× · 2.50× | — | 4.09 | 2.91 | 1.41× |
-| Decompress: GPU GLZ-E vs zstd -1 in 64 KiB chunks | 2.50× · 2.76× | 3.67 | 2.81 | 10.50 | 0.27× |
+| Compress to LZ4: GPU level 1 vs lz4_flex | 1.99× · 2.04× | 3.53 | 2.87 | 5.80 | 0.49× |
+| Compress to LZ4: CPU+GPU vs lz4_flex | 1.99× · 2.04× | — | 3.90 | 5.80 | 0.67× |
+| Compress to LZ4: lz4_flex + GPU vs lz4_flex | 2.04× · 2.04× | — | 7.57 | 5.80 | 1.31× |
+| Compress, same output: GPU LZ4 level 1 vs its CPU twin | 1.99× · 1.99× | 3.53 | 2.87 | 2.11 | 1.36× |
+| Compress, same output: GPU GLZ-E level 1 vs its CPU twin | 2.50× · 2.50× | 2.67 | 2.31 | 1.68 | 1.37× |
+| Compress, same output: GPU GLZ-E level 3 vs its CPU twin | 2.75× · 2.75× | 0.92 | 0.87 | 0.62 | 1.40× |
+| Compress, similar ratio: GPU GLZ-E level 3 vs zstd -1 in 64 KiB chunks | 2.75× · 2.76× | 0.92 | 0.87 | 5.90 | 0.15× |
+| Compress, similar ratio: CPU+GPU GLZ-E level 3 vs zstd -1 in 64 KiB chunks | 2.75× · 2.76× | — | 1.27 | 5.90 | 0.22× |
+| Decompress LZ4: GPU vs lz4_flex | 2.04× · 2.04× | 3.41 | 2.70 | 14.22 | 0.19× |
+| Decompress GLZ-E: GPU vs CPU | 2.50× · 2.50× | 3.62 | 2.81 | 6.85 | 0.41× |
+| Decompress GLZ-E: CPU+GPU vs CPU | 2.50× · 2.50× | — | 6.42 | 6.85 | 0.94× |
+| Decompress: GPU GLZ-E vs zstd -1 in 64 KiB chunks | 2.50× · 2.76× | 3.62 | 2.81 | 10.92 | 0.26× |
 
 ## Compression: ratio vs throughput
 
@@ -59,31 +61,32 @@ Input: `silesia/all` (202.1 MiB).
 
 | Encoder | Ratio | GPU kernel GB/s | End-to-end GB/s | Pareto |
 |---|---:|---:|---:|:---:|
-| CPU zstd -1, whole file | 2.89× | — | 5.85 | ◆ |
-| CPU zstd -1, 64 KiB chunks | 2.76× | — | 5.69 |  |
-| CPU lz4_flex | 2.04× | — | 5.35 |  |
-| CPU zstd -3, 64 KiB chunks | 2.88× | — | 4.20 |  |
-| CPU+GPU LZ4, level 1 | 1.99× | — | 3.65 |  |
-| CPU+GPU GLZ-E, level 1 | 2.50× | — | 2.97 |  |
-| CPU zstd -3, whole file | 3.20× | — | 2.90 | ◆ |
-| GPU LZ4, level 1 | 1.99× | 3.41 | 2.80 |  |
-| GPU GLZ | 1.95× | 3.40 | 2.74 |  |
-| GPU GLZ-E, level 1 | 2.50× | 2.60 | 2.26 |  |
-| CPU GLZ twin | 1.95× | — | 2.06 |  |
-| CPU LZ4 twin (GPU level 1's output) | 1.99× | — | 1.97 |  |
-| CPU GLZ-E twin, level 1 | 2.50× | — | 1.66 |  |
-| GPU LZ4, level 1, filters auto | 2.05× | — | 1.62 |  |
-| GPU LZ4, level 2 | 2.21× | 1.62 | 1.47 |  |
-| GPU GLZ-E, level 2 | 2.68× | 1.42 | 1.31 |  |
-| GPU GLZ, independent groups of 64 | 1.57× | 1.38 | 1.24 |  |
-| CPU LZ4 twin, level 1, filters auto | 2.05× | — | 1.19 |  |
-| GPU GLZ-E, level 1, filters auto | 2.55× | — | 1.19 |  |
-| CPU+GPU GLZ-E, level 3 | 2.75× | — | 1.16 |  |
-| CPU GLZ-E twin, level 2 | 2.68× | — | 0.95 |  |
-| CPU GLZ-E twin, level 1, filters auto | 2.55× | — | 0.88 |  |
-| CPU lz4_flex, 1 thread | 2.04× | — | 0.87 |  |
-| GPU LZ4, level 3 | 2.32× | 0.80 | 0.76 |  |
-| GPU GLZ-E, level 3 | 2.75× | 0.75 | 0.72 |  |
+| lz4_flex + GPU, LZ4, fixed split (30% on the GPU) | 2.04× | — | 7.57 | ◆ |
+| CPU zstd -1, whole file | 2.89× | — | 5.99 | ◆ |
+| CPU zstd -1, 64 KiB chunks | 2.76× | — | 5.90 |  |
+| CPU lz4_flex | 2.04× | — | 5.80 |  |
+| CPU zstd -3, 64 KiB chunks | 2.88× | — | 4.34 |  |
+| CPU+GPU LZ4, level 1 | 1.99× | — | 3.90 |  |
+| CPU+GPU GLZ-E, level 1 | 2.50× | — | 3.16 |  |
+| CPU zstd -3, whole file | 3.20× | — | 2.95 | ◆ |
+| GPU LZ4, level 1 | 1.99× | 3.53 | 2.87 |  |
+| GPU GLZ | 1.95× | 3.52 | 2.84 |  |
+| GPU GLZ-E, level 1 | 2.50× | 2.67 | 2.31 |  |
+| CPU GLZ twin | 1.95× | — | 2.19 |  |
+| CPU LZ4 twin (GPU level 1's output) | 1.99× | — | 2.11 |  |
+| GPU LZ4, level 1, filters auto | 2.05× | — | 1.69 |  |
+| CPU GLZ-E twin, level 1 | 2.50× | — | 1.68 |  |
+| GPU LZ4, level 2 | 2.21× | 1.83 | 1.64 |  |
+| GPU GLZ-E, level 2 | 2.68× | 1.59 | 1.45 |  |
+| CPU LZ4 twin, level 1, filters auto | 2.05× | — | 1.40 |  |
+| CPU+GPU GLZ-E, level 3 | 2.75× | — | 1.27 |  |
+| GPU GLZ, independent groups of 64 | 1.57× | 1.40 | 1.26 |  |
+| GPU GLZ-E, level 1, filters auto | 2.55× | — | 1.25 |  |
+| CPU GLZ-E twin, level 1, filters auto | 2.55× | — | 1.02 |  |
+| CPU GLZ-E twin, level 2 | 2.68× | — | 0.96 |  |
+| GPU LZ4, level 3 | 2.32× | 0.99 | 0.93 |  |
+| GPU GLZ-E, level 3 | 2.75× | 0.92 | 0.87 |  |
+| CPU lz4_flex, 1 thread | 2.04× | — | 0.86 |  |
 | CPU GLZ-E twin, level 3 | 2.75× | — | 0.62 |  |
 
 ## Decompression
@@ -92,28 +95,28 @@ Input: `silesia/all` (202.1 MiB).
 
 | Decoder | Ratio | GPU kernel GB/s | End-to-end GB/s | Pareto |
 |---|---:|---:|---:|:---:|
-| CPU+GPU LZ4 | 1.99× | — | 14.35 | ◆ |
-| CPU lz4_flex | 2.04× | — | 13.58 | ◆ |
-| CPU zstd -1, 64 KiB chunks | 2.76× | — | 10.50 | ◆ |
-| CPU zstd -3, 64 KiB chunks | 2.88× | — | 10.29 | ◆ |
-| CPU hand-written LZ4 decoder | 2.04× | — | 8.24 |  |
-| CPU GLZ | 1.95× | — | 6.86 |  |
-| CPU+GPU GLZ-E, level 3 file | 2.75× | — | 4.52 |  |
-| GPU GLZ, independent groups of 64 | 1.57× | 7.03 | 4.36 |  |
-| CPU+GPU GLZ-E, level 1 file | 2.50× | — | 4.09 |  |
-| GPU GLZ | 1.95× | 4.93 | 3.50 |  |
-| CPU lz4_flex, 1 thread | 2.04× | — | 3.33 |  |
-| CPU GLZ-E, level 3 file | 2.75× | — | 3.28 |  |
-| CPU GLZ-E, level 2 file | 2.68× | — | 3.11 |  |
-| GPU GLZ-E, level 3 file | 2.75× | 3.99 | 3.01 |  |
-| GPU GLZ-E, level 2 file | 2.68× | 3.87 | 2.94 |  |
-| CPU GLZ-E, level 1 file | 2.50× | — | 2.91 |  |
-| GPU GLZ-E, level 1 file | 2.50× | 3.67 | 2.81 |  |
-| GPU GLZ-E, filters auto | 2.55× | 3.52 | 2.72 |  |
-| GPU LZ4, cooperative kernel | 2.04× | 3.42 | 2.71 |  |
-| GPU LZ4, filters auto | 2.05× | 2.75 | 2.26 |  |
+| CPU lz4_flex | 2.04× | — | 14.22 | ◆ |
+| CPU+GPU LZ4 | 1.99× | — | 13.91 |  |
+| CPU GLZ | 1.95× | — | 12.56 |  |
+| CPU zstd -1, 64 KiB chunks | 2.76× | — | 10.92 | ◆ |
+| CPU zstd -3, 64 KiB chunks | 2.88× | — | 10.56 | ◆ |
+| CPU hand-written LZ4 decoder | 2.04× | — | 8.49 |  |
+| CPU GLZ-E, level 3 file | 2.75× | — | 7.23 |  |
+| CPU+GPU GLZ-E, level 3 file | 2.75× | — | 7.15 |  |
+| CPU GLZ-E, level 2 file | 2.68× | — | 7.12 |  |
+| CPU GLZ-E, level 1 file | 2.50× | — | 6.85 |  |
+| CPU+GPU GLZ-E, level 1 file | 2.50× | — | 6.42 |  |
+| GPU GLZ, independent groups of 64 | 1.57× | 6.99 | 4.39 |  |
+| GPU GLZ | 1.95× | 4.95 | 3.48 |  |
+| CPU lz4_flex, 1 thread | 2.04× | — | 3.23 |  |
+| GPU GLZ-E, level 3 file | 2.75× | 3.98 | 3.03 |  |
+| GPU GLZ-E, level 2 file | 2.68× | 3.86 | 2.93 |  |
+| GPU GLZ-E, level 1 file | 2.50× | 3.62 | 2.81 |  |
+| GPU GLZ-E, filters auto | 2.55× | 3.58 | 2.81 |  |
+| GPU LZ4, cooperative kernel | 2.04× | 3.41 | 2.70 |  |
+| GPU LZ4, filters auto | 2.05× | 2.96 | 2.41 |  |
 | GPU LZ4, one thread per chunk | 2.04× | 1.99 | 1.73 |  |
-| CPU zstd -1, whole file, 1 thread | 2.89× | — | 1.66 | ◆ |
+| CPU zstd -1, whole file, 1 thread | 2.89× | — | 1.65 | ◆ |
 | CPU zstd -3, whole file, 1 thread | 3.20× | — | 1.52 | ◆ |
 
 ## Silesia, file by file
@@ -122,37 +125,37 @@ Compression, as ratio · end-to-end GB/s:
 
 | Input | Size | GPU LZ4 l1 | GPU GLZ-E l1 | GPU GLZ-E l3 | CPU+GPU GLZ-E l1 | CPU lz4_flex | CPU zstd -1, 64 KiB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| silesia/dickens | 9.7 MiB | 1.53× · 2.20 | 2.15× · 1.69 | 2.42× · 0.60 | 2.15× · 1.04 | 1.54× · 1.84 | 2.28× · 2.56 |
-| silesia/mozilla | 48.8 MiB | 1.85× · 2.61 | 2.30× · 2.04 | 2.44× · 0.75 | 2.30× · 2.40 | 1.90× · 3.97 | 2.49× · 4.44 |
-| silesia/mr | 9.5 MiB | 1.78× · 2.17 | 2.60× · 1.55 | 2.78× · 0.78 | 2.60× · 1.23 | 1.79× · 2.26 | 2.60× · 3.74 |
-| silesia/nci | 32 MiB | 5.32× · 2.92 | 6.62× · 2.33 | 7.28× · 0.70 | 6.62× · 3.22 | 5.60× · 10.57 | 10.46× · 4.25 |
-| silesia/ooffice | 5.9 MiB | 1.40× · 1.65 | 1.64× · 1.15 | 1.76× · 0.59 | 1.64× · 1.03 | 1.39× · 1.68 | 1.72× · 3.94 |
-| silesia/osdb | 9.6 MiB | 1.67× · 2.56 | 1.86× · 1.72 | 2.27× · 0.61 | 1.86× · 1.31 | 1.78× · 1.99 | 2.31× · 1.33 |
-| silesia/reymont | 6.3 MiB | 1.89× · 1.74 | 2.61× · 1.27 | 3.00× · 0.52 | 2.61× · 1.10 | 2.01× · 2.12 | 2.94× · 1.31 |
-| silesia/samba | 20.6 MiB | 2.50× · 2.44 | 3.09× · 1.96 | 3.40× · 0.70 | 3.09× · 2.15 | 2.65× · 4.60 | 3.60× · 2.82 |
-| silesia/sao | 6.9 MiB | 1.09× · 2.29 | 1.19× · 1.53 | 1.28× · 0.62 | 1.19× · 0.97 | 1.06× · 1.83 | 1.15× · 2.33 |
-| silesia/webster | 39.5 MiB | 1.97× · 2.40 | 2.60× · 2.01 | 2.91× · 0.63 | 2.60× · 2.15 | 1.99× · 2.99 | 2.87× · 3.30 |
-| silesia/x-ray | 8.1 MiB | 1.02× · 2.94 | 1.25× · 1.63 | 1.34× · 0.71 | 1.25× · 1.17 | 1.00× · 2.76 | 1.25× · 3.61 |
-| silesia/xml | 5.1 MiB | 3.55× · 1.49 | 4.54× · 1.18 | 5.55× · 0.53 | 4.54× · 1.90 | 4.06× · 5.65 | 6.27× · 1.65 |
-| silesia/all | 202.1 MiB | 1.99× · 2.80 | 2.50× · 2.26 | 2.75× · 0.72 | 2.50× · 2.97 | 2.04× · 5.35 | 2.76× · 5.69 |
+| silesia/dickens | 9.7 MiB | 1.53× · 2.11 | 2.15× · 1.62 | 2.42× · 0.67 | 2.15× · 1.08 | 1.54× · 2.44 | 2.28× · 3.50 |
+| silesia/mozilla | 48.8 MiB | 1.85× · 2.68 | 2.30× · 2.09 | 2.44× · 0.92 | 2.30× · 2.53 | 1.90× · 4.51 | 2.49× · 4.36 |
+| silesia/mr | 9.5 MiB | 1.78× · 2.13 | 2.60× · 1.51 | 2.78× · 0.84 | 2.60× · 1.43 | 1.79× · 3.17 | 2.60× · 4.74 |
+| silesia/nci | 32 MiB | 5.32× · 3.19 | 6.62× · 2.53 | 7.28× · 0.83 | 6.62× · 3.74 | 5.60× · 10.85 | 10.46× · 5.37 |
+| silesia/ooffice | 5.9 MiB | 1.40× · 1.65 | 1.64× · 1.15 | 1.76× · 0.69 | 1.64× · 1.15 | 1.39× · 1.96 | 1.72× · 4.72 |
+| silesia/osdb | 9.6 MiB | 1.67× · 2.57 | 1.86× · 1.76 | 2.27× · 0.77 | 1.86× · 1.45 | 1.78× · 3.13 | 2.31× · 2.13 |
+| silesia/reymont | 6.3 MiB | 1.89× · 1.81 | 2.61× · 1.31 | 3.00× · 0.59 | 2.61× · 1.29 | 2.01× · 2.28 | 2.94× · 1.63 |
+| silesia/samba | 20.6 MiB | 2.50× · 2.56 | 3.09× · 2.03 | 3.40× · 0.84 | 3.09× · 2.38 | 2.65× · 5.11 | 3.60× · 3.45 |
+| silesia/sao | 6.9 MiB | 1.09× · 2.07 | 1.19× · 1.46 | 1.28× · 0.69 | 1.19× · 1.10 | 1.06× · 2.22 | 1.15× · 3.73 |
+| silesia/webster | 39.5 MiB | 1.97× · 2.50 | 2.60× · 2.14 | 2.91× · 0.77 | 2.60× · 2.26 | 1.99× · 3.73 | 2.87× · 3.52 |
+| silesia/x-ray | 8.1 MiB | 1.02× · 2.69 | 1.25× · 1.64 | 1.34× · 0.90 | 1.25× · 1.19 | 1.00× · 3.81 | 1.25× · 4.86 |
+| silesia/xml | 5.1 MiB | 3.55× · 1.57 | 4.54× · 1.22 | 5.55× · 0.63 | 4.54× · 2.13 | 4.06× · 7.12 | 6.27× · 2.75 |
+| silesia/all | 202.1 MiB | 1.99× · 2.87 | 2.50× · 2.31 | 2.75× · 0.87 | 2.50× · 3.16 | 2.04× · 5.80 | 2.76× · 5.90 |
 
 Decompression, end-to-end GB/s:
 
 | Input | Size | GPU LZ4 | GPU GLZ | GPU GLZ-E | CPU+GPU GLZ-E | CPU lz4_flex | CPU GLZ-E | CPU zstd -1, 64 KiB |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| silesia/dickens | 9.7 MiB | 0.93 | 2.67 | 2.17 | 1.58 | 25.54 | 2.00 | 10.97 |
-| silesia/mozilla | 48.8 MiB | 2.08 | 3.12 | 2.36 | 2.66 | 14.11 | 2.66 | 9.00 |
-| silesia/mr | 9.5 MiB | 1.02 | 3.01 | 2.11 | 2.25 | 25.01 | 2.56 | 10.64 |
-| silesia/nci | 32 MiB | 2.88 | 3.00 | 2.71 | 4.97 | 13.95 | 5.08 | 12.61 |
-| silesia/ooffice | 5.9 MiB | 0.65 | 1.51 | 1.13 | 1.70 | 10.96 | 2.02 | 5.88 |
-| silesia/osdb | 9.6 MiB | 1.52 | 4.21 | 3.02 | 2.14 | 22.10 | 2.64 | 5.58 |
-| silesia/reymont | 6.3 MiB | 0.59 | 1.74 | 1.36 | 2.04 | 10.99 | 2.29 | 4.55 |
-| silesia/samba | 20.6 MiB | 1.48 | 2.91 | 2.42 | 3.30 | 13.74 | 3.37 | 10.11 |
-| silesia/sao | 6.9 MiB | 1.31 | 3.08 | 1.91 | 1.41 | 12.59 | 1.71 | 3.92 |
-| silesia/webster | 39.5 MiB | 1.86 | 2.58 | 2.25 | 2.14 | 7.41 | 2.47 | 9.13 |
-| silesia/x-ray | 8.1 MiB | 2.99 | 4.79 | 2.55 | 1.76 | 73.34 | 1.89 | 7.90 |
-| silesia/xml | 5.1 MiB | 0.59 | 1.57 | 1.23 | 3.54 | 11.50 | 3.91 | 4.83 |
-| silesia/all | 202.1 MiB | 2.71 | 3.50 | 2.81 | 4.09 | 13.58 | 2.91 | 10.50 |
+| silesia/dickens | 9.7 MiB | 0.93 | 2.66 | 2.17 | 4.32 | 24.14 | 5.92 | 10.95 |
+| silesia/mozilla | 48.8 MiB | 2.11 | 3.02 | 2.45 | 5.36 | 14.30 | 5.30 | 8.80 |
+| silesia/mr | 9.5 MiB | 1.02 | 3.00 | 2.11 | 4.22 | 23.01 | 5.77 | 12.17 |
+| silesia/nci | 32 MiB | 3.05 | 3.79 | 2.85 | 7.66 | 14.76 | 8.70 | 11.97 |
+| silesia/ooffice | 5.9 MiB | 0.65 | 1.50 | 1.12 | 4.30 | 10.94 | 5.24 | 5.84 |
+| silesia/osdb | 9.6 MiB | 1.51 | 4.23 | 3.02 | 4.70 | 21.96 | 6.89 | 8.25 |
+| silesia/reymont | 6.3 MiB | 0.59 | 1.72 | 1.35 | 5.19 | 11.37 | 6.39 | 6.59 |
+| silesia/samba | 20.6 MiB | 1.59 | 3.04 | 2.33 | 6.61 | 14.06 | 7.07 | 10.08 |
+| silesia/sao | 6.9 MiB | 1.30 | 3.04 | 1.91 | 3.62 | 12.47 | 4.18 | 6.90 |
+| silesia/webster | 39.5 MiB | 1.87 | 2.58 | 2.26 | 5.08 | 13.75 | 5.63 | 9.25 |
+| silesia/x-ray | 8.1 MiB | 2.93 | 4.66 | 2.55 | 3.73 | 72.66 | 5.22 | 7.91 |
+| silesia/xml | 5.1 MiB | 0.59 | 1.55 | 1.22 | 7.30 | 10.61 | 8.85 | 7.80 |
+| silesia/all | 202.1 MiB | 2.70 | 3.48 | 2.81 | 6.42 | 14.22 | 6.85 | 10.92 |
 
 ## Synthetic inputs
 
@@ -160,19 +163,19 @@ Compression, as ratio · end-to-end GB/s:
 
 | Input | Size | GPU LZ4 l1 | GPU GLZ-E l1 | GPU GLZ-E l3 | CPU+GPU GLZ-E l1 | CPU lz4_flex | CPU zstd -1, 64 KiB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| zeros | 256 MiB | 156.04× · 3.93 | 1023.88× · 3.60 | 1023.88× · 2.99 | 1023.88× · 59.76 | 224.43× · 120.95 | 3276.80× · 38.48 |
-| random | 256 MiB | 1.00× · 4.45 | 1.00× · 2.92 | 1.00× · 0.92 | 1.00× · 3.20 | 1.00× · 9.97 | 1.00× · 21.69 |
-| text | 256 MiB | 1.92× · 2.52 | 3.01× · 2.16 | 3.51× · 0.59 | 3.01× · 3.05 | 2.10× · 5.33 | 3.42× · 4.26 |
-| mixed | 256 MiB | 1.96× · 3.40 | 2.25× · 2.77 | 2.33× · 1.00 | 2.25× · 2.11 | 2.03× · 9.34 | 2.32× · 8.93 |
+| zeros | 256 MiB | 156.04× · 4.35 | 1023.88× · 3.88 | 1023.88× · 3.18 | 1023.88× · 59.91 | 224.43× · 120.89 | 3276.80× · 43.49 |
+| random | 256 MiB | 1.00× · 4.46 | 1.00× · 2.89 | 1.00× · 1.32 | 1.00× · 3.10 | 1.00× · 10.28 | 1.00× · 24.63 |
+| text | 256 MiB | 1.92× · 2.52 | 3.01× · 2.12 | 3.51× · 0.66 | 3.01× · 3.12 | 2.10× · 5.30 | 3.42× · 4.31 |
+| mixed | 256 MiB | 1.96× · 3.49 | 2.25× · 2.79 | 2.33× · 1.22 | 2.25× · 2.10 | 2.03× · 9.88 | 2.32× · 9.55 |
 
 Decompression, end-to-end GB/s:
 
 | Input | Size | GPU LZ4 | GPU GLZ | GPU GLZ-E | CPU+GPU GLZ-E | CPU lz4_flex | CPU GLZ-E | CPU zstd -1, 64 KiB |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| zeros | 256 MiB | 10.99 | 10.48 | 10.36 | 7.99 | 17.21 | 7.24 | 14.07 |
-| random | 256 MiB | 9.34 | 9.05 | 7.69 | 17.08 | 17.27 | 17.55 | 16.77 |
-| text | 256 MiB | 1.80 | 2.83 | 2.45 | 3.69 | 15.47 | 2.62 | 9.21 |
-| mixed | 256 MiB | 3.69 | 5.44 | 4.85 | 5.35 | 17.33 | 5.43 | 14.38 |
+| zeros | 256 MiB | 10.93 | 10.51 | 10.31 | 7.84 | 18.44 | 7.55 | 14.51 |
+| random | 256 MiB | 9.47 | 9.01 | 7.64 | 14.92 | 18.48 | 17.80 | 17.41 |
+| text | 256 MiB | 1.80 | 2.75 | 2.41 | 6.73 | 15.35 | 6.74 | 9.33 |
+| mixed | 256 MiB | 3.72 | 5.36 | 4.72 | 9.10 | 18.22 | 9.52 | 15.10 |
 
 ## Numeric data
 
@@ -180,10 +183,10 @@ Ratios, then the GPU's end-to-end GB/s with filter selection (`--filters auto`).
 
 | Input | Size | GLZ-E | GLZ-E + auto | LZ4 + auto | zstd -1, 64 KiB | zstd -3, whole file | GPU GLZ-E + auto compress | GPU GLZ-E + auto decompress |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| f32-points | 256 MiB | 1.21× | 1.45× | 1.39× | 1.56× | 1.59× | 1.27 | 4.23 |
-| sorted-u32 | 256 MiB | 1.29× | 4.08× | 1.99× | 1.31× | 1.38× | 1.29 | 2.47 |
-| i16-audio | 256 MiB | 1.03× | 1.25× | 1.07× | 1.04× | 1.04× | 1.12 | 3.89 |
-| u64-timestamps | 256 MiB | 2.81× | 3.17× | 2.60× | 3.90× | 3.91× | 1.25 | 2.77 |
+| f32-points | 256 MiB | 1.21× | 1.45× | 1.39× | 1.56× | 1.59× | 1.28 | 4.12 |
+| sorted-u32 | 256 MiB | 1.29× | 4.08× | 1.99× | 1.31× | 1.38× | 1.24 | 2.47 |
+| i16-audio | 256 MiB | 1.03× | 1.25× | 1.07× | 1.04× | 1.04× | 1.27 | 4.28 |
+| u64-timestamps | 256 MiB | 2.81× | 3.17× | 2.60× | 3.90× | 3.91× | 1.29 | 2.96 |
 
 Filters plus entropy coding win clearly where a transform exposes structure. Delta turns sorted integers into small, repetitive gaps, and byte-shuffle groups the slowly changing high bytes of audio samples. Order-0 Huffman coding then exploits what LZ matching alone can't. zstd stays ahead on the timestamps and float points at level 1. Deeper matching changes that for timestamps: GLZ-E with filters at level 3 reached 8.96× against zstd's 3.90× on 32 MiB inputs (DECISIONS "Numeric data"). Level 3 with filters isn't part of this benchmark.
 
@@ -195,69 +198,69 @@ Input: `silesia/all` (202.1 MiB).
 
 | Path | Stage | ms | Share |
 |---|---|---:|---:|
-| LZ4 level 1 encode | match | 32.1 | 42% |
-|  | parse | 17.8 | 24% |
-|  | emit | 12.3 | 16% |
-|  | transfers and host work | 13.5 | 18% |
-|  | **end to end** | **75.7** | 100% |
-| LZ4 level 3 encode | match | 33.2 | 12% |
-|  | deep | 200.8 | 72% |
-|  | parse | 18.6 | 7% |
-|  | emit | 11.4 | 4% |
-|  | transfers and host work | 13.0 | 5% |
-|  | **end to end** | **277.1** | 100% |
-| GLZ-E level 1 encode | match | 32.7 | 35% |
-|  | parse | 17.8 | 19% |
+| LZ4 level 1 encode | match | 30.0 | 41% |
+|  | parse | 17.9 | 24% |
+|  | emit | 12.3 | 17% |
+|  | transfers and host work | 13.8 | 19% |
+|  | **end to end** | **73.9** | 100% |
+| LZ4 level 3 encode | match | 31.7 | 14% |
+|  | deep | 151.7 | 67% |
+|  | parse | 18.9 | 8% |
+|  | emit | 11.4 | 5% |
+|  | transfers and host work | 14.1 | 6% |
+|  | **end to end** | **227.8** | 100% |
+| GLZ-E level 1 encode | match | 30.4 | 33% |
+|  | parse | 17.9 | 19% |
 |  | emit | 12.4 | 13% |
-|  | glze-hist | 5.9 | 6% |
+|  | glze-hist | 6.0 | 6% |
 |  | glze-build | 1.5 | 2% |
-|  | glze-write | 11.2 | 12% |
-|  | transfers and host work | 12.5 | 13% |
-|  | **end to end** | **94.0** | 100% |
-| GLZ-E level 3 encode | match | 33.7 | 11% |
-|  | deep | 200.8 | 68% |
-|  | parse | 18.6 | 6% |
-|  | emit | 11.5 | 4% |
+|  | glze-write | 11.3 | 12% |
+|  | transfers and host work | 12.5 | 14% |
+|  | **end to end** | **91.8** | 100% |
+| GLZ-E level 3 encode | match | 32.3 | 13% |
+|  | deep | 151.8 | 62% |
+|  | parse | 19.1 | 8% |
+|  | emit | 11.5 | 5% |
 |  | glze-hist | 5.6 | 2% |
-|  | glze-build | 1.6 | 1% |
-|  | glze-write | 9.8 | 3% |
-|  | transfers and host work | 12.4 | 4% |
-|  | **end to end** | **294.1** | 100% |
-| LZ4 decode | decode | 61.9 | 79% |
-|  | transfers and host work | 16.3 | 21% |
-|  | **end to end** | **78.3** | 100% |
-| GLZ decode | decode | 42.5 | 70% |
+|  | glze-build | 1.7 | 1% |
+|  | glze-write | 9.8 | 4% |
+|  | transfers and host work | 12.1 | 5% |
+|  | **end to end** | **243.9** | 100% |
+| LZ4 decode | decode | 62.0 | 79% |
+|  | transfers and host work | 16.4 | 21% |
+|  | **end to end** | **78.4** | 100% |
+| GLZ decode | decode | 42.9 | 70% |
 |  | transfers and host work | 18.0 | 30% |
-|  | **end to end** | **60.5** | 100% |
+|  | **end to end** | **61.0** | 100% |
 | GLZ-E decode | glze-entropy | 16.3 | 22% |
-|  | decode | 41.7 | 55% |
-|  | transfers and host work | 17.5 | 23% |
-|  | **end to end** | **75.6** | 100% |
+|  | decode | 41.3 | 55% |
+|  | transfers and host work | 17.8 | 24% |
+|  | **end to end** | **75.4** | 100% |
 
 - **Match finding is now the largest level-1 kernel.** Each chunk's workgroup steps through its positions 128 at a time, with two barriers per block; the time splits into hashing and the table, loading each candidate's first word, and extending matches. Halving its workgroup memory changed nothing, so occupancy is not the limit. The parse copies the path its speculative walks recorded, instead of walking it twice. Emit writes each sequence's bytes.
-- **Levels 2 and 3 are dominated by the deep-match pass,** about 70% of level 3. Following 16 chain links per position, each a dependent read of earlier input, is bound by memory latency.
+- **Levels 2 and 3 are dominated by the deep-match pass,** about two thirds of level 3. Each chain link carries a tag of its candidate's first bytes, so the walk skips hash collisions without loading them. Following 16 chain links per position, each a dependent read of earlier input, is bound by memory latency.
 - **GLZ-E's entropy stage** adds about a fifth to end-to-end encoding and decoding time. Its largest part is writing (encode) or reading (decode) the bitstreams lane by lane.
-- **Transfers and host work** are a roughly fixed 12–18 ms on 202 MiB: 13–18% of level-1 compression and 21–30% of decompression. Their share grows as the kernels get faster.
+- **Transfers and host work** are a roughly fixed 12–18 ms on 202 MiB: 14–19% of level-1 compression and 21–30% of decompression. Their share grows as the kernels get faster.
 
 ## Platform ceilings
 
 | Measurement | GB/s |
 |---|---:|
-| CPU memcpy | 69.21 |
-| Upload, host to GPU | 10.08 |
-| Readback, GPU to host | 6.94 |
-| Trivial kernel (XOR), data on the GPU | 94.46 |
-| Trivial kernel, end to end | 2.61 |
+| CPU memcpy | 67.52 |
+| Upload, host to GPU | 11.40 |
+| Readback, GPU to host | 7.89 |
+| Trivial kernel (XOR), data on the GPU | 87.45 |
+| Trivial kernel, end to end | 2.95 |
 
 ## Does GPU compression beat the CPU?
 
-**No, not on this machine, but the gap is closing.** The GPU alone compresses at about half the speed of multi-threaded lz4_flex or zstd -1, end to end; with every CPU core helping, at about two thirds. The plan's goal is defined for a discrete GPU, which hasn't been measured; the next section covers what would change there. Three causes account for the gap on this machine, in order of size.
+**Only as a second processor, on this machine.** On its own, the GPU compresses at about half the speed of multi-threaded lz4_flex or zstd -1, end to end. Working next to the CPU, it pays: lz4_flex on 70% of the chunks plus the GPU on the other 30% compress LZ4 about 1.3× faster than lz4_flex alone, at the same ratio. The plan's goal is defined for a discrete GPU, which hasn't been measured; the next section covers what would change there. Three causes account for the GPU's own gap on this machine, in order of size.
 
-1. **The parallel algorithm does more work.** The GPU finds a match at every position, because its parallel parse needs them all, then parses and emits in parallel passes over the whole chunk. A serial parse needs matches only where it looks, about 40% of positions, and lz4_flex also skips ahead quickly through data that doesn't compress. The CPU twin, which writes the same files as the GPU, uses the first of these shortcuts and is still well behind lz4_flex on the same cores. The GPU runs its algorithm only 1.2–1.4× faster than that twin.
-2. **The kernels are latency-bound, not bandwidth-bound.** The trivial XOR kernel in the platform table streams data at about 95 GB/s; the level-1 encoder kernels process about 3.4 GB/s. The time goes to barrier-synchronised match finding, serial parse walks, divergence between lanes, and dependent memory reads in the deep-match pass. DECISIONS.md records the experiments that tried to shift each of these, including the many that didn't help.
-3. **Host↔GPU copies** cost 13–18% of level-1 compression and 21–30% of decompression, even though this GPU shares memory with the CPU. They go through wgpu's mapped staging buffers at 7–10 GB/s, far below the CPU's ~70 GB/s memcpy.
+1. **The parallel algorithm does more work.** The GPU finds a match at every position, because its parallel parse needs them all, then parses and emits in parallel passes over the whole chunk. A serial parse needs matches only where it looks, about 40% of positions, and lz4_flex also skips ahead quickly through data that doesn't compress. The CPU twin, which writes the same files as the GPU, uses the first of these shortcuts and is still well behind lz4_flex on the same cores. The GPU runs its algorithm about 1.4× faster than that twin.
+2. **The kernels are latency-bound, not bandwidth-bound.** The trivial XOR kernel in the platform table streams data at about 90 GB/s; the level-1 encoder kernels process about 3.5 GB/s. The time goes to barrier-synchronised match finding, serial parse walks, divergence between lanes, and dependent memory reads in the deep-match pass. DECISIONS.md records the experiments that tried to shift each of these, including the many that didn't help.
+3. **Host↔GPU copies** cost 14–19% of level-1 compression and 21–30% of decompression, even though this GPU shares memory with the CPU. They go through wgpu's mapped staging buffers at 8–11 GB/s, far below the CPU's ~70 GB/s memcpy.
 
-**Where the GPU does win:** as a second processor next to the CPU (CPU+GPU compression is faster than either alone, and so is GLZ-E decompression); against the same algorithm on the CPU, by 1.2–1.4×; and against single-threaded decoders, such as zstd on a whole-file frame, which also has no random access.
+**Where the GPU does win:** as a second processor next to the CPU (compression with lz4_flex, or with identical output via the twin); against the same algorithm on the CPU, by about 1.4×; and against single-threaded decoders, such as zstd on a whole-file frame, which also has no random access.
 
 ## Discrete GPUs vs unified memory
 

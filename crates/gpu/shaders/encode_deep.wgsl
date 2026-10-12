@@ -24,7 +24,7 @@ fn deep_match(start: u32, sbase: u32, p: u32, match_limit: u32, memo: bool) -> u
     }
     let limit = min(p + params.probe_len, match_limit);
     var m = first;
-    let head = chain[sbase + p];
+    let head = chain[sbase + p] & LINK_MASK;
     // `first` is the match with the head (candidate 0); stop if there's none,
     // it's out of reach, or `first` already reaches the probe cap.
     if (head != 0u && p - (head - 1u) <= MAX_OFFSET && p + (first >> 16u) < limit) {
@@ -40,9 +40,16 @@ fn deep_match(start: u32, sbase: u32, p: u32, match_limit: u32, memo: bool) -> u
                 in_word(start + p + 12u),
             );
         }
+        var ptag = 0u;
+        if (short_probe) {
+            ptag = prefix_tag(wp.x);
+        } else {
+            ptag = prefix_tag(in_word(start + p));
+        }
         var candidate = head - 1u;
         for (var k = 1u; k < DEPTH; k++) {
-            let entry = chain[sbase + candidate];
+            let link = chain[sbase + candidate];
+            let entry = link & LINK_MASK;
             if (entry == 0u) {
                 break;
             }
@@ -50,6 +57,10 @@ fn deep_match(start: u32, sbase: u32, p: u32, match_limit: u32, memo: bool) -> u
             let offset = p - candidate;
             if (offset > MAX_OFFSET) {
                 break;
+            }
+            if ((link >> LINK_BITS) != ptag) {
+                // Another prefix: it can't match.
+                continue;
             }
             // Only a longer match counts: if a best of length L exists, byte
             // L must match too (skips most extensions).

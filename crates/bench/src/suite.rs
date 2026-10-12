@@ -474,10 +474,16 @@ pub fn profile(
     Ok(rows)
 }
 
+/// The GPU's share of the chunks in the fixed-split LZ4 row (tuned for an
+/// Apple M4 Pro, where it makes both sides finish together).
+pub const HYBRID_LZ4_FLEX_SHARE: f64 = 0.3;
+
 /// CPU and GPU together (`gpu::hybrid`), end to end, for LZ4 and GLZ-E at
 /// level 1 and GLZ-E at level 3: compression (the file must equal the GPU
 /// encoder's) and decompression of that file (all rayon threads plus the GPU,
 /// which joins only when it helps). Rows `hybrid.<codec>[.lN].<direction>.e2e`.
+/// Last, `hybrid.lz4_flex.compress.e2e`: LZ4 on a fixed split, the GPU taking
+/// `HYBRID_LZ4_FLEX_SHARE` of the chunks and lz4_flex the rest.
 pub fn hybrid(
     ctx: &Context,
     inputs: &[(String, Vec<u8>)],
@@ -537,6 +543,39 @@ pub fn hybrid(
             let t = time(&|| Ok(gpu::hybrid::decompress(ctx, &decoder, &file, false).map(drop)?))?;
             row("decompress", t);
         }
+    }
+    let encoder = GpuEncoder::new(ctx, EncodeParams::default())?;
+    let options = GpuCompressOptions::default();
+    let flex = cpu::container::CompressOptions::default();
+    for (name, data) in inputs {
+        if data.is_empty() {
+            continue;
+        }
+        let n = data.len() as u64;
+        let compress = || {
+            gpu::hybrid::compress_static(
+                ctx,
+                &encoder,
+                data,
+                &options,
+                HYBRID_LZ4_FLEX_SHARE,
+                &flex,
+            )
+        };
+        let file = compress()?;
+        anyhow::ensure!(
+            cpu::container::decompress(&file, &Default::default())? == *data,
+            "fixed-split LZ4 file of {name}"
+        );
+        let t = time(&|| Ok(compress().map(drop)?))?;
+        rows.push(Measurement {
+            name: "hybrid.lz4_flex.compress.e2e".into(),
+            input: name.clone(),
+            bytes: n,
+            gbps: gbps(n, t),
+            ratio: Some(n as f64 / file.len() as f64),
+            timing: Timing::WallE2e,
+        });
     }
     Ok(rows)
 }

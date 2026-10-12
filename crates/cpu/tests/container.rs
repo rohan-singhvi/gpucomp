@@ -3,8 +3,8 @@
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use cpu::container::{
-    compress, decompress, decompress_chunks_into, decompress_range, read_index, CompressOptions,
-    CpuError, Decoder, DecompressOptions, Encoder, FilterMode,
+    compress, compress_into, decompress, decompress_chunks_into, decompress_range, read_index,
+    CompressOptions, CpuError, Decoder, DecompressOptions, Encoder, FilterMode,
 };
 use cpu::lz4::encode::Params;
 use format::{Codec, Filter, Index};
@@ -569,6 +569,32 @@ fn chunk_ranges_decode_into_slices_of_the_original() {
         let mut short = vec![0u8; 10];
         assert!(
             decompress_chunks_into(&file, &index, 0..1, &mut short, &Default::default()).is_err()
+        );
+    }
+}
+
+#[test]
+fn compress_into_appends_the_files_data_section_and_returns_its_entries() {
+    let input = [text(5 * 4096 + 100), random(3 * 4096, 9)].concat();
+    for options in [
+        opts(Encoder::Lz4Flex),
+        CompressOptions {
+            codec: Codec::GlzE,
+            encoder: Encoder::Glz(Default::default()),
+            checksums: true,
+            filters: FilterMode::Auto,
+            ..opts(Encoder::Lz4Flex)
+        },
+    ] {
+        let file = compress(&input, &options).unwrap();
+        let index = Index::parse(&file).unwrap();
+        let mut out = b"prefix".to_vec();
+        let entries = compress_into(&input, &options, &mut out).unwrap();
+        assert_eq!(entries, index.chunks, "{options:?}");
+        assert!(out[..6] == *b"prefix");
+        assert!(
+            out[6..] == file[index.data_offset() as usize..],
+            "{options:?}"
         );
     }
 }

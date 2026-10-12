@@ -414,6 +414,15 @@ mod tests {
     }
 
     #[test]
+    fn gpu_share_is_a_fraction_from_0_to_1() {
+        assert_eq!(files::parse_share("0.3"), Ok(0.3));
+        assert_eq!(files::parse_share("1"), Ok(1.0));
+        assert!(files::parse_share("1.5").is_err());
+        assert!(files::parse_share("-0.1").is_err());
+        assert!(files::parse_share("most").is_err());
+    }
+
+    #[test]
     fn bench_report_only_requires_report() {
         let argv = ["gpucomp", "bench", "--report-only"];
         assert!(Cli::try_parse_from(argv).is_err());

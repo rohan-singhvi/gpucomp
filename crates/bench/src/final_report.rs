@@ -200,6 +200,10 @@ const fn path(label: &'static str, e2e: &'static str) -> Path {
 }
 
 const COMPRESS: &[Path] = &[
+    path(
+        "lz4_flex + GPU, LZ4, fixed split (30% on the GPU)",
+        "hybrid.lz4_flex.compress.e2e",
+    ),
     path("CPU+GPU LZ4, level 1", "hybrid.lz4.compress.e2e"),
     path("CPU+GPU GLZ-E, level 1", "hybrid.glze.compress.e2e"),
     path("CPU+GPU GLZ-E, level 3", "hybrid.glze.l3.compress.e2e"),
@@ -457,6 +461,11 @@ const VERSUS: &[(&str, &str, &str)] = &[
         "cpu.lz4_flex.compress.mt",
     ),
     (
+        "Compress to LZ4: lz4_flex + GPU vs lz4_flex",
+        "hybrid.lz4_flex.compress.e2e",
+        "cpu.lz4_flex.compress.mt",
+    ),
+    (
         "Compress, same output: GPU LZ4 level 1 vs its CPU twin",
         "gpu.lz4.compress.e2e",
         "cpu.greedy.compress.mt",
@@ -668,6 +677,13 @@ mod tests {
                 m("cpu.zstd-1.compress.mt", ALL, 0.7, Some(2.76), Cpu),
                 m("hybrid.lz4.compress.e2e", ALL, 3.9, Some(1.99), WallE2e),
                 m(
+                    "hybrid.lz4_flex.compress.e2e",
+                    ALL,
+                    6.5,
+                    Some(2.02),
+                    WallE2e,
+                ),
+                m(
                     "gpu.lz4.compress.e2e",
                     "silesia/dickens",
                     1.5,
@@ -813,6 +829,9 @@ mod tests {
         assert!(row(&table, "CPU zstd -1, 64 KiB").contains("| 2.76× | — | 0.70 | ◆ |"));
         // Hybrid paths have no kernel time of their own.
         assert!(row(&table, "CPU+GPU LZ4, level 1").contains("| 1.99× | — | 3.90 |  |"));
+        // Faster than lz4_flex, a little smaller ratio: on the frontier.
+        let split = row(&table, "lz4_flex + GPU, LZ4, fixed split");
+        assert!(split.contains("| 2.02× | — | 6.50 | ◆ |"), "{split}");
         // Paths the run didn't measure are left out.
         assert!(!table.contains("GPU GLZ,"), "{table}");
     }
@@ -851,6 +870,8 @@ mod tests {
             hybrid.contains("| 1.99× · 2.04× | — | 3.90 | 5.00 | 0.78× |"),
             "{hybrid}"
         );
+        let split = row(&table, "Compress to LZ4: lz4_flex + GPU vs lz4_flex");
+        assert!(split.contains("| 6.50 | 5.00 | 1.30× |"), "{split}");
         let decode = row(&table, "Decompress LZ4");
         assert!(decode.contains("| 2.60 | 13.00 | 0.20× |"), "{decode}");
     }

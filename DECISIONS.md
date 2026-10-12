@@ -1230,3 +1230,68 @@ Against multi-threaded lz4_flex (5.35 GB/s), GPU LZ4 compression went from 0.43�
 0.52×, and CPU+GPU reaches 0.68×. bench/REPORT.md's prose was rewritten for these
 numbers. The "same algorithm" lead shrank (GPU over its twin: 2.3× → 1.4× for LZ4),
 because the twin now skips match finding where its serial parse doesn't look.
+
+## Catching up with lz4_flex and zstd (2026-10-11)
+Where the gap was (Silesia, `hybrid` run): lz4_flex compresses at 5.35 GB/s and
+CPU+GPU LZ4 at 3.65; zstd -1 in 64 KiB chunks gets 2.76× at 5.69 GB/s and decodes at
+10.5, GLZ-E level 1 gets 2.50× and the CPU decoded it at 2.97.
+
+**The CPU twin can't reach lz4_flex.** A sampled profile of the twin (LZ4 level 1,
+one thread): computing matches ~52%, hash-table inserts ~17%, extension ~13%, emit
+~12%. The hot instructions sit right after the "is it a collision" and "is it a
+match" branches: mispredictions.
+- **Kept:** a cursor-based LZ4 emit with 16-byte literal copies, a one-pass GLZ emit,
+  and a one-pass Huffman encoder (lanes written speculatively, kept if smaller than
+  raw). On 12 threads: LZ4 twin 2.15 → 2.31 GB/s, GLZ-E twin 1.70 → 1.83.
+- **Rejected:** computing every position's level-1 match branch-free in a block, then
+  parsing the array, instead of on demand. One thread: 0.27 → 0.29 GB/s. But 12
+  threads: LZ4 2.15 → 2.0 and GLZ-E 1.80 → 1.46, with a fresh 256 KB match array per
+  chunk (large allocations are mapped and unmapped by the kernel); even reusing a
+  per-thread array, GLZ-E stayed slower (1.71), from the extra memory traffic. The
+  first recorded run caught this regression; it was deleted and re-recorded.
+
+To write the GPU's files, the twin must insert every position and match every
+position the parse visits; lz4_flex does neither. It stays ~3× faster per core.
+
+**So the GPU adds to lz4_flex instead** (`hybrid::compress_static`, `--gpu-share`): a
+fixed split, lz4_flex (on all threads but one) taking the first chunks and the GPU
+the last share of them, at the same time. The file differs from the GPU-only one but
+depends only on the input and settings, so it stays deterministic. A prototype that
+wrote two separate files (lz4_flex alone 6.21 GB/s in that session): GPU share 0.2 /
+0.25 / 0.3 / 0.35 / 0.4 → 7.25 / 7.88 / 8.01 / 7.28 / 6.35 GB/s. Joining the two
+files cost the real thing most of that: splicing (a fresh 105 MB buffer) took
+4.7–6.7 ms of ~31, leaving +6%. Now the CPU writes its data straight into the
+file after room for the table (`cpu::container::compress_into`), and only the GPU's
+part (`GpuEncoder::compress_into`) is appended: **7.1–7.4 GB/s at 0.3 against
+lz4_flex's 6.4, +11–15%** (ratio 2.02×). The bench row uses 0.3
+(`HYBRID_LZ4_FLEX_SHARE`).
+
+**CPU decoders** (byte-identical, same errors; the GPU GLZ-E tests compare error
+statuses):
+- **Huffman:** a 64-bit bit buffer refilled bytes at a time, decoding straight into
+  the output, four lanes interleaved, one overrun check per lane (bits only
+  accumulate, so it catches what a check per symbol would); `to_glz` decodes tokens
+  and literals in place. GLZ-E 2.97 → 4.50 GB/s.
+- **GLZ:** 16-byte wild copies for literal runs and for matches with offsets ≥ 16
+  (output is written in order and matches read only finished bytes). GLZ **7.2 →
+  13.7 GB/s** (lz4_flex: 13.3), GLZ-E **→ 7.1 GB/s** (2.4× in all).
+- Rejected: two symbols per lookup (a pair table per long stream): 7.08 → 6.82 GB/s.
+
+With these decoders the hybrid's GPU stays out of decoding on this machine (the CPU
+finishes Silesia's GLZ-E in ~31 ms); letting it join below 40 ms made every codec
+slower (GLZ-E 6.83 → 5.58 GB/s).
+
+**GPU kernels** (byte-identical):
+- **Match finding** compares the candidate's next 12 bytes with independent loads
+  instead of extend's word-by-word loop: 32.9 → 30.6 ms. The same change to `extend`
+  itself made the parse slower (19.4 → 22.4 ms: most of its extensions stop at once),
+  so it was reverted.
+- **`extend16`** compares the whole probe at once: deep pass, level 2 / 3, 68.7 /
+  206 → 60.6 / 196 ms.
+- **Tagged chain links:** each link carries an 11-bit tag of its candidate's first 4
+  bytes above the 21-bit position (the match kernel already loads that word), and the
+  deep walk skips a candidate whose tag differs from the position's without loading
+  its bytes (30% of level-3 candidates are collisions). Deep pass **60.6 / 196 →
+  54.5 / 155 ms**; level-3 kernels 256 → 215 ms.
+- Rejected: parallel host copies for upload and readback (rayon; fresh zeroed pages
+  for readback): 78.9 → 77.7 ms end to end, not worth the code.

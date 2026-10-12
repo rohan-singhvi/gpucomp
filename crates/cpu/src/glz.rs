@@ -140,10 +140,6 @@ fn source_room(outputs: &[(usize, usize)], src: usize) -> Option<usize> {
     }
 }
 
-fn pad4(v: &mut Vec<u8>) {
-    v.resize(v.len().div_ceil(4) * 4, 0);
-}
-
 /// Byte offsets of the arrays: (tokens, offsets, ext, literals).
 pub(crate) fn field_offsets(
     count: usize,
@@ -167,44 +163,65 @@ fn nibble(len: u32) -> (u8, Option<u32>) {
     }
 }
 
-/// Serialises `sequences` (literals taken from `input`) as a GLZ block.
+/// Serialises `sequences` (literals taken from `input`) as a GLZ block. Sizes
+/// first, then one pass writing every field at its place in a pre-sized
+/// block; a short literal run is one 16-byte copy (the next run overwrites
+/// the overshoot, and 16 bytes of slack cover the last).
 pub fn emit(input: &[u8], sequences: &[Sequence]) -> Vec<u8> {
-    let mut tokens = Vec::with_capacity(sequences.len());
-    let mut ext = Vec::new();
+    let count = sequences.len();
+    let (mut ext_count, mut wide, mut literals) = (0usize, false, 0usize);
     for s in sequences {
-        let (lit, lit_ext) = nibble(s.lit_len);
-        let (mat, mat_ext) = if s.match_len > 0 {
+        for len in [
+            Some(s.lit_len),
+            (s.match_len > 0).then(|| s.match_len - MIN_MATCH as u32),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if len >= 15 {
+                ext_count += 1;
+                wide |= len - 15 > 0xFFFF;
+            }
+        }
+        literals += s.lit_len as usize;
+    }
+    let (tokens_at, offsets_at, ext_at, literals_at) = field_offsets(count, ext_count, wide);
+    let size = literals_at + literals;
+    let mut out = vec![0u8; size + 16];
+    out[..4].copy_from_slice(&(count as u32 | if wide { WIDE_BIT } else { 0 }).to_le_bytes());
+    out[4..8].copy_from_slice(&(ext_count as u32).to_le_bytes());
+    let (mut ext, mut lit) = (ext_at, literals_at);
+    let mut put_ext = |out: &mut [u8], v: u32| {
+        if wide {
+            out[ext..ext + 4].copy_from_slice(&v.to_le_bytes());
+            ext += 4;
+        } else {
+            out[ext..ext + 2].copy_from_slice(&(v as u16).to_le_bytes());
+            ext += 2;
+        }
+    };
+    for (i, s) in sequences.iter().enumerate() {
+        let (l, lit_ext) = nibble(s.lit_len);
+        let (m, match_ext) = if s.match_len > 0 {
             nibble(s.match_len - MIN_MATCH as u32)
         } else {
             (0, None)
         };
-        tokens.push(lit << 4 | mat);
-        ext.extend(lit_ext);
-        ext.extend(mat_ext);
-    }
-    let wide = ext.iter().any(|&v| v > 0xFFFF);
-    let mut out = (sequences.len() as u32 | if wide { WIDE_BIT } else { 0 })
-        .to_le_bytes()
-        .to_vec();
-    out.extend_from_slice(&(ext.len() as u32).to_le_bytes());
-    out.extend_from_slice(&tokens);
-    pad4(&mut out);
-    for s in sequences {
-        out.extend_from_slice(&(s.offset as u16).to_le_bytes());
-    }
-    pad4(&mut out);
-    for &v in &ext {
-        if wide {
-            out.extend_from_slice(&v.to_le_bytes());
-        } else {
-            out.extend_from_slice(&(v as u16).to_le_bytes());
+        out[tokens_at + i] = l << 4 | m;
+        out[offsets_at + 2 * i..offsets_at + 2 * i + 2]
+            .copy_from_slice(&(s.offset as u16).to_le_bytes());
+        for v in lit_ext.into_iter().chain(match_ext) {
+            put_ext(&mut out, v);
         }
+        let (start, len) = (s.lit_start as usize, s.lit_len as usize);
+        if len <= 16 && start + 16 <= input.len() {
+            out[lit..lit + 16].copy_from_slice(&input[start..start + 16]);
+        } else {
+            out[lit..lit + len].copy_from_slice(&input[start..start + len]);
+        }
+        lit += len;
     }
-    pad4(&mut out);
-    for s in sequences {
-        let start = s.lit_start as usize;
-        out.extend_from_slice(&input[start..start + s.lit_len as usize]);
-    }
+    out.truncate(size);
     out
 }
 
@@ -222,6 +239,38 @@ pub fn encode_block(input: &[u8], params: &GlzParams) -> Vec<u8> {
         ),
     };
     emit(input, &sequences)
+}
+
+/// `dst[op..op + len] = src[..len]`, checked by the caller. Output is written
+/// in order and matches read only bytes before `op`, so a short run is one
+/// 16-byte copy when both sides have room: what follows overwrites the rest.
+#[inline(always)]
+fn copy_literals(dst: &mut [u8], op: usize, src: &[u8], len: usize) {
+    if len <= 16 && op + 16 <= dst.len() && src.len() >= 16 {
+        dst[op..op + 16].copy_from_slice(&src[..16]);
+    } else {
+        dst[op..op + len].copy_from_slice(&src[..len]);
+    }
+}
+
+/// `dst[op + k] = dst[op + k - offset]` for k in 0..len, in order (an offset
+/// below `len` repeats the pattern), checked by the caller. With an offset of
+/// at least 16 and room for the overshoot, 16 bytes at a time: each step reads
+/// only bytes already written.
+#[inline(always)]
+fn copy_match(dst: &mut [u8], op: usize, offset: usize, len: usize) {
+    if offset >= 16 && op + len + 16 <= dst.len() {
+        let mut k = 0;
+        while k < len {
+            let (done, rest) = dst.split_at_mut(op + k);
+            rest[..16].copy_from_slice(&done[op + k - offset..op + k - offset + 16]);
+            k += 16;
+        }
+    } else {
+        for k in op..op + len {
+            dst[k] = dst[k - offset];
+        }
+    }
 }
 
 /// Decodes one GLZ block into `dst` (exactly the uncompressed size). Header
@@ -288,7 +337,7 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), GlzError> {
         if lit_len > dst.len() - op {
             return Err(GlzError::OutputOverflow);
         }
-        dst[op..op + lit_len].copy_from_slice(&literals[lp..lp + lit_len]);
+        copy_literals(dst, op, &literals[lp..], lit_len);
         lp += lit_len;
         op += lit_len;
         if i == count - 1 {
@@ -307,9 +356,7 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), GlzError> {
         if match_len > dst.len() - op {
             return Err(GlzError::OutputOverflow);
         }
-        for k in op..op + match_len {
-            dst[k] = dst[k - offset];
-        }
+        copy_match(dst, op, offset, match_len);
         op += match_len;
     }
     if op != dst.len() || lp != literals.len() {

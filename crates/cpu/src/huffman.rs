@@ -153,44 +153,52 @@ pub fn encode_stream(symbols: &[u8], out: &mut Vec<u8>) {
     }
     let raw_size = 4 + n.next_multiple_of(4);
     if used >= 2 {
+        // Written speculatively in one pass (lanes, then the header in front
+        // of them); kept only if smaller than raw.
         let lengths = code_lengths(&counts);
+        let codes = codes(&lengths);
+        let entries: [u32; 256] =
+            std::array::from_fn(|s| u32::from(codes[s]) | u32::from(lengths[s]) << 16);
         let lanes = lanes(n);
-        let words: Vec<usize> = (0..lanes)
-            .map(|k| {
-                let bits: usize = symbols[lane_range(n, lanes, k)]
-                    .iter()
-                    .map(|&s| usize::from(lengths[s as usize]))
-                    .sum();
-                bits.div_ceil(32)
-            })
-            .collect();
-        let huffman_size =
-            4 + 128 + (2 * lanes).next_multiple_of(4) + 4 * words.iter().sum::<usize>();
-        if huffman_size < raw_size {
-            let codes = codes(&lengths);
-            out.extend_from_slice(&MODE_HUFFMAN.to_le_bytes());
-            out.extend(lengths.chunks(2).map(|p| p[0] | p[1] << 4));
-            for &w in &words {
-                out.extend_from_slice(&(w as u16).to_le_bytes());
-            }
-            out.resize(out.len() + (2 * lanes).next_multiple_of(4) - 2 * lanes, 0);
-            for k in 0..lanes {
-                let (mut acc, mut fill) = (0u64, 0u32);
-                for &s in &symbols[lane_range(n, lanes, k)] {
-                    acc |= u64::from(codes[s as usize]) << fill;
-                    fill += u32::from(lengths[s as usize]);
-                    if fill >= 32 {
-                        out.extend_from_slice(&(acc as u32).to_le_bytes());
-                        acc >>= 32;
-                        fill -= 32;
-                    }
-                }
-                if fill > 0 {
-                    out.extend_from_slice(&(acc as u32).to_le_bytes());
+        let start = out.len();
+        let data_at = start + 4 + 128 + (2 * lanes).next_multiple_of(4);
+        // At most MAX_LEN bits per symbol, plus a partial word per lane.
+        out.resize(
+            data_at + 4 * ((n * MAX_LEN as usize).div_ceil(32) + lanes),
+            0,
+        );
+        let mut at = data_at;
+        for k in 0..lanes {
+            let lane_start = at;
+            let (mut acc, mut fill) = (0u64, 0u32);
+            for &s in &symbols[lane_range(n, lanes, k)] {
+                let e = entries[s as usize];
+                acc |= u64::from(e & 0xFFFF) << fill;
+                fill += e >> 16;
+                if fill >= 32 {
+                    out[at..at + 4].copy_from_slice(&(acc as u32).to_le_bytes());
+                    at += 4;
+                    acc >>= 32;
+                    fill -= 32;
                 }
             }
+            if fill > 0 {
+                out[at..at + 4].copy_from_slice(&(acc as u32).to_le_bytes());
+                at += 4;
+            }
+            let words = (at - lane_start) / 4;
+            out[start + 132 + 2 * k..start + 134 + 2 * k]
+                .copy_from_slice(&(words as u16).to_le_bytes());
+        }
+        if at - start < raw_size {
+            out[start..start + 4].copy_from_slice(&MODE_HUFFMAN.to_le_bytes());
+            for (i, p) in lengths.chunks(2).enumerate() {
+                out[start + 4 + i] = p[0] | p[1] << 4;
+            }
+            out.truncate(at);
             return;
         }
+        out.truncate(start);
     }
     out.extend_from_slice(&MODE_RAW.to_le_bytes());
     out.extend_from_slice(symbols);
@@ -198,15 +206,24 @@ pub fn encode_stream(symbols: &[u8], out: &mut Vec<u8>) {
 }
 
 /// Decodes the `n`-symbol stream starting at `src[at..]` onto `out`, and
-/// returns the position after it. Checks, in order: the mode word, the code
-/// table (present, then valid), the lane sizes and words (present), then each
-/// lane in order (no bits past its words).
+/// returns the position after it. See [`decode_stream_into`].
 pub fn decode_stream(
     src: &[u8],
     at: usize,
     n: usize,
     out: &mut Vec<u8>,
 ) -> Result<usize, StreamError> {
+    let start = out.len();
+    out.resize(start + n, 0);
+    decode_stream_into(src, at, &mut out[start..])
+}
+
+/// Decodes the stream starting at `src[at..]` into `out` (as many symbols as
+/// it holds), and returns the position after it. Checks, in order: the mode
+/// word, the code table (present, then valid), the lane sizes and words
+/// (present), then each lane in order (no bits past its words).
+pub fn decode_stream_into(src: &[u8], at: usize, out: &mut [u8]) -> Result<usize, StreamError> {
+    let n = out.len();
     let word = |at: usize| {
         src.get(at..at + 4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
@@ -220,11 +237,11 @@ pub fn decode_stream(
             if end > src.len() {
                 return Err(StreamError::Truncated);
             }
-            out.extend_from_slice(bytes);
+            out.copy_from_slice(bytes);
             Ok(end)
         }
         MODE_RLE if head >> 16 == 0 => {
-            out.resize(out.len() + n, (head >> 8) as u8);
+            out.fill((head >> 8) as u8);
             Ok(at + 4)
         }
         MODE_HUFFMAN if head >> 8 == 0 => {
@@ -247,55 +264,134 @@ pub fn decode_stream(
             let sizes = src
                 .get(sizes_at..sizes_at + 2 * lanes)
                 .ok_or(StreamError::Truncated)?;
-            let words: Vec<usize> = sizes
-                .chunks(2)
-                .map(|p| usize::from(u16::from_le_bytes([p[0], p[1]])))
-                .collect();
             let data_at = sizes_at + (2 * lanes).next_multiple_of(4);
-            let end = data_at + 4 * words.iter().sum::<usize>();
+            let end = data_at
+                + 4 * sizes
+                    .chunks(2)
+                    .map(|p| usize::from(u16::from_le_bytes([p[0], p[1]])))
+                    .sum::<usize>();
             if end > src.len() {
                 return Err(StreamError::Truncated);
             }
             // Decode table: entry = symbol | length << 8, indexed by the next
-            // MAX_LEN bits (least significant first).
+            // MAX_LEN bits (least significant first). The table is complete
+            // (Kraft sum exactly 1), so every entry has a length.
             let codes = codes(&lengths);
-            let mut lookup = vec![0u16; 1 << MAX_LEN];
+            let mut lookup = [0u16; 1 << MAX_LEN];
             for s in 0..256 {
                 let len = u32::from(lengths[s]);
                 if len > 0 {
-                    for fill in 0..1u32 << (MAX_LEN - len) {
-                        lookup[(u32::from(codes[s]) | fill << len) as usize] =
-                            s as u16 | (len as u16) << 8;
+                    let entry = s as u16 | (len as u16) << 8;
+                    let mut index = u32::from(codes[s]);
+                    while index < 1 << MAX_LEN {
+                        lookup[index as usize] = entry;
+                        index += 1 << len;
                     }
                 }
             }
+            // Lanes are independent: decode them four at a time, interleaved,
+            // so the CPU overlaps their dependent lookup chains.
             let mut lane_at = data_at;
-            for (k, &w) in words.iter().enumerate() {
-                let lane = &src[lane_at..lane_at + 4 * w];
-                let bit = |i: usize| -> u32 {
-                    lane.get(i / 32 * 4..i / 32 * 4 + 4)
-                        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
-                };
-                let mut pos = 0usize;
-                for _ in lane_range(n, lanes, k) {
-                    let shift = (pos % 32) as u32;
-                    let mut peek = bit(pos) >> shift;
-                    if shift > 0 {
-                        peek |= bit(pos + 32) << (32 - shift);
-                    }
-                    let e = lookup[(peek & ((1 << MAX_LEN) - 1)) as usize];
-                    pos += usize::from(e >> 8);
-                    if pos > 32 * w {
-                        return Err(StreamError::LaneOverrun);
-                    }
-                    out.push(e as u8);
+            let mut rest = out;
+            let mut group: Vec<(Lane, &mut [u8])> = Vec::with_capacity(4);
+            for (k, size) in sizes.chunks(2).enumerate() {
+                let words = usize::from(u16::from_le_bytes([size[0], size[1]]));
+                let (dst, tail) =
+                    std::mem::take(&mut rest).split_at_mut(lane_range(n, lanes, k).len());
+                rest = tail;
+                group.push((Lane::new(&src[lane_at..lane_at + 4 * words]), dst));
+                lane_at += 4 * words;
+                if group.len() == 4 || k + 1 == lanes {
+                    decode_group(&mut group, &lookup)?;
+                    group.clear();
                 }
-                lane_at += 4 * w;
             }
             Ok(end)
         }
         _ => Err(StreamError::BadMode),
     }
+}
+
+/// One lane's bit reader: its words, LSB first, through a 64-bit buffer
+/// refilled whole bytes at a time (zeros past the lane). Using a bit past the
+/// lane's words is an overrun; bits only accumulate, so checking once at the
+/// end ([`Lane::finish`]) catches exactly what a check per symbol would.
+struct Lane<'a> {
+    words: &'a [u8],
+    bits: u64,
+    avail: u32,
+    next: usize,
+    used: usize,
+}
+
+impl<'a> Lane<'a> {
+    fn new(words: &'a [u8]) -> Self {
+        Lane {
+            words,
+            bits: 0,
+            avail: 0,
+            next: 0,
+            used: 0,
+        }
+    }
+
+    #[inline(always)]
+    fn decode(&mut self, lookup: &[u16; 1 << MAX_LEN]) -> u8 {
+        if self.avail < MAX_LEN {
+            // As many whole bytes as fit, 8 at a time where the lane has them.
+            let take = (63 - self.avail) / 8;
+            let chunk = match self.words.get(self.next..self.next + 8) {
+                Some(b) => u64::from_le_bytes(b.try_into().unwrap()),
+                None => {
+                    let mut b = [0u8; 8];
+                    let tail = self.words.get(self.next..).unwrap_or(&[]);
+                    let n = tail.len().min(8);
+                    b[..n].copy_from_slice(&tail[..n]);
+                    u64::from_le_bytes(b)
+                }
+            };
+            self.bits |= (chunk & ((1u64 << (8 * take)) - 1)) << self.avail;
+            self.avail += 8 * take;
+            self.next += take as usize;
+        }
+        let entry = lookup[(self.bits & ((1 << MAX_LEN) - 1)) as usize];
+        let len = u32::from(entry >> 8);
+        self.bits >>= len;
+        self.avail -= len;
+        self.used += len as usize;
+        entry as u8
+    }
+
+    fn finish(&self) -> Result<(), StreamError> {
+        if self.used > 8 * self.words.len() {
+            return Err(StreamError::LaneOverrun);
+        }
+        Ok(())
+    }
+}
+
+/// Decodes up to four lanes into their outputs: interleaved while all have
+/// symbols left (their lengths differ by at most one), then each one's rest.
+fn decode_group(
+    group: &mut [(Lane, &mut [u8])],
+    lookup: &[u16; 1 << MAX_LEN],
+) -> Result<(), StreamError> {
+    let common = group.iter().map(|(_, out)| out.len()).min().unwrap_or(0);
+    if let [(a, oa), (b, ob), (c, oc), (d, od)] = group {
+        for i in 0..common {
+            oa[i] = a.decode(lookup);
+            ob[i] = b.decode(lookup);
+            oc[i] = c.decode(lookup);
+            od[i] = d.decode(lookup);
+        }
+    }
+    let done = if group.len() == 4 { common } else { 0 };
+    for (lane, out) in group.iter_mut() {
+        for symbol in &mut out[done..] {
+            *symbol = lane.decode(lookup);
+        }
+    }
+    group.iter().try_for_each(|(lane, _)| lane.finish())
 }
 
 #[cfg(test)]

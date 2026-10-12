@@ -62,6 +62,17 @@ const LONG_LITERALS: u32 = 64u;
 const MAX_GROUP: u32 = 64u; // keep in sync with gpu::encode::MAX_GROUP
 const PARSE_SEGMENTS: u32 = 128u; // keep in sync with gpu::encode::PARSE_SEGMENTS
 
+// Hash-chain links (DEPTH > 1): the linked position + 1 in the low LINK_BITS
+// bits (0 = none; chunks are at most 1 MiB), and above them a tag of that
+// position's first 4 bytes, so a walk can skip a candidate that can't match
+// (another prefix: a hash collision) without loading its bytes.
+const LINK_BITS: u32 = 21u;
+const LINK_MASK: u32 = (1u << LINK_BITS) - 1u;
+
+fn prefix_tag(word: u32) -> u32 {
+    return (word * 0x85EBCA77u) >> LINK_BITS;
+}
+
 fn chunk_count() -> u32 {
     return (params.input_len + params.chunk_size - 1u) / params.chunk_size;
 }
@@ -112,6 +123,24 @@ fn extend(start: u32, end_in: u32, offset: u32, limit: u32) -> u32 {
 // extend(start, p, offset, limit) for limit <= p + 16, comparing against the
 // 16 bytes at p already in `wp` (so each candidate loads only its own side).
 fn extend16(start: u32, p: u32, offset: u32, limit: u32, wp: vec4<u32>) -> u32 {
+    if (limit == p + 16u) {
+        // The whole probe at once: independent loads of the candidate side.
+        let q = start + p - offset;
+        let d = vec4<u32>(in_word(q), in_word(q + 4u), in_word(q + 8u), in_word(q + 12u)) ^ wp;
+        if (d.x != 0u) {
+            return p + countTrailingZeros(d.x) / 8u;
+        }
+        if (d.y != 0u) {
+            return p + 4u + countTrailingZeros(d.y) / 8u;
+        }
+        if (d.z != 0u) {
+            return p + 8u + countTrailingZeros(d.z) / 8u;
+        }
+        if (d.w != 0u) {
+            return p + 12u + countTrailingZeros(d.w) / 8u;
+        }
+        return limit;
+    }
     var end = p;
     loop {
         if (end + 4u > limit) {

@@ -206,33 +206,52 @@ pub fn parse(input: &[u8], matches: &[Match], lazy: bool) -> Vec<Sequence> {
     sequences
 }
 
-/// Phase 3: appends the LZ4 encoding of `sequences` to `out`.
+/// Phase 3: appends the LZ4 encoding of `sequences` to `out`. It writes at a
+/// cursor into `out` grown to a bound plus 16 bytes of slack, so a short
+/// literal run is one 16-byte copy (what follows overwrites the overrun)
+/// instead of a call per run.
 pub fn emit(input: &[u8], sequences: &[Sequence], out: &mut Vec<u8>) {
+    let base = out.len();
+    let bound: usize = sequences
+        .iter()
+        .map(|s| 4 + s.lit_len as usize + (s.lit_len as usize + s.match_len as usize) / 255 + 2)
+        .sum();
+    out.resize(base + bound + 16, 0);
+    let mut pos = base;
     for s in sequences {
         let lit_len = s.lit_len as usize;
         let match_code = (s.match_len as usize).saturating_sub(MIN_MATCH);
-        out.push(((lit_len.min(15) as u8) << 4) | match_code.min(15) as u8);
-        write_length(out, lit_len);
+        out[pos] = ((lit_len.min(15) as u8) << 4) | match_code.min(15) as u8;
+        pos = put_length(out, pos + 1, lit_len);
         let start = s.lit_start as usize;
-        out.extend_from_slice(&input[start..start + lit_len]);
+        if lit_len <= 16 && start + 16 <= input.len() {
+            out[pos..pos + 16].copy_from_slice(&input[start..start + 16]);
+        } else {
+            out[pos..pos + lit_len].copy_from_slice(&input[start..start + lit_len]);
+        }
+        pos += lit_len;
         if s.match_len > 0 {
-            out.extend_from_slice(&(s.offset as u16).to_le_bytes());
-            write_length(out, match_code);
+            out[pos..pos + 2].copy_from_slice(&(s.offset as u16).to_le_bytes());
+            pos = put_length(out, pos + 2, match_code);
         }
     }
+    out.truncate(pos);
 }
 
-/// Writes the continuation bytes of a length whose 4-bit field is 15.
-fn write_length(out: &mut Vec<u8>, len: usize) {
+/// Writes at `pos` the continuation bytes of a length whose 4-bit field is
+/// 15; returns the position after them.
+fn put_length(out: &mut [u8], mut pos: usize, len: usize) -> usize {
     if len < 15 {
-        return;
+        return pos;
     }
     let mut rest = len - 15;
     while rest >= 255 {
-        out.push(255);
+        out[pos] = 255;
+        pos += 1;
         rest -= 255;
     }
-    out.push(rest as u8);
+    out[pos] = rest as u8;
+    pos + 1
 }
 
 /// Compresses `input` as one LZ4 block: `emit` of `parse` over

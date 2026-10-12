@@ -352,6 +352,7 @@ fn hybrid_suite_times_cpu_and_gpu_together_both_ways() {
             "hybrid.glze.decompress.e2e",
             "hybrid.glze.l3.compress.e2e",
             "hybrid.glze.l3.decompress.e2e",
+            "hybrid.lz4_flex.compress.e2e",
         ]
     );
     for m in &rows {
