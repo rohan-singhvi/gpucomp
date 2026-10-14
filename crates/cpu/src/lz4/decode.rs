@@ -1,4 +1,4 @@
-//! Hand-written LZ4 block decoder: simple, readable and bounds-checked.
+//! Hand-written LZ4 block decoder: bounds-checked, with wild copies.
 //! The GPU decoder (M2) mirrors this loop.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -25,10 +25,13 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), DecodeError> {
 
         let lit_len = read_length(src, &mut ip, usize::from(token >> 4))?;
         let lit_end = ip.checked_add(lit_len).ok_or(DecodeError::Truncated)?;
-        let literals = src.get(ip..lit_end).ok_or(DecodeError::Truncated)?;
-        dst.get_mut(op..op + lit_len)
-            .ok_or(DecodeError::OutputOverflow)?
-            .copy_from_slice(literals);
+        if lit_end > src.len() {
+            return Err(DecodeError::Truncated);
+        }
+        if lit_len > dst.len() - op {
+            return Err(DecodeError::OutputOverflow);
+        }
+        crate::wild::copy_literals(dst, op, &src[ip..], lit_len);
         ip = lit_end;
         op += lit_len;
 
@@ -50,10 +53,8 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), DecodeError> {
         if match_len > dst.len() - op {
             return Err(DecodeError::OutputOverflow);
         }
-        // Byte by byte: when offset < match_len the source overlaps what we write.
-        for i in op..op + match_len {
-            dst[i] = dst[i - offset];
-        }
+        // In order: when offset < match_len the source overlaps what we write.
+        crate::wild::copy_match(dst, op, offset, match_len);
         op += match_len;
     }
     if op != dst.len() {

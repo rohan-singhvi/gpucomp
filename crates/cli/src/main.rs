@@ -168,6 +168,16 @@ fn bench_command(args: &BenchArgs) -> anyhow::Result<()> {
             run.measurements
                 .extend(bench::suite::hybrid(ctx, &inputs, &cfg)?);
         }
+        let context = gpu::ContextOptions {
+            backends: args.backend.map(BackendArg::backends),
+        };
+        let dir = std::env::temp_dir().join(format!("gpucomp-bench-{}", std::process::id()));
+        run.measurements.extend(bench::suite::files(
+            ctx.as_ref().map(|_| &context),
+            &profile_inputs(&inputs),
+            &cfg,
+            &dir,
+        )?);
         drop(inputs);
         let filter_inputs = filter_suite_inputs(cfg.bytes, &corpus);
         // zstd on the numeric inputs too (the corpus is already measured).

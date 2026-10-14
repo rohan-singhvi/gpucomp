@@ -1295,3 +1295,161 @@ slower (GLZ-E 6.83 → 5.58 GB/s).
   54.5 / 155 ms**; level-3 kernels 256 → 215 ms.
 - Rejected: parallel host copies for upload and readback (rayon; fresh zeroed pages
   for readback): 78.9 → 77.7 ms end to end, not worth the code.
+
+## Streaming CLI paths (2026-10-12)
+**What a CLI user waits for wasn't what the bench measured.** One-shot runs on
+Silesia (212 MB, page cache warm, best of 5, before this change):
+
+| Command | Wall time |
+|---|---:|
+| `gpucomp compress` (CPU, lz4_flex) | 79 ms |
+| `gpucomp compress --gpu` | 201 ms |
+| `gpucomp compress --gpu --hybrid --gpu-share 0.3` | 118 ms |
+| `gpucomp decompress` (CPU) | 69 ms |
+| `gpucomp decompress --gpu` | 170 ms |
+| `zstd -1 -T0` / `zstd -d` (1.5.7) | 46 / 139 ms |
+| `lz4 -1` / `lz4 -d` (1.10.0) | 65 / 76 ms |
+
+The CPU paths read the whole input, then coded it, then wrote it. Reading 212 MB
+from the page cache takes ~14 ms and writing ~100 MB ~10 ms, all of it serial.
+
+**Streams.** `cpu::container::compress_stream` and `decompress_stream`, now the CLI's
+CPU paths: a reader thread reads groups of chunks into recycled buffers, rayon codes
+several groups at once, and the calling thread writes the results in order
+(`cpu::pipeline::ordered`; at most `depth` groups in flight, the first error in
+group order stops the writes). Files are byte-identical to `compress`'s at every
+group size (`cpu/tests/stream.rs`). Tuning, in process, best of 7, compress /
+decompress (hand-written decoder):
+
+| Groups × in flight | ms |
+|---|---|
+| 32 MiB × 3–12 | 54–57 / 51–72 |
+| 4 MiB × 6 | 50.0 / 35.4 |
+| 1 MiB × 12 | 40.1 / 31.6 |
+| 256 KiB × 24 | 34.2 / 30.0 |
+| 256 KiB × 48 | 32.9 / 30.9 |
+| in-memory `compress` / `decompress` | 36.5 / 24 |
+
+Small groups, many in flight, keep the working set in cache: the stream compresses
+faster than the in-memory function, whose per-chunk payload Vecs and 105 MB output
+miss it. Chosen: groups of max(256 KiB, one chunk), four per core in flight (48 here,
+~24 MiB). The CLI after: compress **79 → 43 ms** (zstd -1 -T0 47–52 ms in the same
+session, lz4 65–68), decompress **69 → 38 ms** with the hand-written decoder and 31
+with lz4_flex (lz4 -d 75–80, zstd -d 140).
+
+**Hand-written LZ4 decoder:** byte-by-byte match copies became the GLZ decoder's
+wild copies (now shared, `cpu/src/wild.rs`), plus 8-byte steps for offsets 8–15.
+One thread **1.16 → 4.07 GB/s** (lz4_flex 4.42); 12 threads 8.5 → 15–17, level with
+lz4_flex (memory-bound). GLZ decoding is unchanged (15.3–16.2 against 15.7–15.8 GB/s).
+Rejected: for offsets below 8, writing 8 bytes singly and then repeating 8 at a time
+with a period that's a multiple of the offset: 4.07 → 3.89 GB/s on Silesia.
+
+**The GPU's CLI paths (not changed yet).** In process, one `compress --gpu` of
+Silesia: reading the file 17–23 ms, `Context::new` 12–16 ms, `GpuEncoder::new` 16 ms,
+then the first `compress` 147 ms against 73–81 ms warm. That's ~70 ms of first use: a
+212 MB batch allocates ~1.9 GB of buffers (4 bytes of scratch per input byte, the
+chain, slots, staging), which wgpu zero-fills. `compress_stream` itself takes 107 ms
+warm against 73 ms in memory (serial read, copy, encode, write). Smaller batches
+help: `--gpu-memory 256M` 200 → 145 ms compress and 168 → 136 ms decompress; 64M is
+slower again (193 ms decompress, the per-pass latency floor). First decode: 114 ms
+against 87–89 warm.
+
+**Transfers on Apple Silicon** (212 MB, `MAPPABLE_PRIMARY_BUFFERS` device):
+- copying into a mapped MAP_WRITE buffer, which Metal makes write-combined, runs at
+  memcpy speed (67 GB/s, 3.3 ms), the same as into a mapped STORAGE | MAP_WRITE one;
+- a GPU copy between buffers takes 2.1 ms (104 GB/s);
+- the first map of a new 212 MB staging buffer takes 11.8 ms (zero-fill);
+- copying into fresh memory (a new Vec) runs at ~21 GB/s, 10 ms (page faults).
+
+So mappable storage buffers (M11's zero-copy) would save only the two GPU copies,
+~3 ms of ~74 ms end to end. A CLI run's GPU cost is first use and serial I/O.
+
+**Recorded** (`streams` run, new `files` suite: file to file on `silesia/all`, page
+cache warm, median of 10; corespeechd used ~1 core throughout, and multi-threaded
+CPU rows came out 10–15% under the `catch-up` run's, e.g. lz4_flex 5.80 → 4.91 GB/s):
+
+| Path | Compress ms | Decompress ms |
+|---|---:|---:|
+| gpucomp CPU stream (lz4_flex; hand-written decoder) | 40.6 | 45.5 |
+| zstd -1 streams (`-T0`; one-thread decode) | 47.9 | 140.9 |
+| gpucomp GPU stream, new context per run | 189.5 | 163.2 |
+
+In memory in the same run, the hand-written LZ4 decoder went **8.49 → 12.79 GB/s**
+(lz4_flex 13.03). Decompressing to a file is bound by writing 212 MB into the page
+cache: the decode itself takes ~17 ms of the 45.
+
+## Pipelined GPU batches (2026-10-12)
+The GPU's file paths spent most of their time outside the kernels (previous
+section). Four changes, all output-identical (the multi-batch, stream and matrix
+tests compare every file with the in-memory and CPU ones):
+
+**The encoder pipelines unfiltered batches over two buffer sets.** Each iteration
+uploads batch k and submits its kernels, then reads batch k − 1's sizes and submits
+its pack pass, then reads back batch k − 2's data section and hands it on. The GPU
+runs submissions in order, so a set is rewritten only after the passes that read it.
+Mapping a buffer now waits for the submission that last used it, not for everything
+submitted (`map_after`); a buffer no submission has used maps on a non-blocking poll
+(wgpu puts it on the ready-to-map list), so the second set's first upload doesn't
+wait for the first batch's kernels. Filter selection keeps one batch at a time.
+
+Batch size (`PIPELINE_BATCH_BYTES`, `batch_chunks`), Silesia in memory, best of 5,
+cold = a new encoder's first call:
+
+| Batch | Serial loop: cold / warm | Pipelined: cold / warm |
+|---|---|---|
+| one batch (3 GiB budget) | 138.5 / 72.6 ms | — |
+| 1024 chunks (64 MiB) | 96.8 / 77.5 | 77.4 / 67.3 |
+| 512 chunks (32 MiB) | 99.2 / 80.8 | 78.4 / 67.3 |
+| **256 chunks (16 MiB)** | 91.8 / 88.1 | **71.2 / 66.6** |
+| 128 chunks (8 MiB) | 104.0 / 102.1 | 74.4 / 70.3 |
+| 64 chunks (4 MiB) | — | 111.7 / 110.9 |
+
+Two 16 MiB sets are ~290 MB of buffers instead of ~1.9 GB, so first use is cheap,
+and the warm time is within ~5 ms of the kernels' ~62. Two batches must fit the
+memory budget.
+
+**But not next to a busy CPU.** The first recorded run showed the lz4_flex + GPU
+split (`compress_static`, 30% on the GPU) at 5.65 GB/s, against 6.90 before. A/B in
+process, best of 8: 7.27–7.49 GB/s with 16 MiB batches, 7.64–7.66 with one. With
+every core compressing, the GPU's thread wakes late at each of the extra sync
+points. So `Batching::Whole` (as few batches as the budget allows) exists for that
+caller: 7.53–7.54. The adaptive hybrid (identical output) is as fast or faster
+pipelined (LZ4 4.17–4.20 against 4.09–4.12 GB/s whole; GLZ-E 3.32–3.35 either
+way), so it stays pipelined. The run with the regression was deleted and
+re-recorded.
+
+**Recorded** (`pipelined` run; coreaudiod and corespeechd used ~1 core): GPU file
+to file 189.5 → **91.8 ms** compress and 163.2 → **125.5 ms** decompress (gpucomp's
+CPU stream: 36.3 / 51.6 ms; zstd -1: 43.1 / 140.5 ms). In memory: GPU LZ4 level 1
+2.77 → 3.01 GB/s (kernels 3.46), GLZ 2.76 → 2.95, GLZ decode 3.40 → 3.83; transfers
+and host work at level 1 15.4 → 8.3 ms. GLZ-E level 1 stayed at 2.26 GB/s (its
+transfers and host work 11.1 → 13.2 ms); not looked into yet. lz4_flex + GPU 7.06
+GB/s, 1.36× lz4_flex in the same run.
+
+**The decoder hands output straight from its readback buffer** (`finish_with`)
+to the writer, or into one output Vec reserved up front, instead of copying each
+batch into a fresh Vec first (~10 ms of page faults per 212 MB). Streamed to a sink:
+LZ4 91 → 81 ms, GLZ-E 77 → 67 ms. Decoder batches are capped at 512 MiB of GPU
+memory (`DECODE_BATCH_BYTES`, ~150 MB of LZ4 output), so Silesia decodes in two
+overlapping batches. Unlike encoding, smaller decode batches lose: every pass has a
+latency floor (budget → LZ4 cold / warm: 3 GiB 126 / 87, 1 GiB 99 / 82, 512 MiB
+99 / 86, 256 MiB 106 / 102, 64 MiB 172 / 153 ms).
+
+**Pipelines compile in parallel:** `GpuEncoder::new` 16.5 → 2.2–3.9 ms (13 kernels
+plus the filters; one level-1 LZ4 run needs four), `GpuDecoder::new` 5 → 1.5 ms.
+`Context::new` stays ~17 ms.
+
+One-shot CLI runs on Silesia, best of 5:
+
+| Command | Before | After |
+|---|---:|---:|
+| `compress --gpu` | 201 ms | 110 ms |
+| `compress --gpu --codec glze` | 221 ms | 128 ms |
+| `decompress --gpu` (LZ4) | 170 ms | 131 ms |
+| `decompress --gpu` (GLZ-E) | — | 116 ms |
+
+What's left in `compress --gpu`: context ~18 ms, encoder ~3 ms, the first use of
+the buffers ~15 ms, and file I/O on the host thread: in process, a warm stream
+takes 67 ms from memory to nowhere and 77 ms from file to file (reading alone
++1.4 ms, writing alone +4 ms). Reading and writing on their own threads might save
+5–8 ms more; not done.

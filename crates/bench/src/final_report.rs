@@ -10,13 +10,14 @@ use crate::record::{Measurement, Run, Timing};
 use crate::report::human_bytes;
 
 /// The placeholders a template can use, as `{{name}}`.
-pub const SECTIONS: [&str; 11] = [
+pub const SECTIONS: [&str; 12] = [
     "setup",
     "versus",
     "compress",
     "decompress",
     "files-compress",
     "files-decompress",
+    "file-to-file",
     "synthetic-compress",
     "synthetic-decompress",
     "numeric",
@@ -97,6 +98,7 @@ fn section(name: &str, run: &Run) -> String {
         "decompress" => tradeoff(run, "Decoder", DECOMPRESS),
         "files-compress" => matrix(run, &corpus_inputs(run), &FILE_COMPRESS),
         "files-decompress" => matrix(run, &corpus_inputs(run), &FILE_DECOMPRESS),
+        "file-to-file" => file_to_file(run),
         "synthetic-compress" => matrix(run, &SYNTHETIC, &FILE_COMPRESS),
         "synthetic-decompress" => matrix(run, &SYNTHETIC, &FILE_DECOMPRESS),
         "numeric" => matrix(run, &NUMERIC, &NUMERIC_COLUMNS),
@@ -186,6 +188,54 @@ fn platform(run: &Run) -> Option<String> {
     })
     .collect();
     (!rows.is_empty()).then(|| format!("| Measurement | GB/s |\n|---|---:|\n{}", rows.join("\n")))
+}
+
+/// File-to-file paths as the CLI runs them: (label, compress row,
+/// decompress row).
+const FILE_TO_FILE: [(&str, &str, &str); 3] = [
+    (
+        "gpucomp, CPU: LZ4 with lz4_flex, hand-written decoder",
+        "file.cpu.lz4_flex.compress",
+        "file.cpu.lz4.decompress",
+    ),
+    (
+        "zstd -1: `-T0`, decoding on one thread",
+        "file.zstd-1.compress.mt",
+        "file.zstd-1.decompress.1t",
+    ),
+    (
+        "gpucomp, GPU: LZ4, a new context each run",
+        "file.gpu.lz4.compress",
+        "file.gpu.lz4.decompress",
+    ),
+];
+
+/// Wall time from file to file, both directions, for the headline input.
+fn file_to_file(run: &Run) -> Option<String> {
+    let input = headline(run)?;
+    let rows: Vec<String> = FILE_TO_FILE
+        .iter()
+        .filter_map(|(label, compress, decompress)| {
+            let c = find(run, compress, input)?;
+            let d = find(run, decompress, input)?;
+            Some(format!(
+                "| {label} | {} | {:.1} | {:.2} | {:.1} | {:.2} |",
+                ratio(c.ratio),
+                ms(c),
+                c.gbps,
+                ms(d),
+                d.gbps
+            ))
+        })
+        .collect();
+    (!rows.is_empty()).then(|| {
+        format!(
+            "{}| Path | Ratio | Compress ms | GB/s | Decompress ms | GB/s |\n\
+             |---|---:|---:|---:|---:|---:|\n{}",
+            input_note(run, input),
+            rows.join("\n")
+        )
+    })
 }
 
 /// A path in a ratio-vs-throughput table: its label and end-to-end row; GPU
@@ -709,6 +759,10 @@ mod tests {
                 ),
                 m("gpu.lz4.decompress.coop.e2e", ALL, 2.6, Some(2.04), WallE2e),
                 m("cpu.lz4_flex.decompress.mt", ALL, 13.0, Some(2.04), Cpu),
+                m("file.cpu.lz4_flex.compress", ALL, 5.0, Some(2.04), Cpu),
+                m("file.cpu.lz4.decompress", ALL, 8.0, Some(2.04), Cpu),
+                m("file.zstd-1.compress.mt", ALL, 4.0, Some(2.89), Cpu),
+                m("file.zstd-1.decompress.1t", ALL, 1.0, Some(2.89), Cpu),
             ],
         )
     }
@@ -874,6 +928,24 @@ mod tests {
         assert!(split.contains("| 6.50 | 5.00 | 1.30× |"), "{split}");
         let decode = row(&table, "Decompress LZ4");
         assert!(decode.contains("| 2.60 | 13.00 | 0.20× |"), "{decode}");
+    }
+
+    #[test]
+    fn file_to_file_pairs_each_paths_compress_and_decompress() {
+        let table = section("file-to-file");
+        assert!(table.contains("`silesia/all`"), "{table}");
+        let cpu = row(&table, "gpucomp, CPU");
+        assert!(
+            cpu.contains("| 2.04× | 200.0 | 5.00 | 125.0 | 8.00 |"),
+            "{cpu}"
+        );
+        let zstd = row(&table, "zstd -1");
+        assert!(
+            zstd.contains("| 2.89× | 250.0 | 4.00 | 1000.0 | 1.00 |"),
+            "{zstd}"
+        );
+        // Paths the run didn't measure are left out.
+        assert!(!table.contains("GPU"), "{table}");
     }
 
     #[test]

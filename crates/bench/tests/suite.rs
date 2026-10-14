@@ -361,3 +361,42 @@ fn hybrid_suite_times_cpu_and_gpu_together_both_ways() {
         assert!(m.ratio.unwrap() > 1.5, "{m:?}");
     }
 }
+
+#[test]
+fn files_suite_times_file_to_file_paths_like_the_cli() {
+    let inputs = vec![(
+        "text".to_string(),
+        bench::suite::synthetic_inputs(SMALL.bytes).remove(2).1,
+    )];
+    let dir = std::env::temp_dir().join(format!("gpucomp-files-suite-{}", std::process::id()));
+    let cpu_rows = [
+        "file.cpu.lz4_flex.compress",
+        "file.cpu.lz4.decompress",
+        "file.zstd-1.compress.mt",
+        "file.zstd-1.decompress.1t",
+    ];
+    let rows = bench::suite::files(None, &inputs, &SMALL, &dir).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, cpu_rows);
+    for m in &rows {
+        assert_eq!((m.input.as_str(), m.timing), ("text", Timing::Cpu));
+        assert!(m.gbps.is_finite() && m.gbps > 0.0, "{m:?}");
+        assert!(m.ratio.unwrap() > 1.5, "{m:?}");
+    }
+    assert!(!dir.exists(), "the suite removes its files");
+    if context().is_none() {
+        return;
+    }
+    let rows =
+        bench::suite::files(Some(&ContextOptions::default()), &inputs, &SMALL, &dir).unwrap();
+    let names: Vec<_> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names[..4], cpu_rows);
+    assert_eq!(
+        names[4..],
+        ["file.gpu.lz4.compress", "file.gpu.lz4.decompress"]
+    );
+    for m in &rows[4..] {
+        assert_eq!(m.timing, Timing::WallE2e);
+        assert!(m.gbps > 0.0 && m.ratio.unwrap() > 1.5, "{m:?}");
+    }
+}

@@ -262,6 +262,53 @@ pub fn chunks_per_batch(chunk_size: u32, binding_limit: u64) -> u64 {
     (binding_limit / (4 * u64::from(chunk_size))).max(1)
 }
 
+/// Input bytes per batch when unfiltered batches are pipelined: small enough
+/// that two batches' buffers are cheap to allocate and the GPU starts early,
+/// large enough that each dispatch keeps the GPU busy.
+pub const PIPELINE_BATCH_BYTES: u64 = 16 << 20;
+
+/// How unfiltered input is cut into batches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Batching {
+    /// Batches of about [`PIPELINE_BATCH_BYTES`], two in flight: the GPU
+    /// starts early, buffers are small, and transfers overlap kernels. For
+    /// the GPU alone.
+    Pipelined,
+    /// As few batches as the budget allows: fewer host round trips, for when
+    /// every CPU core is busy too (`gpu::hybrid`) and the GPU's thread may
+    /// wake late.
+    Whole,
+}
+
+/// Chunks per batch for `options` within a memory `budget` and a binding
+/// limit. Unfiltered encoding pipelines two batches of about
+/// [`PIPELINE_BATCH_BYTES`] (both within the budget); filter selection runs
+/// one batch at a time, as large as the budget allows. At least one chunk.
+pub fn batch_chunks(
+    options: &GpuCompressOptions,
+    params: &EncodeParams,
+    budget: u64,
+    binding_limit: u64,
+    batching: Batching,
+) -> u64 {
+    let per_chunk = encoder_bytes_per_chunk(options, params);
+    let by_binding = chunks_per_batch(options.chunk_size, binding_limit);
+    let chunks = match options.filters {
+        FilterMode::None => match batching {
+            Batching::Pipelined => (PIPELINE_BATCH_BYTES / u64::from(options.chunk_size))
+                .min(budget / (2 * per_chunk))
+                .min(by_binding),
+            Batching::Whole => (budget / per_chunk).min(by_binding),
+        },
+        // Every candidate's scratch shares the binding limit.
+        FilterMode::Auto | FilterMode::Exhaustive => {
+            let candidates = filter_candidates(options.level).len() as u64;
+            (by_binding / candidates).min(budget / per_chunk)
+        }
+    };
+    chunks.max(1)
+}
+
 pub struct GpuEncoder {
     params: EncodeParams,
     layout: wgpu::BindGroupLayout,
@@ -283,7 +330,7 @@ pub struct GpuEncoder {
     max_batch_chunks: Option<u64>,
     memory_budget: u64,
     /// Buffers reused across `compress`/`encode_blocks` calls.
-    buffers: Mutex<BufferCache>,
+    buffers: Mutex<EncoderBuffers>,
 }
 
 /// The codec-specific kernels: parse (size accounting) and emit.
@@ -311,6 +358,25 @@ impl Encoded {
     }
 }
 
+/// Two buffer sets: pipelined batches alternate between them, so one batch's
+/// buffers can be read back while the next one's are encoded. Everything
+/// else uses the first.
+#[derive(Default)]
+struct EncoderBuffers {
+    sets: [BufferCache; 2],
+}
+
+#[cfg(test)]
+impl EncoderBuffers {
+    fn allocations(&self) -> u32 {
+        self.sets.iter().map(|c| c.allocations).sum()
+    }
+
+    fn read_bytes(&self) -> u64 {
+        self.sets.iter().map(|c| c.read_bytes).sum()
+    }
+}
+
 /// GPU buffers kept between calls and grown when a bigger batch arrives.
 /// Stale contents are harmless: the input and params are rewritten, the
 /// output slots are cleared by every encode, and the kernels write every
@@ -331,6 +397,9 @@ struct BufferCache {
     packed: Option<wgpu::Buffer>,
     sizes_read: Option<wgpu::Buffer>,
     data_read: Option<wgpu::Buffer>,
+    /// The submission that last copied out of `upload`: mapping it again
+    /// waits for that alone.
+    upload_at: Option<wgpu::SubmissionIndex>,
     /// Buffers created so far.
     allocations: u32,
     /// Bytes read back to the host since the last reset.
@@ -389,6 +458,50 @@ pub(crate) fn map(
     rx.recv()
         .map_err(|e| GpuError::Readback(e.to_string()))?
         .map_err(|e| GpuError::Readback(e.to_string()))
+}
+
+/// Maps the first `len` bytes of `buffer` once submission `after` has
+/// finished; with `None`, the buffer is idle (no unfinished submission uses
+/// it), so mapping it waits for nothing.
+fn map_after(
+    ctx: &Context,
+    buffer: &wgpu::Buffer,
+    mode: wgpu::MapMode,
+    len: u64,
+    after: Option<wgpu::SubmissionIndex>,
+) -> Result<(), GpuError> {
+    let (tx, rx) = mpsc::channel();
+    buffer.map_async(mode, ..len, move |r| drop(tx.send(r)));
+    ctx.device.poll(match after {
+        Some(index) => wgpu::PollType::Wait {
+            submission_index: Some(index),
+            timeout: None,
+        },
+        None => wgpu::PollType::Poll,
+    })?;
+    let mapped = match rx.try_recv() {
+        Ok(result) => result,
+        // Not idle after all: wait for everything.
+        Err(_) => {
+            ctx.device.poll(wgpu::PollType::wait_indefinitely())?;
+            rx.recv().map_err(|e| GpuError::Readback(e.to_string()))?
+        }
+    };
+    mapped.map_err(|e| GpuError::Readback(e.to_string()))
+}
+
+/// [`read_mapped`] once submission `after` has finished.
+fn read_mapped_after(
+    ctx: &Context,
+    buffer: &wgpu::Buffer,
+    len: u64,
+    after: wgpu::SubmissionIndex,
+    f: impl FnOnce(&[u8]),
+) -> Result<(), GpuError> {
+    map_after(ctx, buffer, wgpu::MapMode::Read, len, Some(after))?;
+    let result = buffer.get_mapped_range(..len).map(|view| f(&view));
+    buffer.unmap();
+    result.map_err(|e| GpuError::Readback(e.to_string()))
 }
 
 /// Maps the first `len` bytes of `buffer` (MAP_READ, already filled by a
@@ -517,71 +630,105 @@ impl GpuEncoder {
                 })
         };
         let wg = ("WG_SIZE", f64::from(params.block));
-        let codec = |name: &str, emit: &str, id: u32| CodecPipelines {
-            parse: pipeline(
-                &format!("{name} parse"),
+        let depth = ("DEPTH", f64::from(params.depth));
+        let pack_pipeline_layout = pipeline_layout(&pack_layout);
+        // (label, layout, sources, constants) of every kernel, compiled in
+        // parallel: one at a time took ~16 ms on an M4 Pro.
+        type Job<'a> = (
+            &'a str,
+            &'a wgpu::PipelineLayout,
+            Vec<&'a str>,
+            Vec<(&'a str, f64)>,
+        );
+        let parse = |name, id: u32, shader| -> Job<'_> {
+            (
+                name,
                 &encode_layout,
-                &[COMMON_SHADER, DEEP_SHADER, PARSE_SEG_SHADER],
-                &[("CODEC", f64::from(id)), ("DEPTH", f64::from(params.depth))],
-            ),
-            parse_serial: pipeline(
-                &format!("{name} serial parse"),
-                &encode_layout,
-                &[COMMON_SHADER, DEEP_SHADER, PARSE_SHADER],
-                &[("CODEC", f64::from(id)), ("DEPTH", f64::from(params.depth))],
-            ),
-            emit: pipeline(
-                &format!("{name} emit"),
-                &encode_layout,
-                &[COMMON_SHADER, EMIT_SHARED, emit],
-                &[("WG_SIZE", f64::from(EMIT_WG))],
-            ),
+                vec![COMMON_SHADER, DEEP_SHADER, shader],
+                vec![("CODEC", f64::from(id)), depth],
+            )
         };
-        Ok(GpuEncoder {
-            filters: crate::filter::FilterKernels::new(ctx),
-            params,
-            matches: pipeline(
+        let emit = |name, shader| -> Job<'_> {
+            (
+                name,
+                &encode_layout,
+                vec![COMMON_SHADER, EMIT_SHARED, shader],
+                vec![("WG_SIZE", f64::from(EMIT_WG))],
+            )
+        };
+        let plain = |name, shader| -> Job<'_> {
+            (name, &encode_layout, vec![COMMON_SHADER, shader], vec![])
+        };
+        let jobs: [Job<'_>; 12] = [
+            (
                 "encode matches",
                 &encode_layout,
-                &[COMMON_SHADER, MATCHES_SHADER],
-                &[
-                    wg,
-                    ("HASH_LOG", f64::from(params.hash_log)),
-                    ("DEPTH", f64::from(params.depth)),
-                ],
+                vec![COMMON_SHADER, MATCHES_SHADER],
+                vec![wg, ("HASH_LOG", f64::from(params.hash_log)), depth],
             ),
-            lz4: codec("lz4", LZ4_EMIT, 0),
-            glz: codec("glz", GLZ_EMIT, 1),
-            deep_pass: pipeline(
+            parse("lz4 parse", 0, PARSE_SEG_SHADER),
+            parse("lz4 serial parse", 0, PARSE_SHADER),
+            emit("lz4 emit", LZ4_EMIT),
+            parse("glz parse", 1, PARSE_SEG_SHADER),
+            parse("glz serial parse", 1, PARSE_SHADER),
+            emit("glz emit", GLZ_EMIT),
+            (
                 "encode deep matches",
                 &encode_layout,
-                &[COMMON_SHADER, DEEP_SHADER, DEEP_PASS_SHADER],
-                &[("DEPTH", f64::from(params.depth))],
+                vec![COMMON_SHADER, DEEP_SHADER, DEEP_PASS_SHADER],
+                vec![depth],
             ),
-            glze_hist: pipeline(
-                "glz-e histograms",
-                &encode_layout,
-                &[COMMON_SHADER, GLZE_HIST_SHADER],
-                &[],
-            ),
-            glze_build: pipeline(
-                "glz-e codes",
-                &encode_layout,
-                &[COMMON_SHADER, GLZE_BUILD_SHADER],
-                &[],
-            ),
-            glze_encode: pipeline(
-                "glz-e encode",
-                &encode_layout,
-                &[COMMON_SHADER, GLZE_ENCODE_SHADER],
-                &[],
-            ),
-            pack: pipeline(
+            plain("glz-e histograms", GLZE_HIST_SHADER),
+            plain("glz-e codes", GLZE_BUILD_SHADER),
+            plain("glz-e encode", GLZE_ENCODE_SHADER),
+            (
                 "encode pack",
-                &pipeline_layout(&pack_layout),
-                &[PACK_SHADER],
-                &[],
+                &pack_pipeline_layout,
+                vec![PACK_SHADER],
+                vec![],
             ),
+        ];
+        let (pipelines, filters) = std::thread::scope(|scope| {
+            let filters = scope.spawn(|| crate::filter::FilterKernels::new(ctx));
+            let handles: Vec<_> = jobs
+                .iter()
+                .map(|(label, layout, sources, constants)| {
+                    scope.spawn(|| pipeline(label, layout, sources, constants))
+                })
+                .collect();
+            let pipelines: Vec<wgpu::ComputePipeline> = handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+                .collect();
+            let filters = filters
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p));
+            (pipelines, filters)
+        });
+        let mut pipelines = pipelines.into_iter();
+        let mut next = || pipelines.next().expect("one pipeline per job");
+        let matches = next();
+        let lz4 = CodecPipelines {
+            parse: next(),
+            parse_serial: next(),
+            emit: next(),
+        };
+        let glz = CodecPipelines {
+            parse: next(),
+            parse_serial: next(),
+            emit: next(),
+        };
+        Ok(GpuEncoder {
+            filters,
+            params,
+            matches,
+            lz4,
+            glz,
+            deep_pass: next(),
+            glze_hist: next(),
+            glze_build: next(),
+            glze_encode: next(),
+            pack: next(),
             layout,
             pack_layout,
             max_batch_chunks: None,
@@ -635,7 +782,7 @@ impl GpuEncoder {
             },
             len,
             &mut sink,
-            options,
+            (options, Batching::Pipelined),
         )?;
         let data_len = sink.written;
         writer.seek(SeekFrom::Start(start))?;
@@ -659,10 +806,10 @@ impl GpuEncoder {
 
     /// The buffer cache. A panic while it was held may have left a staging
     /// buffer mapped, so a poisoned cache starts over.
-    fn buffers(&self) -> MutexGuard<'_, BufferCache> {
+    fn buffers(&self) -> MutexGuard<'_, EncoderBuffers> {
         self.buffers.lock().unwrap_or_else(|poisoned| {
             let mut guard = poisoned.into_inner();
-            *guard = BufferCache::default();
+            *guard = EncoderBuffers::default();
             guard
         })
     }
@@ -703,6 +850,18 @@ impl GpuEncoder {
         input: &[u8],
         options: &GpuCompressOptions,
     ) -> Result<Vec<u8>, GpuEncodeError> {
+        self.compress_with(ctx, input, options, Batching::Pipelined)
+    }
+
+    /// [`compress`](Self::compress) with a choice of [`Batching`]; the file
+    /// is the same either way.
+    pub fn compress_with(
+        &self,
+        ctx: &Context,
+        input: &[u8],
+        options: &GpuCompressOptions,
+        batching: Batching,
+    ) -> Result<Vec<u8>, GpuEncodeError> {
         let table_len = table_len(input.len() as u64, options)?;
         let mut sink = VecSink {
             out: vec![0; table_len],
@@ -716,7 +875,7 @@ impl GpuEncoder {
             },
             input.len() as u64,
             &mut sink,
-            options,
+            (options, batching),
         )?;
         let mut out = sink.out;
         out[..table_len].copy_from_slice(&index.to_bytes());
@@ -735,6 +894,18 @@ impl GpuEncoder {
         options: &GpuCompressOptions,
         out: &mut Vec<u8>,
     ) -> Result<Vec<format::ChunkEntry>, GpuEncodeError> {
+        self.compress_into_with(ctx, input, options, out, Batching::Pipelined)
+    }
+
+    /// [`compress_into`](Self::compress_into) with a choice of [`Batching`].
+    pub fn compress_into_with(
+        &self,
+        ctx: &Context,
+        input: &[u8],
+        options: &GpuCompressOptions,
+        out: &mut Vec<u8>,
+        batching: Batching,
+    ) -> Result<Vec<format::ChunkEntry>, GpuEncodeError> {
         let start = out.len();
         let mut sink = VecSink {
             out: std::mem::take(out),
@@ -747,7 +918,7 @@ impl GpuEncoder {
             },
             input.len() as u64,
             &mut sink,
-            options,
+            (options, batching),
         );
         *out = sink.out;
         if index.is_err() {
@@ -767,7 +938,7 @@ impl GpuEncoder {
         source: &mut impl BatchSource,
         len: u64,
         sink: &mut impl DataSink,
-        options: &GpuCompressOptions,
+        (options, batching): (&GpuCompressOptions, Batching),
     ) -> Result<format::Index, GpuEncodeError> {
         check_options(options)?;
         let chunk_size = options.chunk_size;
@@ -784,79 +955,206 @@ impl GpuEncoder {
         let mut chunks = Vec::with_capacity(chunk_count as usize);
         let mut checksums = Vec::with_capacity(chunk_count as usize);
 
-        let mut cache = self.buffers();
-        cache.read_bytes = 0;
-        let per_batch = self.batch_chunks_for(ctx, options) as usize * chunk_size as usize;
-        let mut data_len = 0u64;
-        let mut remaining = len;
-        while remaining > 0 {
-            let take = (per_batch as u64).min(remaining) as usize;
-            remaining -= take as u64;
-            let batch = source.next(take)?;
-            let out = sink.buffer();
-            let before = out.len();
-            let (layout, filters) = if options.filters != FilterMode::None {
+        let mut buffers = self.buffers();
+        for set in &mut buffers.sets {
+            set.read_bytes = 0;
+        }
+        let per_batch =
+            self.batch_chunks_for(ctx, options, batching) as usize * chunk_size as usize;
+        if options.filters == FilterMode::None {
+            let batches = Batches {
+                source,
+                remaining: len,
+                per_batch,
+            };
+            self.compress_pipelined(
+                ctx,
+                &mut buffers.sets,
+                batches,
+                sink,
+                options,
+                (&header, &mut chunks, &mut checksums),
+            )?;
+        } else {
+            // Filter selection: one batch at a time.
+            let cache = &mut buffers.sets[0];
+            let mut data_len = 0u64;
+            let mut remaining = len;
+            while remaining > 0 {
+                let take = (per_batch as u64).min(remaining) as usize;
+                remaining -= take as u64;
+                let batch = source.next(take)?;
                 if options.checksums {
                     checksums.extend(batch.chunks(chunk_size as usize).map(format::checksum));
                 }
-                match options.filters {
+                let out = sink.buffer();
+                let before = out.len();
+                let (layout, filters) = match options.filters {
                     FilterMode::Auto => {
-                        self.encode_sampled_batch(ctx, &mut cache, batch, options, out)?
+                        self.encode_sampled_batch(ctx, cache, batch, options, out)?
                     }
-                    _ => self.encode_filtered_batch(ctx, &mut cache, batch, options, out)?,
-                }
-            } else {
-                let (prepared, sizes) =
-                    self.encode_batch(ctx, &mut cache, batch, options, || {
-                        if options.checksums {
-                            checksums
-                                .extend(batch.chunks(chunk_size as usize).map(format::checksum));
-                        }
-                    })?;
-                let layout = layout_payloads(&sizes, batch.len(), chunk_size);
-                self.pack(ctx, &mut cache, &prepared, &layout, out)?;
-                let filters = vec![format::Filter::None; layout.entries.len()];
-                (layout, filters)
-            };
-            let written = (out.len() - before) as u64;
-            let first = chunks.len();
-            chunks.extend(
-                layout
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &[offset, size])| format::ChunkEntry {
-                        comp_offset: data_len + u64::from(offset),
-                        comp_size: size & !format::STORED_BIT,
-                        stored: size & format::STORED_BIT != 0,
-                        uncomp_size: header.uncomp_size_of((first + i) as u32),
-                        checksum: 0,
-                        filter: filters[i],
-                    }),
-            );
-            data_len += written;
-            sink.batch_done()?;
+                    _ => self.encode_filtered_batch(ctx, cache, batch, options, out)?,
+                };
+                let written = (out.len() - before) as u64;
+                push_entries(&mut chunks, &header, &layout, |i| filters[i], data_len);
+                data_len += written;
+                sink.batch_done()?;
+            }
         }
-        drop(cache);
+        drop(buffers);
         for (chunk, checksum) in chunks.iter_mut().zip(checksums) {
             chunk.checksum = checksum;
         }
         Ok(format::Index { header, chunks })
     }
 
-    /// Chunks per batch: within the binding limit (with filter selection,
-    /// shared by every candidate) and the memory budget.
-    fn batch_chunks_for(&self, ctx: &Context, options: &GpuCompressOptions) -> u64 {
-        let candidates = match options.filters {
-            FilterMode::None => 1,
-            FilterMode::Auto | FilterMode::Exhaustive => {
-                filter_candidates(options.level).len() as u64
+    /// The unfiltered batch loop, pipelined over the two buffer sets: while
+    /// the GPU encodes batch k, the host lays out batch k − 1 (its sizes are
+    /// back) and submits its pack pass, then reads back batch k − 2's data
+    /// section and hands it on. The GPU runs submissions in order, so a set's
+    /// buffers are rewritten only after the passes that read them. The output
+    /// is the same as one batch at a time.
+    fn compress_pipelined(
+        &self,
+        ctx: &Context,
+        sets: &mut [BufferCache; 2],
+        mut batches: Batches<'_, impl BatchSource>,
+        sink: &mut impl DataSink,
+        options: &GpuCompressOptions,
+        (header, chunks, checksums): (&format::Header, &mut Vec<format::ChunkEntry>, &mut Vec<u32>),
+    ) -> Result<(), GpuEncodeError> {
+        /// A batch whose kernels are submitted.
+        struct Encoding {
+            set: usize,
+            prepared: PreparedEncode,
+            len: usize,
+            done: wgpu::SubmissionIndex,
+        }
+        /// A batch whose pack pass is submitted (none if nothing to pack).
+        struct Packing {
+            set: usize,
+            layout: PayloadLayout,
+            done: Option<wgpu::SubmissionIndex>,
+        }
+        let chunk_size = options.chunk_size;
+        let mut next_set = 0;
+        let mut data_len = 0u64;
+        let mut encoding: Option<Encoding> = None;
+        let mut packing: Option<Packing> = None;
+        loop {
+            // Batch k: upload it and submit its kernels.
+            let submitted = match batches.next()? {
+                Some(batch) => {
+                    let set = next_set;
+                    next_set ^= 1;
+                    let cache = &mut sets[set];
+                    let prepared = self.prepare_batch(ctx, cache, batch, options)?;
+                    let sizes_len = u64::from(prepared.chunks) * 4;
+                    let sizes_read = BufferCache::ensure(
+                        &mut cache.sizes_read,
+                        &mut cache.allocations,
+                        &ctx.device,
+                        "encode sizes readback",
+                        sizes_len,
+                        BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                    );
+                    let mut encoder = ctx
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                    self.record_encode(ctx, &mut encoder, &prepared, None);
+                    encoder.copy_buffer_to_buffer(
+                        &prepared.sizes_buf,
+                        0,
+                        &sizes_read,
+                        0,
+                        sizes_len,
+                    );
+                    let done = ctx.queue.submit([encoder.finish()]);
+                    if options.checksums {
+                        checksums.extend(batch.chunks(chunk_size as usize).map(format::checksum));
+                    }
+                    Some(Encoding {
+                        set,
+                        prepared,
+                        len: batch.len(),
+                        done,
+                    })
+                }
+                None => None,
+            };
+            // Batch k − 1: lay out its payloads and submit the pack pass.
+            let packed = match encoding.take() {
+                Some(e) => {
+                    let cache = &mut sets[e.set];
+                    let sizes_len = u64::from(e.prepared.chunks) * 4;
+                    let sizes_read = cache.sizes_read.clone().expect("allocated by its batch");
+                    let mut sizes = Vec::new();
+                    read_mapped_after(ctx, &sizes_read, sizes_len, e.done, |bytes| {
+                        sizes = bytemuck::pod_collect_to_vec(bytes);
+                    })?;
+                    cache.read_bytes += sizes_len;
+                    let layout = layout_payloads(&sizes, e.len, chunk_size);
+                    let done = (layout.len > 0).then(|| {
+                        let from = PackSource {
+                            input: (&e.prepared.input_buf, e.prepared.input_size),
+                            slots: (&e.prepared.output_buf, e.prepared.output_size),
+                        };
+                        self.pack_pass(ctx, cache, &e.prepared, from, &layout.entries, layout.len);
+                        self.submit_readback(ctx, cache, layout.len)
+                    });
+                    Some(Packing {
+                        set: e.set,
+                        layout,
+                        done,
+                    })
+                }
+                None => None,
+            };
+            // Batch k − 2: read back its data section and hand it on.
+            if let Some(p) = packing.take() {
+                let cache = &mut sets[p.set];
+                let out = sink.buffer();
+                let before = out.len();
+                if let Some(done) = p.done {
+                    let len = u64::from(p.layout.len);
+                    let data_read = cache.data_read.clone().expect("allocated by its pack");
+                    read_mapped_after(ctx, &data_read, len, done, |bytes| {
+                        out.extend_from_slice(bytes);
+                    })?;
+                    cache.read_bytes += len;
+                }
+                let written = (out.len() - before) as u64;
+                push_entries(
+                    chunks,
+                    header,
+                    &p.layout,
+                    |_| format::Filter::None,
+                    data_len,
+                );
+                data_len += written;
+                sink.batch_done()?;
             }
-        };
-        let by_binding = (self.batch_chunks(ctx, options.chunk_size) / candidates).max(1);
-        let by_budget =
-            (self.memory_budget / encoder_bytes_per_chunk(options, &self.params)).max(1);
-        let chunks = by_binding.min(by_budget);
+            packing = packed;
+            encoding = submitted;
+            if encoding.is_none() && packing.is_none() {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Chunks per batch ([`batch_chunks`]), within the test cap.
+    fn batch_chunks_for(
+        &self,
+        ctx: &Context,
+        options: &GpuCompressOptions,
+        batching: Batching,
+    ) -> u64 {
+        let limit = ctx
+            .device_limits()
+            .max_storage_buffer_binding_size
+            .min(u64::from(u32::MAX) & !3);
+        let chunks = batch_chunks(options, &self.params, self.memory_budget, limit, batching)
+            .min(self.max_batch_chunks.unwrap_or(u64::MAX));
         log::debug!(
             "GPU encoder: {chunks} chunks of {} KiB per batch (budget {} MiB)",
             options.chunk_size >> 10,
@@ -882,10 +1180,11 @@ impl GpuEncoder {
             slots: Vec::with_capacity(chunk_count * slot),
             slot_size: slot,
         };
-        let mut cache = self.buffers();
+        let mut buffers = self.buffers();
+        let cache = &mut buffers.sets[0];
         let per_batch = self.batch_chunks(ctx, chunk_size) as usize * chunk_size as usize;
         for batch in input.chunks(per_batch) {
-            let (prepared, sizes) = self.encode_batch(ctx, &mut cache, batch, options, || ())?;
+            let (prepared, sizes) = self.encode_batch(ctx, cache, batch, options, || ())?;
             encoded.sizes.extend(sizes);
             encoded
                 .slots
@@ -1019,6 +1318,27 @@ impl GpuEncoder {
         len: u32,
         out: &mut Vec<u8>,
     ) -> Result<(), GpuEncodeError> {
+        let done = self.submit_readback(ctx, cache, len);
+        let data_read = cache
+            .data_read
+            .clone()
+            .expect("allocated by submit_readback");
+        let len = u64::from(len);
+        read_mapped_after(ctx, &data_read, len, done, |bytes| {
+            out.extend_from_slice(bytes)
+        })?;
+        cache.read_bytes += len;
+        Ok(())
+    }
+
+    /// Submits the copy of the packed data section's first `len` bytes into
+    /// the readback buffer, and returns the submission.
+    fn submit_readback(
+        &self,
+        ctx: &Context,
+        cache: &mut BufferCache,
+        len: u32,
+    ) -> wgpu::SubmissionIndex {
         let len = u64::from(len);
         let device = &ctx.device;
         let packed = BufferCache::ensure(
@@ -1039,10 +1359,7 @@ impl GpuEncoder {
         );
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.copy_buffer_to_buffer(&packed, 0, &data_read, 0, len);
-        ctx.queue.submit([encoder.finish()]);
-        read_mapped(ctx, &data_read, len, |bytes| out.extend_from_slice(bytes))?;
-        cache.read_bytes += len;
-        Ok(())
+        ctx.queue.submit([encoder.finish()])
     }
 
     /// Encodes `input` (one batch) under every filter candidate of
@@ -1363,7 +1680,13 @@ impl GpuEncoder {
             input_size,
             BufferUsages::MAP_WRITE | BufferUsages::COPY_SRC,
         );
-        map(ctx, &upload, wgpu::MapMode::Write, input_size)?;
+        map_after(
+            ctx,
+            &upload,
+            wgpu::MapMode::Write,
+            input_size,
+            c.upload_at.clone(),
+        )?;
         let written = upload.get_mapped_range_mut(..input_size).map(|mut view| {
             let whole = batch.len() & !3;
             view.slice(..whole).copy_from_slice(&batch[..whole]);
@@ -1376,7 +1699,7 @@ impl GpuEncoder {
         written.map_err(|e| GpuError::Readback(e.to_string()))?;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         encoder.copy_buffer_to_buffer(&upload, 0, &input_buf, 0, input_size);
-        ctx.queue.submit([encoder.finish()]);
+        c.upload_at = Some(ctx.queue.submit([encoder.finish()]));
 
         let scratch_size = chunks * u64::from(chunk_size) * 4;
         let scratch_buf = ensure(
@@ -1694,6 +2017,51 @@ pub struct PreparedEncode {
     serial_parse: bool,
 }
 
+/// A batch source cut into batches of `per_batch` bytes.
+struct Batches<'a, S> {
+    source: &'a mut S,
+    remaining: u64,
+    per_batch: usize,
+}
+
+impl<S: BatchSource> Batches<'_, S> {
+    /// The next batch, or `None` at the end.
+    fn next(&mut self) -> Result<Option<&[u8]>, GpuEncodeError> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        let take = (self.per_batch as u64).min(self.remaining) as usize;
+        self.remaining -= take as u64;
+        self.source.next(take).map(Some)
+    }
+}
+
+/// Appends a batch's chunk entries, with offsets from the start of the data
+/// section (the batch's starts at `data_len`) and each chunk's filter.
+fn push_entries(
+    chunks: &mut Vec<format::ChunkEntry>,
+    header: &format::Header,
+    layout: &PayloadLayout,
+    filter: impl Fn(usize) -> format::Filter,
+    data_len: u64,
+) {
+    let first = chunks.len();
+    chunks.extend(
+        layout
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, &[offset, size])| format::ChunkEntry {
+                comp_offset: data_len + u64::from(offset),
+                comp_size: size & !format::STORED_BIT,
+                stored: size & format::STORED_BIT != 0,
+                uncomp_size: header.uncomp_size_of((first + i) as u32),
+                checksum: 0,
+                filter: filter(i),
+            }),
+    );
+}
+
 /// Header plus chunk-table bytes for `len` input bytes.
 fn table_len(len: u64, options: &GpuCompressOptions) -> Result<usize, GpuEncodeError> {
     let chunks = format::chunk_count_for(len, options.chunk_size.max(1));
@@ -1922,7 +2290,31 @@ mod tests {
         let chunks = input.len().div_ceil(4096) as u64;
         let data = file.len() as u64 - (format::HEADER_SIZE as u64 + 24 * chunks);
         assert!(data < input.len() as u64 / 2, "text should compress");
-        assert_eq!(encoder.buffers().read_bytes, 4 * chunks + data);
+        assert_eq!(encoder.buffers().read_bytes(), 4 * chunks + data);
+    }
+
+    #[test]
+    fn unfiltered_batches_alternate_between_two_buffer_sets() {
+        let Some(ctx) = gpu() else { return };
+        let encoder = GpuEncoder::new(&ctx, EncodeParams::default())
+            .unwrap()
+            .with_max_batch_chunks(2);
+        let options = GpuCompressOptions {
+            chunk_size: 4096,
+            checksums: true,
+            ..GpuCompressOptions::default()
+        };
+        // Seven chunks: four batches, the last one short.
+        let input = [text(20_000), pattern(8_000, 5)].concat();
+        let file = encoder.compress(&ctx, &input, &options).unwrap();
+        let single = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+        assert_eq!(file, single.compress(&ctx, &input, &options).unwrap());
+        let buffers = encoder.buffers();
+        assert!(buffers.sets.iter().all(|set| set.allocations > 0));
+        // Still only the sizes and the data section come back.
+        let chunks = input.len().div_ceil(4096) as u64;
+        let data = file.len() as u64 - (format::HEADER_SIZE as u64 + 24 * chunks);
+        assert_eq!(buffers.read_bytes(), 4 * chunks + data);
     }
 
     #[test]
@@ -1935,13 +2327,13 @@ mod tests {
         };
         let big = text(100_000);
         let first = encoder.compress(&ctx, &big, &options).unwrap();
-        let allocations = encoder.buffers().allocations;
+        let allocations = encoder.buffers().allocations();
         assert!(allocations > 0);
         for input in [&big[..], &big[..50_000], &big[..1]] {
             encoder.compress(&ctx, input, &options).unwrap();
         }
         assert_eq!(encoder.compress(&ctx, &big, &options).unwrap(), first);
-        assert_eq!(encoder.buffers().allocations, allocations);
+        assert_eq!(encoder.buffers().allocations(), allocations);
     }
 
     #[test]
@@ -2071,21 +2463,61 @@ mod tests {
     }
 
     #[test]
-    fn the_default_budget_encodes_256_mib_in_one_batch() {
-        // Each extra batch costs about one whole parse kernel (DECISIONS.md, M8),
-        // so benchmark-sized inputs should stay in a single batch.
-        for filters in [FilterMode::None, FilterMode::Auto] {
-            let options = GpuCompressOptions {
-                filters,
-                ..Default::default()
-            };
-            let chunks =
-                DEFAULT_GPU_MEMORY / encoder_bytes_per_chunk(&options, &EncodeParams::default());
+    fn filter_selection_encodes_256_mib_in_one_batch() {
+        // Filtered batches run one at a time, and each extra batch costs about
+        // one whole parse kernel (DECISIONS.md, M8).
+        let options = GpuCompressOptions {
+            filters: FilterMode::Auto,
+            ..Default::default()
+        };
+        for batching in [Batching::Pipelined, Batching::Whole] {
+            let chunks = batch_chunks(
+                &options,
+                &EncodeParams::default(),
+                DEFAULT_GPU_MEMORY,
+                4 << 30,
+                batching,
+            );
             assert!(
                 chunks * u64::from(options.chunk_size) >= 256 << 20,
-                "{filters:?}: {chunks} chunks per batch"
+                "{chunks}"
             );
         }
+    }
+
+    #[test]
+    fn whole_batching_takes_as_much_as_the_budget_allows() {
+        let options = GpuCompressOptions::default();
+        let params = EncodeParams::default();
+        let per_chunk = encoder_bytes_per_chunk(&options, &params);
+        let whole = |budget, limit| batch_chunks(&options, &params, budget, limit, Batching::Whole);
+        assert_eq!(
+            whole(DEFAULT_GPU_MEMORY, 4 << 30),
+            DEFAULT_GPU_MEMORY / per_chunk
+        );
+        assert_eq!(whole(DEFAULT_GPU_MEMORY, 4 << 20), 16);
+        assert_eq!(whole(1, 4 << 30), 1);
+    }
+
+    #[test]
+    fn unfiltered_batches_are_pipeline_sized_and_two_fit_the_budget() {
+        let options = GpuCompressOptions::default();
+        let params = EncodeParams::default();
+        let big = 4 << 30;
+        let target = PIPELINE_BATCH_BYTES / 65_536;
+        let pipelined =
+            |budget, limit| batch_chunks(&options, &params, budget, limit, Batching::Pipelined);
+        assert_eq!(pipelined(DEFAULT_GPU_MEMORY, big), target);
+        // A small budget holds two batches in flight.
+        let per_chunk = encoder_bytes_per_chunk(&options, &params);
+        let chunks = pipelined(64 << 20, big);
+        assert!(
+            chunks < target && 2 * chunks * per_chunk <= 64 << 20,
+            "{chunks}"
+        );
+        // The binding limit bounds it too, and a batch is at least one chunk.
+        assert_eq!(pipelined(DEFAULT_GPU_MEMORY, 4 << 20), 16);
+        assert_eq!(pipelined(1, big), 1);
     }
 
     #[test]

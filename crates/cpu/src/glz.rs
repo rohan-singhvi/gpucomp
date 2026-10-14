@@ -241,38 +241,6 @@ pub fn encode_block(input: &[u8], params: &GlzParams) -> Vec<u8> {
     emit(input, &sequences)
 }
 
-/// `dst[op..op + len] = src[..len]`, checked by the caller. Output is written
-/// in order and matches read only bytes before `op`, so a short run is one
-/// 16-byte copy when both sides have room: what follows overwrites the rest.
-#[inline(always)]
-fn copy_literals(dst: &mut [u8], op: usize, src: &[u8], len: usize) {
-    if len <= 16 && op + 16 <= dst.len() && src.len() >= 16 {
-        dst[op..op + 16].copy_from_slice(&src[..16]);
-    } else {
-        dst[op..op + len].copy_from_slice(&src[..len]);
-    }
-}
-
-/// `dst[op + k] = dst[op + k - offset]` for k in 0..len, in order (an offset
-/// below `len` repeats the pattern), checked by the caller. With an offset of
-/// at least 16 and room for the overshoot, 16 bytes at a time: each step reads
-/// only bytes already written.
-#[inline(always)]
-fn copy_match(dst: &mut [u8], op: usize, offset: usize, len: usize) {
-    if offset >= 16 && op + len + 16 <= dst.len() {
-        let mut k = 0;
-        while k < len {
-            let (done, rest) = dst.split_at_mut(op + k);
-            rest[..16].copy_from_slice(&done[op + k - offset..op + k - offset + 16]);
-            k += 16;
-        }
-    } else {
-        for k in op..op + len {
-            dst[k] = dst[k - offset];
-        }
-    }
-}
-
 /// Decodes one GLZ block into `dst` (exactly the uncompressed size). Header
 /// checks come first, then checks run sequence by sequence in a fixed order;
 /// the GPU decoder reports the same error for the first failing sequence.
@@ -337,7 +305,7 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), GlzError> {
         if lit_len > dst.len() - op {
             return Err(GlzError::OutputOverflow);
         }
-        copy_literals(dst, op, &literals[lp..], lit_len);
+        crate::wild::copy_literals(dst, op, &literals[lp..], lit_len);
         lp += lit_len;
         op += lit_len;
         if i == count - 1 {
@@ -356,7 +324,7 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), GlzError> {
         if match_len > dst.len() - op {
             return Err(GlzError::OutputOverflow);
         }
-        copy_match(dst, op, offset, match_len);
+        crate::wild::copy_match(dst, op, offset, match_len);
         op += match_len;
     }
     if op != dst.len() || lp != literals.len() {

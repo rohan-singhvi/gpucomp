@@ -263,7 +263,6 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
         std::io::Write::flush(&mut writer)?;
         return Ok(());
     }
-    let input = std::fs::read(&args.input)?;
     let options = CompressOptions {
         codec: match args.codec {
             CodecArg::Stored => Codec::Stored,
@@ -292,7 +291,11 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
             FiltersArg::Exhaustive => cpu::container::FilterMode::Exhaustive,
         },
     };
-    std::fs::write(&args.output, cpu::container::compress(&input, &options)?)?;
+    // Streamed: reading, compressing and writing overlap.
+    let mut input = std::fs::File::open(&args.input)?;
+    let len = input.metadata()?.len();
+    let mut output = std::fs::File::create(&args.output)?;
+    cpu::container::compress_stream(&mut input, len, &mut output, &options)?;
     Ok(())
 }
 
@@ -333,14 +336,19 @@ pub fn decompress(args: &DecompressArgs) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    let output = match (args.offset, args.length) {
+    match (args.offset, args.length) {
         (Some(offset), Some(length)) => {
             let mut file = std::io::BufReader::new(std::fs::File::open(&args.input)?);
-            cpu::container::decompress_range(&mut file, offset, length, &options)?
+            let output = cpu::container::decompress_range(&mut file, offset, length, &options)?;
+            std::fs::write(&args.output, output)?;
         }
-        _ => cpu::container::decompress(&std::fs::read(&args.input)?, &options)?,
-    };
-    std::fs::write(&args.output, output)?;
+        _ => {
+            // Streamed: reading, decoding and writing overlap.
+            let mut input = std::fs::File::open(&args.input)?;
+            let mut output = std::fs::File::create(&args.output)?;
+            cpu::container::decompress_stream(&mut input, &mut output, &options)?;
+        }
+    }
     Ok(())
 }
 

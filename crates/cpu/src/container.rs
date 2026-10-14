@@ -1,7 +1,7 @@
 //! Chunked `.gpcz` compression and decompression on the CPU, parallel over
 //! chunks with rayon. These are the fair multi-threaded CPU baselines.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 pub use format::{checksum, read_index};
 use format::{ChunkEntry, Codec, Filter, FormatError, Header, Index};
@@ -115,7 +115,7 @@ impl Default for DecompressOptions {
 }
 
 pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuError> {
-    let header = header_for(input.len(), options)?;
+    let header = header_for(input.len() as u64, options)?;
     let table_len = Index {
         header,
         chunks: Vec::new(),
@@ -128,15 +128,15 @@ pub fn compress(input: &[u8], options: &CompressOptions) -> Result<Vec<u8>, CpuE
 }
 
 /// The header of `input`'s file, checked (chunk size, chunk count).
-fn header_for(len: usize, options: &CompressOptions) -> Result<Header, CpuError> {
+fn header_for(len: u64, options: &CompressOptions) -> Result<Header, CpuError> {
     let chunk_size = options.chunk_size;
-    let chunk_count = format::chunk_count_for(len as u64, chunk_size.max(1));
+    let chunk_count = format::chunk_count_for(len, chunk_size.max(1));
     let header = Header {
         codec: options.codec,
         chunk_size,
         chunk_count: u32::try_from(chunk_count)
             .map_err(|_| CpuError::TooManyChunks(chunk_count))?,
-        total_size: len as u64,
+        total_size: len,
         checksums: options.checksums,
         level: options.level,
     };
@@ -153,6 +153,16 @@ fn header_for(len: usize, options: &CompressOptions) -> Result<Header, CpuError>
     Ok(header)
 }
 
+/// Rejects an encoder that can't write the codec.
+fn check_encoder(options: &CompressOptions) -> Result<(), CpuError> {
+    match (options.codec, options.encoder) {
+        (Codec::Glz | Codec::GlzE, Encoder::Glz(_)) | (Codec::Stored, _) => Ok(()),
+        (Codec::Lz4, Encoder::Lz4Flex | Encoder::Greedy(_)) => Ok(()),
+        (Codec::Glz | Codec::GlzE, _) => Err(CpuError::Options("the GLZ codecs need Encoder::Glz")),
+        (Codec::Lz4, Encoder::Glz(_)) => Err(CpuError::Options("Encoder::Glz needs the GLZ codec")),
+    }
+}
+
 /// Appends the data section of `input`'s file (its chunks' payloads, each
 /// padded to 4 bytes, back to back) to `out`, and returns the chunk entries,
 /// with offsets from where the data starts. [`compress`] puts the header and
@@ -162,17 +172,8 @@ pub fn compress_into(
     options: &CompressOptions,
     out: &mut Vec<u8>,
 ) -> Result<Vec<ChunkEntry>, CpuError> {
-    let chunk_size = header_for(input.len(), options)?.chunk_size;
-    match (options.codec, options.encoder) {
-        (Codec::Glz | Codec::GlzE, Encoder::Glz(_)) | (Codec::Stored, _) => {}
-        (Codec::Lz4, Encoder::Lz4Flex | Encoder::Greedy(_)) => {}
-        (Codec::Glz | Codec::GlzE, _) => {
-            return Err(CpuError::Options("the GLZ codecs need Encoder::Glz"))
-        }
-        (Codec::Lz4, Encoder::Glz(_)) => {
-            return Err(CpuError::Options("Encoder::Glz needs the GLZ codec"))
-        }
-    }
+    let chunk_size = header_for(input.len() as u64, options)?.chunk_size;
+    check_encoder(options)?;
 
     // The stored codec never filters: a stored chunk is stored unfiltered.
     let candidates: &[Filter] = match (options.filters, options.codec) {
@@ -227,6 +228,180 @@ pub fn compress_into(
         out.resize(start + format::pad4((out.len() - start) as u64) as usize, 0);
     }
     Ok(chunks)
+}
+
+/// Input (or, decoding, output) bytes per streaming group, at least: small
+/// groups, many in flight, keep the working set in cache (DECISIONS
+/// "Streaming CLI paths").
+const STREAM_GROUP_BYTES: usize = 256 << 10;
+
+/// The default group size for streaming `chunk_size` chunks: at least
+/// [`STREAM_GROUP_BYTES`], and at least one chunk.
+fn stream_group_bytes(chunk_size: u32) -> usize {
+    STREAM_GROUP_BYTES.max(chunk_size as usize)
+}
+
+/// Streaming groups in flight: four per core, so every core has work while
+/// one group is read and another written.
+fn stream_depth() -> usize {
+    (4 * rayon::current_num_threads()).max(8)
+}
+
+/// Compresses `len` bytes from `reader` into a `.gpcz` file written to
+/// `writer` from its current position, and returns the bytes written; the
+/// writer is left at the file's end. The file is the one [`compress`]
+/// writes. Reading, compressing (on every core) and writing overlap, and
+/// only a few groups of chunks are in memory at a time.
+pub fn compress_stream<R: Read + Send, W: Write + Seek>(
+    reader: &mut R,
+    len: u64,
+    writer: &mut W,
+    options: &CompressOptions,
+) -> Result<u64, CpuError> {
+    let group = stream_group_bytes(options.chunk_size);
+    compress_stream_grouped(reader, len, writer, options, group)
+}
+
+/// [`compress_stream`], reading `group_bytes` of input at a time (rounded
+/// down to whole chunks, at least one).
+pub fn compress_stream_grouped<R: Read + Send, W: Write + Seek>(
+    reader: &mut R,
+    len: u64,
+    writer: &mut W,
+    options: &CompressOptions,
+    group_bytes: usize,
+) -> Result<u64, CpuError> {
+    let header = header_for(len, options)?;
+    check_encoder(options)?;
+    let table_len = Index {
+        header,
+        chunks: Vec::new(),
+    }
+    .data_offset();
+    let start = writer.stream_position()?;
+    // Reserved for the header and table, written last.
+    writer.write_all(&vec![0; table_len as usize])?;
+    let chunk = options.chunk_size as usize;
+    let group = (group_bytes / chunk).max(1) * chunk;
+    let mut remaining = len;
+    let mut chunks = Vec::with_capacity(header.chunk_count as usize);
+    let mut data_len = 0u64;
+    crate::pipeline::ordered(
+        stream_depth(),
+        |input| {
+            if remaining == 0 {
+                return Ok(None);
+            }
+            let n = (group as u64).min(remaining) as usize;
+            input.resize(n, 0);
+            reader.read_exact(input)?;
+            remaining -= n as u64;
+            Ok(Some(()))
+        },
+        |(), input, out| compress_into(input, options, out),
+        |data, entries| {
+            writer.write_all(data)?;
+            chunks.extend(entries.into_iter().map(|entry| ChunkEntry {
+                comp_offset: data_len + entry.comp_offset,
+                ..entry
+            }));
+            data_len += data.len() as u64;
+            Ok(())
+        },
+    )?;
+    writer.seek(SeekFrom::Start(start))?;
+    writer.write_all(&Index { header, chunks }.to_bytes())?;
+    writer.seek(SeekFrom::Start(start + table_len + data_len))?;
+    Ok(table_len + data_len)
+}
+
+/// Decompresses the `.gpcz` file in `reader` (from its start) into `writer`,
+/// and returns the bytes written. Reading, decoding (on every core) and
+/// writing overlap, and only a few groups of chunks are in memory at a time.
+/// On an error, the chunks before the failing one may have been written.
+pub fn decompress_stream<R: Read + Seek + Send, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    options: &DecompressOptions,
+) -> Result<u64, CpuError> {
+    let index = read_index(reader)?;
+    let group = stream_group_bytes(index.header.chunk_size);
+    decompress_index_stream(reader, &index, writer, options, group)
+}
+
+/// [`decompress_stream`], decoding `group_bytes` of output at a time
+/// (rounded down to whole chunks, at least one).
+pub fn decompress_stream_grouped<R: Read + Seek + Send, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    options: &DecompressOptions,
+    group_bytes: usize,
+) -> Result<u64, CpuError> {
+    let index = read_index(reader)?;
+    decompress_index_stream(reader, &index, writer, options, group_bytes)
+}
+
+/// Streams the chunks of `index` (read and validated from `reader`).
+fn decompress_index_stream<R: Read + Seek + Send, W: Write>(
+    reader: &mut R,
+    index: &Index,
+    writer: &mut W,
+    options: &DecompressOptions,
+    group_bytes: usize,
+) -> Result<u64, CpuError> {
+    let header = index.header;
+    let data_offset = index.data_offset();
+    let chunk = header.chunk_size as usize;
+    let per_group = (group_bytes / chunk).max(1);
+    let mut next = 0;
+    // Where the reader is, once known: payloads are usually back to back.
+    let mut at = None;
+    crate::pipeline::ordered(
+        stream_depth(),
+        |payloads| {
+            if next == index.chunks.len() {
+                return Ok(None);
+            }
+            let chunks = next..(next + per_group).min(index.chunks.len());
+            next = chunks.end;
+            let entries = &index.chunks[chunks.clone()];
+            let lo = entries.iter().map(|e| e.comp_offset).min().unwrap_or(0);
+            let hi = entries
+                .iter()
+                .map(|e| e.comp_offset + u64::from(e.comp_size))
+                .max()
+                .unwrap_or(0);
+            if at != Some(data_offset + lo) {
+                reader.seek(SeekFrom::Start(data_offset + lo))?;
+            }
+            payloads.resize((hi - lo) as usize, 0);
+            reader.read_exact(payloads)?;
+            at = Some(data_offset + hi);
+            Ok(Some((chunks, lo)))
+        },
+        |(chunks, lo), payloads, out| {
+            let entries = &index.chunks[chunks.clone()];
+            out.resize(entries.iter().map(|e| e.uncomp_size as usize).sum(), 0);
+            out.par_chunks_mut(chunk)
+                .zip(entries)
+                .enumerate()
+                .try_for_each(|(i, (dst, entry))| {
+                    let start = (entry.comp_offset - lo) as usize;
+                    let payload = &payloads[start..start + entry.comp_size as usize];
+                    decode_chunk(
+                        header.codec,
+                        chunks.start + i,
+                        entry,
+                        header.checksums,
+                        payload,
+                        dst,
+                        options,
+                    )
+                })
+        },
+        |data, ()| Ok(writer.write_all(data)?),
+    )?;
+    Ok(header.total_size)
 }
 
 /// Encodes one (possibly filtered) chunk with the configured block encoder;

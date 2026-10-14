@@ -316,6 +316,25 @@ fn map_after(
     result
 }
 
+/// A scoped thread's result, its panic passed on.
+fn joined<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// GPU bytes per decode batch at most ([`plan::batch_bytes`]): about 150 MB
+/// of LZ4 output. Smaller batches let one batch's readback overlap the next
+/// one's kernels; much smaller ones don't fill the GPU, since every pass has
+/// a latency floor (DECISIONS "Pipelined GPU batches").
+pub const DECODE_BATCH_BYTES: u64 = 512 << 20;
+
+/// The GPU bytes one decode batch may use under `memory_budget`.
+fn batch_budget(memory_budget: u64) -> u64 {
+    // Two batches are in flight at once.
+    (memory_budget / 2).min(DECODE_BATCH_BYTES)
+}
+
 /// `size` bytes of `buffer` from its start, as a binding.
 fn binding(buffer: &wgpu::Buffer, size: u64) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -377,19 +396,22 @@ impl GpuDecoder {
         if config.kernel == DecodeKernel::Cooperative {
             constants.push(("LONG_COPY", f64::from(config.long_copy.max(1))));
         }
-        let pipeline = compute_pipeline(ctx, label, source, &constants);
-        let glz_pipeline = compute_pipeline(
-            ctx,
-            "glz decode",
-            GLZ_SHADER,
-            &[("WG_SIZE", f64::from(GLZ_WORKGROUP))],
-        );
-        let glze_pipeline = compute_pipeline(ctx, "glz-e entropy decode", GLZE_SHADER, &[]);
+        // Compiled in parallel: one at a time took ~5 ms on an M4 Pro.
+        let glz_constants = [("WG_SIZE", f64::from(GLZ_WORKGROUP))];
+        let (pipeline, glz_pipeline, glze_pipeline, filters) = std::thread::scope(|scope| {
+            let glz =
+                scope.spawn(|| compute_pipeline(ctx, "glz decode", GLZ_SHADER, &glz_constants));
+            let glze =
+                scope.spawn(|| compute_pipeline(ctx, "glz-e entropy decode", GLZE_SHADER, &[]));
+            let filters = scope.spawn(|| FilterKernels::new(ctx));
+            let pipeline = compute_pipeline(ctx, label, source, &constants);
+            (pipeline, joined(glz), joined(glze), joined(filters))
+        });
         Ok(GpuDecoder {
             pipeline,
             glz_pipeline,
             glze_pipeline,
-            filters: FilterKernels::new(ctx),
+            filters,
             config,
             memory_budget: crate::encode::DEFAULT_GPU_MEMORY,
             buffers: std::sync::Mutex::default(),
@@ -444,7 +466,7 @@ impl GpuDecoder {
             verify,
             &mut |span| read_span(reader, data_offset, span).map(Cow::Owned),
             &mut |bytes| {
-                writer.write_all(&bytes).map_err(GpuDecodeError::Write)?;
+                writer.write_all(bytes).map_err(GpuDecodeError::Write)?;
                 written += bytes.len() as u64;
                 Ok(())
             },
@@ -464,11 +486,10 @@ impl GpuDecoder {
         chunks: Range<usize>,
         verify: bool,
         read: &mut dyn FnMut(Range<u64>) -> Result<Cow<'a, [u8]>, GpuDecodeError>,
-        sink: &mut dyn FnMut(Vec<u8>) -> Result<(), GpuDecodeError>,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), GpuDecodeError>,
     ) -> Result<(), GpuDecodeError> {
         let limit = batch_limit(ctx);
-        // Two batches are in flight at once.
-        let budget = self.memory_budget / 2;
+        let budget = batch_budget(self.memory_budget);
         let batches = plan::batches(index, chunks, budget, limit);
         log::debug!(
             "GPU decoder: {} batch(es), budget {} MiB",
@@ -487,12 +508,12 @@ impl GpuDecoder {
                 self.dispatch(ctx, p, None);
             }
             if let Some(previous) = pending.take() {
-                sink(self.finish(ctx, &previous, verify)?)?;
+                self.finish_with(ctx, &previous, verify, sink)?;
             }
             pending = prepared;
         }
         if let Some(previous) = pending {
-            sink(self.finish(ctx, &previous, verify)?)?;
+            self.finish_with(ctx, &previous, verify, sink)?;
         }
         Ok(())
     }
@@ -507,7 +528,7 @@ impl GpuDecoder {
         let index = Index::parse(file)?;
         let data = &file[index.data_offset() as usize..];
         index.validate(data.len() as u64)?;
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(index.header.total_size as usize);
         self.decode_batches(
             ctx,
             &index,
@@ -515,7 +536,7 @@ impl GpuDecoder {
             verify,
             &mut |span| Ok(Cow::Borrowed(&data[span.start as usize..span.end as usize])),
             &mut |bytes| {
-                append_batch(&mut out, bytes);
+                out.extend_from_slice(bytes);
                 Ok(())
             },
         )?;
@@ -548,7 +569,7 @@ impl GpuDecoder {
             chunks,
             verify,
             &mut |span| Ok(Cow::Borrowed(&data[span.start as usize..span.end as usize])),
-            &mut |bytes| sink(&bytes),
+            &mut |bytes| sink(bytes),
         )
     }
 
@@ -573,7 +594,7 @@ impl GpuDecoder {
             verify,
             &mut |span| read_span(reader, data_offset, span).map(Cow::Owned),
             &mut |bytes| {
-                append_batch(&mut out, bytes);
+                out.extend_from_slice(bytes);
                 Ok(())
             },
         )?;
@@ -956,7 +977,24 @@ impl GpuDecoder {
         p: &PreparedDecode,
         verify: bool,
     ) -> Result<Vec<u8>, GpuDecodeError> {
-        let (mut status, entropy, out) = match &p.readback {
+        let mut out = Vec::new();
+        self.finish_with(ctx, p, verify, &mut |bytes| {
+            out.extend_from_slice(bytes);
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    /// [`finish`](Self::finish), handing the checked output to `consume`
+    /// straight from the readback buffer instead of copying it out first.
+    pub fn finish_with(
+        &self,
+        ctx: &Context,
+        p: &PreparedDecode,
+        verify: bool,
+        consume: &mut dyn FnMut(&[u8]) -> Result<(), GpuDecodeError>,
+    ) -> Result<(), GpuDecodeError> {
+        match &p.readback {
             Some(r) => {
                 // Wait for this batch's submission only: the next batch's
                 // kernel keeps running meanwhile.
@@ -975,7 +1013,7 @@ impl GpuDecoder {
                         .map(|view| view.to_vec())
                         .map_err(|e| GpuError::Readback(e.to_string()))
                 };
-                let result = mapped.and_then(|()| {
+                let result = mapped.map_err(GpuDecodeError::from).and_then(|()| {
                     let status: Vec<u32> =
                         bytemuck::pod_collect_to_vec(&read(&r.status, p.status_size)?);
                     let entropy = match (&r.glze_status, &p.glze) {
@@ -984,18 +1022,18 @@ impl GpuDecoder {
                         )),
                         _ => None,
                     };
-                    let out = r
+                    let view = r
                         .out
                         .get_mapped_range(..p.dst_size)
-                        .map(|view| view[..p.dst_len as usize].to_vec())
                         .map_err(|e| GpuError::Readback(e.to_string()))?;
-                    Ok((status, entropy, out))
+                    self.check(p, status, entropy, &view[..p.dst_len as usize], verify)?;
+                    consume(&view[..p.dst_len as usize])
                 });
                 // Unmap on every path, so the reused buffers map again.
                 for (buf, _) in &maps {
                     buf.unmap();
                 }
-                result?
+                result
             }
             None => {
                 let status: Vec<u32> =
@@ -1006,9 +1044,23 @@ impl GpuDecoder {
                     )),
                     None => None,
                 };
-                (status, entropy, ctx.read_buffer(&p.dst_buf, p.dst_size)?)
+                let out = ctx.read_buffer(&p.dst_buf, p.dst_size)?;
+                self.check(p, status, entropy, &out[..p.dst_len as usize], verify)?;
+                consume(&out[..p.dst_len as usize])
             }
-        };
+        }
+    }
+
+    /// Fails on the first chunk whose status is an error (an entropy-stage
+    /// error first), then, if asked, on the first checksum mismatch in `out`.
+    fn check(
+        &self,
+        p: &PreparedDecode,
+        mut status: Vec<u32>,
+        entropy: Option<Vec<u32>>,
+        out: &[u8],
+        verify: bool,
+    ) -> Result<(), GpuDecodeError> {
         if let Some(entropy) = entropy {
             // An entropy-stage error comes first: the GLZ kernel then decoded
             // a partial image.
@@ -1028,9 +1080,6 @@ impl GpuDecoder {
                 status: s,
             });
         }
-        let mut out = out;
-        out.truncate(p.dst_len as usize);
-
         if verify && p.index.header.checksums {
             let chunk_size = p.index.header.chunk_size as usize;
             for (k, (bytes, entry)) in out
@@ -1045,7 +1094,7 @@ impl GpuDecoder {
                 }
             }
         }
-        Ok(out)
+        Ok(())
     }
 }
 
@@ -1124,29 +1173,9 @@ fn batch_limit(ctx: &Context) -> u64 {
         .min(u64::from(u32::MAX) & !3)
 }
 
-/// Appends a decoded batch to `out`, taking it over without a copy when `out`
-/// is still empty (a single-batch decode returns the readback as is).
-fn append_batch(out: &mut Vec<u8>, batch: Vec<u8>) {
-    if out.is_empty() {
-        *out = batch;
-    } else {
-        out.extend_from_slice(&batch);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_first_batch_is_taken_over_without_a_copy() {
-        let mut out = Vec::new();
-        let batch = vec![1u8, 2, 3];
-        let ptr = batch.as_ptr();
-        append_batch(&mut out, batch);
-        assert_eq!(out, [1, 2, 3]);
-        assert_eq!(out.as_ptr(), ptr, "first batch was copied");
-    }
 
     fn gpu() -> Option<Context> {
         match Context::new(&crate::ContextOptions::default()) {
@@ -1157,6 +1186,18 @@ mod tests {
             }
             Err(e) => panic!("GPU context creation failed: {e}"),
         }
+    }
+
+    #[test]
+    fn batches_are_capped_so_two_overlap_but_each_fills_the_gpu() {
+        // Two batches in flight share the budget.
+        assert_eq!(batch_budget(64 << 20), 32 << 20);
+        // A large budget still decodes in several batches of the cap.
+        assert_eq!(
+            batch_budget(crate::encode::DEFAULT_GPU_MEMORY),
+            DECODE_BATCH_BYTES
+        );
+        assert_eq!(batch_budget(2 * DECODE_BATCH_BYTES), DECODE_BATCH_BYTES);
     }
 
     #[test]
@@ -1197,14 +1238,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn later_batches_are_appended_in_order() {
-        let mut out = Vec::new();
-        append_batch(&mut out, vec![1, 2]);
-        append_batch(&mut out, vec![]);
-        append_batch(&mut out, vec![3]);
-        assert_eq!(out, [1, 2, 3]);
     }
 }

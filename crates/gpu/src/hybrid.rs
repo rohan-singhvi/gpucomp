@@ -14,7 +14,9 @@ use cpu::container::{CompressOptions, Encoder};
 use format::Codec;
 
 use crate::decode::{GpuDecodeError, GpuDecoder};
-use crate::encode::{EncodeParams, FilterMode, GpuCompressOptions, GpuEncodeError, GpuEncoder};
+use crate::encode::{
+    Batching, EncodeParams, FilterMode, GpuCompressOptions, GpuEncodeError, GpuEncoder,
+};
 use crate::Context;
 
 /// Which device compresses a range of chunks.
@@ -217,7 +219,7 @@ pub fn compress_static(
             let entries = if gpu_input.is_empty() {
                 Vec::new()
             } else {
-                encoder.compress_into(ctx, gpu_input, options, &mut data)?
+                encoder.compress_into_with(ctx, gpu_input, options, &mut data, Batching::Whole)?
             };
             Ok((entries, data))
         });

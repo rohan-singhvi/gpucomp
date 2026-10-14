@@ -806,6 +806,187 @@ pub fn zstd(inputs: &[(String, Vec<u8>)], cfg: &SuiteConfig) -> anyhow::Result<V
     Ok(rows)
 }
 
+/// File-to-file wall time, as the CLI runs it, page cache warm, on files in
+/// `dir` (created, then removed):
+/// - `file.cpu.lz4_flex.compress` / `file.cpu.lz4.decompress`: gpucomp's
+///   streamed CPU paths (lz4_flex, then the hand-written decoder);
+/// - `file.zstd-1.compress.mt` / `file.zstd-1.decompress.1t`: zstd's own
+///   streams, like `zstd -1 -T0` and `zstd -d`;
+/// - with `gpu`, `file.gpu.lz4.compress` / `file.gpu.lz4.decompress`: the
+///   GPU streams, each run creating its context and coder as one CLI
+///   invocation does.
+pub fn files(
+    gpu: Option<&gpu::ContextOptions>,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+    dir: &std::path::Path,
+) -> anyhow::Result<Vec<Measurement>> {
+    std::fs::create_dir_all(dir)?;
+    let rows = file_rows(gpu, inputs, cfg, dir);
+    std::fs::remove_dir_all(dir)?;
+    rows
+}
+
+fn file_rows(
+    gpu: Option<&gpu::ContextOptions>,
+    inputs: &[(String, Vec<u8>)],
+    cfg: &SuiteConfig,
+    dir: &std::path::Path,
+) -> anyhow::Result<Vec<Measurement>> {
+    use std::fs::File;
+    use std::io::{BufReader, BufWriter, Read, Write};
+
+    use cpu::container::{compress_stream, decompress_stream, CompressOptions, DecompressOptions};
+
+    /// `std::io::copy` with 1 MiB reads, so zstd isn't fed 8 KiB at a time.
+    fn copy(reader: &mut impl Read, writer: &mut impl Write) -> std::io::Result<()> {
+        let mut buffer = vec![0u8; 1 << 20];
+        loop {
+            match reader.read(&mut buffer)? {
+                0 => return Ok(()),
+                n => writer.write_all(&buffer[..n])?,
+            }
+        }
+    }
+    let time = |f: &dyn Fn() -> anyhow::Result<()>| {
+        median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            f()?;
+            Ok(start.elapsed())
+        })
+    };
+    let workers = u32::try_from(rayon::current_num_threads())?;
+    let (src, out) = (dir.join("input"), dir.join("output"));
+    let (packed, zst, gpu_packed) = (
+        dir.join("cpu.gpcz"),
+        dir.join("input.zst"),
+        dir.join("gpu.gpcz"),
+    );
+    let mut rows = Vec::new();
+    for (name, data) in inputs {
+        if data.is_empty() {
+            continue;
+        }
+        let n = data.len() as u64;
+        std::fs::write(&src, data)?;
+        let mut row = |label: &str, elapsed: Duration, file: &std::path::Path, timing| {
+            let compressed = std::fs::metadata(file)?.len();
+            rows.push(Measurement {
+                name: label.into(),
+                input: name.clone(),
+                bytes: n,
+                gbps: gbps(n, elapsed),
+                ratio: Some(n as f64 / compressed as f64),
+                timing,
+            });
+            anyhow::Ok(())
+        };
+        let check = |what: &str| -> anyhow::Result<()> {
+            anyhow::ensure!(
+                std::fs::read(&out)? == *data,
+                "{what} file round trip of {name}"
+            );
+            Ok(())
+        };
+
+        let compress = || -> anyhow::Result<()> {
+            let mut input = File::open(&src)?;
+            let mut output = File::create(&packed)?;
+            compress_stream(&mut input, n, &mut output, &CompressOptions::default())?;
+            Ok(())
+        };
+        let decompress = || -> anyhow::Result<()> {
+            let options = DecompressOptions {
+                verify: false,
+                ..DecompressOptions::default()
+            };
+            let mut output = File::create(&out)?;
+            decompress_stream(&mut File::open(&packed)?, &mut output, &options)?;
+            Ok(())
+        };
+        compress()?;
+        decompress()?;
+        check("gpucomp")?;
+        row(
+            "file.cpu.lz4_flex.compress",
+            time(&compress)?,
+            &packed,
+            Timing::Cpu,
+        )?;
+        row(
+            "file.cpu.lz4.decompress",
+            time(&decompress)?,
+            &packed,
+            Timing::Cpu,
+        )?;
+
+        let compress = || -> anyhow::Result<()> {
+            let mut encoder = zstd::stream::Encoder::new(File::create(&zst)?, 1)?;
+            encoder.multithread(workers)?;
+            copy(&mut File::open(&src)?, &mut encoder)?;
+            encoder.finish()?;
+            Ok(())
+        };
+        let decompress = || -> anyhow::Result<()> {
+            let mut decoder = zstd::stream::Decoder::new(File::open(&zst)?)?;
+            copy(&mut decoder, &mut File::create(&out)?)?;
+            Ok(())
+        };
+        compress()?;
+        decompress()?;
+        check("zstd")?;
+        row(
+            "file.zstd-1.compress.mt",
+            time(&compress)?,
+            &zst,
+            Timing::Cpu,
+        )?;
+        row(
+            "file.zstd-1.decompress.1t",
+            time(&decompress)?,
+            &zst,
+            Timing::Cpu,
+        )?;
+
+        let Some(context) = gpu else { continue };
+        let compress = || -> anyhow::Result<()> {
+            let ctx = gpu::Context::new(context)?;
+            let encoder = gpu::encode::GpuEncoder::new(&ctx, gpu::encode::EncodeParams::default())?;
+            let mut input = BufReader::new(File::open(&src)?);
+            let mut output = BufWriter::new(File::create(&gpu_packed)?);
+            let options = gpu::encode::GpuCompressOptions::default();
+            encoder.compress_stream(&ctx, &mut input, n, &mut output, &options)?;
+            output.flush()?;
+            Ok(())
+        };
+        let decompress = || -> anyhow::Result<()> {
+            let ctx = gpu::Context::new(context)?;
+            let decoder = gpu::decode::GpuDecoder::new(&ctx);
+            let mut input = BufReader::new(File::open(&gpu_packed)?);
+            let mut output = BufWriter::new(File::create(&out)?);
+            decoder.decompress_stream(&ctx, &mut input, &mut output, false)?;
+            output.flush()?;
+            Ok(())
+        };
+        compress()?;
+        decompress()?;
+        check("GPU")?;
+        row(
+            "file.gpu.lz4.compress",
+            time(&compress)?,
+            &gpu_packed,
+            Timing::WallE2e,
+        )?;
+        row(
+            "file.gpu.lz4.decompress",
+            time(&decompress)?,
+            &gpu_packed,
+            Timing::WallE2e,
+        )?;
+    }
+    Ok(rows)
+}
+
 /// Numeric benchmark inputs of exactly `n` bytes each, the data filters are
 /// for (M7): `f32-points` (xyz of a smooth curve), `sorted-u32` (small random
 /// gaps), `i16-audio` (two sines plus noise) and `u64-timestamps` (≈1 ms
