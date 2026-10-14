@@ -476,7 +476,7 @@ pub fn profile(
 
 /// The GPU's share of the chunks in the fixed-split LZ4 row (tuned for an
 /// Apple M4 Pro, where it makes both sides finish together).
-pub const HYBRID_LZ4_FLEX_SHARE: f64 = 0.3;
+pub const HYBRID_LZ4_FLEX_SHARE: f64 = 0.25;
 
 /// CPU and GPU together (`gpu::hybrid`), end to end, for LZ4 and GLZ-E at
 /// level 1 and GLZ-E at level 3: compression (the file must equal the GPU
@@ -814,7 +814,8 @@ pub fn zstd(inputs: &[(String, Vec<u8>)], cfg: &SuiteConfig) -> anyhow::Result<V
 ///   streams, like `zstd -1 -T0` and `zstd -d`;
 /// - with `gpu`, `file.gpu.lz4.compress` / `file.gpu.lz4.decompress`: the
 ///   GPU streams, each run creating its context and coder as one CLI
-///   invocation does.
+///   invocation does; and `file.hybrid.lz4_flex.compress`, the streamed
+///   lz4_flex + GPU split (`--gpu-share`), likewise.
 pub fn files(
     gpu: Option<&gpu::ContextOptions>,
     inputs: &[(String, Vec<u8>)],
@@ -980,6 +981,36 @@ fn file_rows(
         row(
             "file.gpu.lz4.decompress",
             time(&decompress)?,
+            &gpu_packed,
+            Timing::WallE2e,
+        )?;
+
+        let compress = || -> anyhow::Result<()> {
+            let options = gpu::encode::GpuCompressOptions::default();
+            let cpu = cpu::container::CompressOptions::default();
+            let gpu = || {
+                let ctx = gpu::Context::new(context)?;
+                let encoder =
+                    gpu::encode::GpuEncoder::new(&ctx, gpu::encode::EncodeParams::default())?;
+                Ok((ctx, encoder))
+            };
+            let mut head = File::open(&src)?;
+            let input = gpu::hybrid::SplitInput {
+                head: &mut head,
+                tail: File::open(&src)?,
+                len: n,
+            };
+            let mut output = File::create(&gpu_packed)?;
+            let share = HYBRID_LZ4_FLEX_SHARE;
+            gpu::hybrid::compress_static_stream(input, &mut output, &options, share, &cpu, gpu)?;
+            Ok(())
+        };
+        compress()?;
+        decompress()?;
+        check("lz4_flex + GPU")?;
+        row(
+            "file.hybrid.lz4_flex.compress",
+            time(&compress)?,
             &gpu_packed,
             Timing::WallE2e,
         )?;

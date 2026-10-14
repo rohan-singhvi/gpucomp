@@ -1453,3 +1453,56 @@ the buffers ~15 ms, and file I/O on the host thread: in process, a warm stream
 takes 67 ms from memory to nowhere and 77 ms from file to file (reading alone
 +1.4 ms, writing alone +4 ms). Reading and writing on their own threads might save
 5–8 ms more; not done.
+
+## Streamed fixed split (2026-10-14)
+**From the command line, `--gpu-share` was 3× slower than the CPU alone** (Silesia,
+one-shot, best of 5): `compress` 43 ms, `--gpu --hybrid --gpu-share 0.3` 130 ms. It
+read the whole file, created the GPU context while the CPU waited, then compressed.
+
+**`gpu::hybrid::compress_static_stream`** (the CLI's `--gpu-share` path): the CPU
+streams the head of the file into the output (`cpu::container::compress_stream_data`,
+on the hybrid's pool of all cores but one) while the GPU's thread creates its context
+and encoder, reads its share from a second reader of the file and compresses it
+(`GpuEncoder::compress_reader_into`). Then the GPU's data is appended and the table
+written. Only the GPU's compressed share is held in memory, and the file is
+`compress_static`'s (tests at shares 0, ½ and 1, LZ4 and GLZ-E). Pipelined GPU
+batches here, not whole ones: in a fresh process one large batch means gigabytes of
+new buffers (848 MB, share 0.2: whole 201 ms, pipelined 137 ms).
+
+It's 1.4–2.3× faster than before at every share, but **it doesn't beat the CPU
+alone from a file on this machine**, at any size tried:
+
+| Input | CPU alone | Share 0.05 | 0.1 | 0.15 | 0.2 | 0.3 | GPU alone |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Silesia, 212 MB | 40 ms | 56–59 | 61–62 | — | 59–74 | 96 | 110 |
+| 4× Silesia, 848 MB | 134 ms | — | 140 | 137 | 137 | 155 | — |
+| 8× Silesia, 1.7 GB | 268 ms | — | 259 | — | 265 | 274 | 668 |
+
+- A fresh process's GPU needs ~12 ms for the context and ~3 ms for the encoder, and
+  its first compress pays 12–30 ms more of first use even for 8 MiB (warm: 5–8 ms).
+  Its first result comes 30–45 ms in, when the CPU has finished Silesia.
+- On larger files the CPU side slows by ~17% while the GPU runs (848 MB, share 0.2:
+  117 ms expected from its rate on 11 cores, 137 measured), which cancels what the
+  GPU adds. Most likely the shared power budget; memory bandwidth (273 GB/s) isn't
+  close to its limit.
+- The streamed CPU path is also faster than the in-memory one the split was tuned
+  against (6.3 against ~5.5 GB/s): small groups stay in cache.
+
+**In-memory `compress_into` now uses the same pipeline** for inputs of more than
+four groups (1 MiB at 64 KiB chunks): encoding every chunk first and copying all
+payloads into `out` serially at the end cost ~4 ms of ~34. Silesia in memory:
+**34 → 30.3 ms** (unloaded machine). `compress_static`'s CPU part streams on the
+hybrid's pool too. With the faster CPU side the in-memory split's best share moved
+from 0.3 to 0.25 (`HYBRID_LZ4_FLEX_SHARE`): lz4_flex alone 6.83–7.01 GB/s, shares
+0.15 / 0.2 / 0.25 / 0.3 → 7.45–7.59 / 7.78–7.93 / **8.02–8.10** / 7.21–7.40, so
+**1.15×** (it was 1.3× over the slower CPU path).
+
+Share 0.25 from the command line: 68 ms (CPU alone 40). New bench row
+`file.hybrid.lz4_flex.compress` (the streamed split, a context per run; the
+benchmark's process keeps the GPU driver warm): 43.5 ms against the CPU stream's 38.2
+in the `split-stream` run, where the in-memory split was 7.34 GB/s against lz4_flex's
+5.54 (1.33×; medians over a long run, against best-of-ten A/Bs above). GLZ-E level 1, the open question from "Pipelined GPU batches": its in-memory
+time is flat across batch sizes (256 → 4096 chunks: 93.5 / 92.6 / 93.3 / 95.2 /
+93.7 ms) while LZ4's improves with smaller ones (74.5 → 69.3). Most likely its
+per-batch, latency-bound stages (the code build, one invocation per chunk and
+stream) cost what the overlap saves.

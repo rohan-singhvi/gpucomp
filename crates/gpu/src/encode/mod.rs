@@ -906,20 +906,52 @@ impl GpuEncoder {
         out: &mut Vec<u8>,
         batching: Batching,
     ) -> Result<Vec<format::ChunkEntry>, GpuEncodeError> {
+        let mut source = SliceSource {
+            data: input,
+            pos: 0,
+        };
+        self.compress_source_into(
+            ctx,
+            &mut source,
+            input.len() as u64,
+            (options, batching),
+            out,
+        )
+    }
+
+    /// [`compress_into_with`](Self::compress_into_with) reading `len` bytes
+    /// from `reader`, a batch at a time.
+    pub fn compress_reader_into<R: Read>(
+        &self,
+        ctx: &Context,
+        reader: &mut R,
+        len: u64,
+        options: &GpuCompressOptions,
+        out: &mut Vec<u8>,
+        batching: Batching,
+    ) -> Result<Vec<format::ChunkEntry>, GpuEncodeError> {
+        let mut source = ReaderSource {
+            reader,
+            buffer: Vec::new(),
+        };
+        self.compress_source_into(ctx, &mut source, len, (options, batching), out)
+    }
+
+    /// Appends the data section of `len` bytes from `source` to `out` (left
+    /// as it was on an error) and returns the chunk entries.
+    fn compress_source_into(
+        &self,
+        ctx: &Context,
+        source: &mut impl BatchSource,
+        len: u64,
+        how: (&GpuCompressOptions, Batching),
+        out: &mut Vec<u8>,
+    ) -> Result<Vec<format::ChunkEntry>, GpuEncodeError> {
         let start = out.len();
         let mut sink = VecSink {
             out: std::mem::take(out),
         };
-        let index = self.compress_batches(
-            ctx,
-            &mut SliceSource {
-                data: input,
-                pos: 0,
-            },
-            input.len() as u64,
-            &mut sink,
-            (options, batching),
-        );
+        let index = self.compress_batches(ctx, source, len, &mut sink, how);
         *out = sink.out;
         if index.is_err() {
             out.truncate(start);

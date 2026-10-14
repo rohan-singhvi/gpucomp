@@ -393,7 +393,11 @@ fn files_suite_times_file_to_file_paths_like_the_cli() {
     assert_eq!(names[..4], cpu_rows);
     assert_eq!(
         names[4..],
-        ["file.gpu.lz4.compress", "file.gpu.lz4.decompress"]
+        [
+            "file.gpu.lz4.compress",
+            "file.gpu.lz4.decompress",
+            "file.hybrid.lz4_flex.compress",
+        ]
     );
     for m in &rows[4..] {
         assert_eq!(m.timing, Timing::WallE2e);

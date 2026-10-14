@@ -167,7 +167,39 @@ fn check_encoder(options: &CompressOptions) -> Result<(), CpuError> {
 /// padded to 4 bytes, back to back) to `out`, and returns the chunk entries,
 /// with offsets from where the data starts. [`compress`] puts the header and
 /// table in front; a caller joining several inputs' data can write its own.
+/// On an error, `out` is left as it was.
+///
+/// An input of several groups goes through the streaming pipeline: small
+/// groups, several at once, keep the working set in cache, ~10% faster than
+/// encoding every chunk first and copying them all into `out` at the end
+/// (DECISIONS "Streamed fixed split").
 pub fn compress_into(
+    input: &[u8],
+    options: &CompressOptions,
+    out: &mut Vec<u8>,
+) -> Result<Vec<ChunkEntry>, CpuError> {
+    let group = stream_group_bytes(options.chunk_size);
+    let start = out.len();
+    let result = if input.len() <= PIPELINE_MIN_GROUPS * group {
+        encode_group(input, options, out)
+    } else {
+        let mut reader = input;
+        compress_stream_data(&mut reader, input.len() as u64, out, options, group, None)
+            .map(|(chunks, _)| chunks)
+    };
+    if result.is_err() {
+        out.truncate(start);
+    }
+    result
+}
+
+/// Inputs of at most this many streaming groups are encoded directly, without
+/// starting the pipeline's threads.
+const PIPELINE_MIN_GROUPS: usize = 4;
+
+/// Encodes every chunk of `input` in parallel, then appends their payloads to
+/// `out`: [`compress_into`] for one group.
+fn encode_group(
     input: &[u8],
     options: &CompressOptions,
     out: &mut Vec<u8>,
@@ -237,7 +269,7 @@ const STREAM_GROUP_BYTES: usize = 256 << 10;
 
 /// The default group size for streaming `chunk_size` chunks: at least
 /// [`STREAM_GROUP_BYTES`], and at least one chunk.
-fn stream_group_bytes(chunk_size: u32) -> usize {
+pub fn stream_group_bytes(chunk_size: u32) -> usize {
     STREAM_GROUP_BYTES.max(chunk_size as usize)
 }
 
@@ -281,12 +313,34 @@ pub fn compress_stream_grouped<R: Read + Send, W: Write + Seek>(
     let start = writer.stream_position()?;
     // Reserved for the header and table, written last.
     writer.write_all(&vec![0; table_len as usize])?;
+    let (chunks, data_len) = compress_stream_data(reader, len, writer, options, group_bytes, None)?;
+    writer.seek(SeekFrom::Start(start))?;
+    writer.write_all(&Index { header, chunks }.to_bytes())?;
+    writer.seek(SeekFrom::Start(start + table_len + data_len))?;
+    Ok(table_len + data_len)
+}
+
+/// Streams the data section of `len` bytes from `reader` to `writer`: each
+/// chunk's payload, padded, back to back, as [`compress_into`] appends them.
+/// Returns the chunk entries, with offsets from the data's start, and the
+/// bytes written. The work runs on `pool` (rayon's global pool if `None`).
+pub fn compress_stream_data<R: Read + Send, W: Write>(
+    reader: &mut R,
+    len: u64,
+    writer: &mut W,
+    options: &CompressOptions,
+    group_bytes: usize,
+    pool: Option<&rayon::ThreadPool>,
+) -> Result<(Vec<ChunkEntry>, u64), CpuError> {
+    let header = header_for(len, options)?;
+    check_encoder(options)?;
     let chunk = options.chunk_size as usize;
     let group = (group_bytes / chunk).max(1) * chunk;
     let mut remaining = len;
     let mut chunks = Vec::with_capacity(header.chunk_count as usize);
     let mut data_len = 0u64;
     crate::pipeline::ordered(
+        pool,
         stream_depth(),
         |input| {
             if remaining == 0 {
@@ -298,7 +352,7 @@ pub fn compress_stream_grouped<R: Read + Send, W: Write + Seek>(
             remaining -= n as u64;
             Ok(Some(()))
         },
-        |(), input, out| compress_into(input, options, out),
+        |(), input, out| encode_group(input, options, out),
         |data, entries| {
             writer.write_all(data)?;
             chunks.extend(entries.into_iter().map(|entry| ChunkEntry {
@@ -309,10 +363,7 @@ pub fn compress_stream_grouped<R: Read + Send, W: Write + Seek>(
             Ok(())
         },
     )?;
-    writer.seek(SeekFrom::Start(start))?;
-    writer.write_all(&Index { header, chunks }.to_bytes())?;
-    writer.seek(SeekFrom::Start(start + table_len + data_len))?;
-    Ok(table_len + data_len)
+    Ok((chunks, data_len))
 }
 
 /// Decompresses the `.gpcz` file in `reader` (from its start) into `writer`,
@@ -357,6 +408,7 @@ fn decompress_index_stream<R: Read + Seek + Send, W: Write>(
     // Where the reader is, once known: payloads are usually back to back.
     let mut at = None;
     crate::pipeline::ordered(
+        None,
         stream_depth(),
         |payloads| {
             if next == index.chunks.len() {
@@ -606,4 +658,40 @@ pub fn decompress_range<R: Read + Seek>(
     out.drain(..skip);
     out.truncate(len as usize);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn large_inputs_stream_into_the_same_data_section() {
+        // Text with repeats and a stretch of noise, 12 groups of 256 KiB.
+        let mut s = 7u64;
+        let input: Vec<u8> = (0..3 << 20)
+            .map(|i: usize| {
+                if i % 100_000 < 70_000 {
+                    b"the quick brown fox jumps over the lazy dog "[i % 44]
+                } else {
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    s as u8
+                }
+            })
+            .collect();
+        for chunk_size in [4096, 65_536] {
+            let options = CompressOptions {
+                chunk_size,
+                checksums: true,
+                ..CompressOptions::default()
+            };
+            assert!(input.len() > PIPELINE_MIN_GROUPS * stream_group_bytes(chunk_size));
+            let (mut direct, mut streamed) = (b"prefix".to_vec(), b"prefix".to_vec());
+            let expected = encode_group(&input, &options, &mut direct).unwrap();
+            let entries = compress_into(&input, &options, &mut streamed).unwrap();
+            assert_eq!(entries, expected, "{chunk_size}");
+            assert!(streamed == direct, "{chunk_size}");
+        }
+    }
 }

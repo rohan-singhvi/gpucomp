@@ -11,7 +11,9 @@ use cpu::container::{
 use cpu::lz4::encode::{encode_block, Params};
 use format::Codec;
 use gpu::decode::GpuDecoder;
-use gpu::encode::{EncodeParams, EncodedBlock, GpuCompressOptions, GpuEncodeError, GpuEncoder};
+use gpu::encode::{
+    Batching, EncodeParams, EncodedBlock, GpuCompressOptions, GpuEncodeError, GpuEncoder,
+};
 use proptest::prelude::*;
 
 fn twin(p: EncodeParams) -> Params {
@@ -520,5 +522,46 @@ fn compress_into_appends_the_files_data_section_and_returns_its_entries() {
             out[6..] == file[index.data_offset() as usize..],
             "{options:?}"
         );
+    }
+}
+
+#[test]
+fn a_reader_compresses_into_the_same_data_section() {
+    let Some(ctx) = context() else { return };
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default())
+        .unwrap()
+        .with_max_batch_chunks(3);
+    let input = [text(5 * 4096 + 100), random(3 * 4096, 9)].concat();
+    for options in [gpu_opts(), glz_opts(None)] {
+        let mut expected = Vec::new();
+        let entries = encoder
+            .compress_into(&ctx, &input, &options, &mut expected)
+            .unwrap();
+        for batching in [Batching::Pipelined, Batching::Whole] {
+            let mut out = b"prefix".to_vec();
+            let got = encoder
+                .compress_reader_into(
+                    &ctx,
+                    &mut std::io::Cursor::new(&input),
+                    input.len() as u64,
+                    &options,
+                    &mut out,
+                    batching,
+                )
+                .unwrap();
+            assert_eq!(got, entries, "{options:?} {batching:?}");
+            assert!(out[..6] == *b"prefix" && out[6..] == expected[..]);
+        }
+        // A short reader is an error, and `out` is left as it was.
+        let mut out = b"prefix".to_vec();
+        let short = encoder.compress_reader_into(
+            &ctx,
+            &mut std::io::Cursor::new(&input[..100]),
+            input.len() as u64,
+            &options,
+            &mut out,
+            Batching::Pipelined,
+        );
+        assert!(short.is_err() && out == b"prefix");
     }
 }

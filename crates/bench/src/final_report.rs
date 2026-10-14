@@ -192,39 +192,50 @@ fn platform(run: &Run) -> Option<String> {
 
 /// File-to-file paths as the CLI runs them: (label, compress row,
 /// decompress row).
-const FILE_TO_FILE: [(&str, &str, &str); 3] = [
+const FILE_TO_FILE: [(&str, &str, Option<&str>); 4] = [
     (
         "gpucomp, CPU: LZ4 with lz4_flex, hand-written decoder",
         "file.cpu.lz4_flex.compress",
-        "file.cpu.lz4.decompress",
+        Some("file.cpu.lz4.decompress"),
     ),
     (
         "zstd -1: `-T0`, decoding on one thread",
         "file.zstd-1.compress.mt",
-        "file.zstd-1.decompress.1t",
+        Some("file.zstd-1.decompress.1t"),
     ),
     (
         "gpucomp, GPU: LZ4, a new context each run",
         "file.gpu.lz4.compress",
-        "file.gpu.lz4.decompress",
+        Some("file.gpu.lz4.decompress"),
+    ),
+    (
+        "gpucomp, lz4_flex + GPU: LZ4, 25% on the GPU, a new context each run",
+        "file.hybrid.lz4_flex.compress",
+        None,
     ),
 ];
 
-/// Wall time from file to file, both directions, for the headline input.
+/// Wall time from file to file, both directions, for the headline input. A
+/// path that only compresses (its files decode like another row's) shows
+/// dashes for decompression.
 fn file_to_file(run: &Run) -> Option<String> {
     let input = headline(run)?;
     let rows: Vec<String> = FILE_TO_FILE
         .iter()
         .filter_map(|(label, compress, decompress)| {
             let c = find(run, compress, input)?;
-            let d = find(run, decompress, input)?;
+            let d = match decompress {
+                Some(name) => {
+                    let d = find(run, name, input)?;
+                    format!("{:.1} | {:.2}", ms(d), d.gbps)
+                }
+                None => "— | —".into(),
+            };
             Some(format!(
-                "| {label} | {} | {:.1} | {:.2} | {:.1} | {:.2} |",
+                "| {label} | {} | {:.1} | {:.2} | {d} |",
                 ratio(c.ratio),
                 ms(c),
-                c.gbps,
-                ms(d),
-                d.gbps
+                c.gbps
             ))
         })
         .collect();
@@ -251,7 +262,7 @@ const fn path(label: &'static str, e2e: &'static str) -> Path {
 
 const COMPRESS: &[Path] = &[
     path(
-        "lz4_flex + GPU, LZ4, fixed split (30% on the GPU)",
+        "lz4_flex + GPU, LZ4, fixed split (25% on the GPU)",
         "hybrid.lz4_flex.compress.e2e",
     ),
     path("CPU+GPU LZ4, level 1", "hybrid.lz4.compress.e2e"),
@@ -763,6 +774,13 @@ mod tests {
                 m("file.cpu.lz4.decompress", ALL, 8.0, Some(2.04), Cpu),
                 m("file.zstd-1.compress.mt", ALL, 4.0, Some(2.89), Cpu),
                 m("file.zstd-1.decompress.1t", ALL, 1.0, Some(2.89), Cpu),
+                m(
+                    "file.hybrid.lz4_flex.compress",
+                    ALL,
+                    2.5,
+                    Some(2.04),
+                    WallE2e,
+                ),
             ],
         )
     }
@@ -944,8 +962,14 @@ mod tests {
             zstd.contains("| 2.89× | 250.0 | 4.00 | 1000.0 | 1.00 |"),
             "{zstd}"
         );
+        // Compression only: its file decodes like any LZ4 file.
+        let split = row(&table, "gpucomp, lz4_flex + GPU");
+        assert!(
+            split.contains("| 2.04× | 400.0 | 2.50 | — | — |"),
+            "{split}"
+        );
         // Paths the run didn't measure are left out.
-        assert!(!table.contains("GPU"), "{table}");
+        assert!(!table.contains("| gpucomp, GPU:"), "{table}");
     }
 
     #[test]

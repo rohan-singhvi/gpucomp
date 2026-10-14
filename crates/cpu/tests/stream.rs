@@ -4,8 +4,9 @@
 use std::io::{Cursor, Seek, SeekFrom, Write};
 
 use cpu::container::{
-    compress, compress_stream, compress_stream_grouped, decompress_stream,
-    decompress_stream_grouped, CompressOptions, CpuError, DecompressOptions, Encoder, FilterMode,
+    compress, compress_into, compress_stream, compress_stream_data, compress_stream_grouped,
+    decompress_stream, decompress_stream_grouped, CompressOptions, CpuError, DecompressOptions,
+    Encoder, FilterMode,
 };
 use cpu::glz::GlzParams;
 use cpu::lz4::encode::Params;
@@ -225,4 +226,34 @@ fn streamed_decompression_reads_from_the_start_of_a_seekable_file() {
     let mut out = Vec::new();
     decompress_stream(&mut reader, &mut out, &DecompressOptions::default()).unwrap();
     assert!(out == input);
+}
+
+#[test]
+fn a_data_section_streams_on_any_pool_as_compress_into_appends_it() {
+    // One worker: the reader isn't a worker, so the pipeline can't deadlock.
+    let one = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    for (name, input) in inputs() {
+        for options in option_sets() {
+            let mut expected = Vec::new();
+            let entries = compress_into(&input, &options, &mut expected).unwrap();
+            for (group, pool) in [(CHUNK as usize, None), (3 * CHUNK as usize, Some(&one))] {
+                let mut out = Vec::new();
+                let (got, len) = compress_stream_data(
+                    &mut Cursor::new(&input),
+                    input.len() as u64,
+                    &mut out,
+                    &options,
+                    group,
+                    pool,
+                )
+                .unwrap();
+                assert_eq!(got, entries, "{name} {options:?} {group}");
+                assert_eq!(len, expected.len() as u64, "{name} {options:?} {group}");
+                assert!(out == expected, "{name} {options:?} {group}");
+            }
+        }
+    }
 }

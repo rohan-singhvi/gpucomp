@@ -170,12 +170,135 @@ pub fn compress_parts(
     compress_parts_with(ctx, encoder, input, options, parts, &twin)
 }
 
+/// The input of [`compress_static_stream`]: `len` bytes, read from the start
+/// by `head` (the CPU's chunks), and from the GPU's share on by `tail`, a
+/// second reader of the same bytes.
+pub struct SplitInput<H, T> {
+    pub head: H,
+    pub tail: T,
+    pub len: u64,
+}
+
+/// [`compress_static`] from readers to a writer, from its current position;
+/// returns the bytes written and leaves the writer at the file's end. The CPU
+/// streams its chunks from `head` straight into `writer` while the GPU's
+/// thread creates its context and encoder with `gpu` (most of a one-shot
+/// run's GPU start-up) and reads its share from `tail`. Only the GPU's
+/// compressed share is held in memory. The file is `compress_static`'s.
+pub fn compress_static_stream<H, T, W>(
+    input: SplitInput<&mut H, T>,
+    writer: &mut W,
+    options: &GpuCompressOptions,
+    gpu_share: f64,
+    cpu: &CompressOptions,
+    gpu: impl FnOnce() -> Result<(Context, GpuEncoder), GpuEncodeError> + Send,
+) -> Result<u64, GpuEncodeError>
+where
+    H: std::io::Read + Send,
+    T: std::io::Read + std::io::Seek + Send,
+    W: std::io::Write + std::io::Seek,
+{
+    use std::io::SeekFrom;
+
+    let SplitInput {
+        head,
+        mut tail,
+        len,
+    } = input;
+    let cpu = split_cpu_options(options, cpu);
+    let cpu_len = cpu_share_bytes(len, options.chunk_size, gpu_share)?;
+    let gpu_len = len - cpu_len;
+    let header = header(len as usize, options)?;
+    let table_len = format::Index {
+        header,
+        chunks: Vec::new(),
+    }
+    .data_offset();
+    let start = writer.stream_position()?;
+    // Room for the header and table, written last.
+    writer.write_all(&vec![0; table_len as usize])?;
+    let (gpu_part, cpu_part) = std::thread::scope(|s| {
+        let gpu_thread = (gpu_len > 0).then(|| {
+            s.spawn(move || -> Result<_, GpuEncodeError> {
+                let (ctx, encoder) = gpu()?;
+                tail.seek(SeekFrom::Start(cpu_len))?;
+                let mut data = Vec::new();
+                let entries = encoder.compress_reader_into(
+                    &ctx,
+                    &mut tail,
+                    gpu_len,
+                    options,
+                    &mut data,
+                    Batching::Pipelined,
+                )?;
+                Ok((entries, data))
+            })
+        });
+        let cpu_part = if cpu_len > 0 {
+            let group = cpu::container::stream_group_bytes(options.chunk_size);
+            cpu::container::compress_stream_data(
+                head,
+                cpu_len,
+                writer,
+                &cpu,
+                group,
+                Some(cpu_pool()),
+            )
+        } else {
+            Ok((Vec::new(), 0))
+        };
+        let gpu_part = gpu_thread.map(|t| t.join().expect("the GPU thread panicked"));
+        (gpu_part, cpu_part)
+    });
+    let (mut entries, cpu_data) = cpu_part?;
+    let (gpu_entries, gpu_data) = gpu_part.transpose()?.unwrap_or_default();
+    writer.write_all(&gpu_data)?;
+    entries.extend(gpu_entries.into_iter().map(|e| format::ChunkEntry {
+        comp_offset: cpu_data + e.comp_offset,
+        ..e
+    }));
+    let total = table_len + cpu_data + gpu_data.len() as u64;
+    writer.seek(SeekFrom::Start(start))?;
+    writer.write_all(
+        &format::Index {
+            header,
+            chunks: entries,
+        }
+        .to_bytes(),
+    )?;
+    writer.seek(SeekFrom::Start(start + total))?;
+    Ok(total)
+}
+
+/// `cpu`, with the codec, chunk size, checksums and level of `options`.
+fn split_cpu_options(options: &GpuCompressOptions, cpu: &CompressOptions) -> CompressOptions {
+    CompressOptions {
+        codec: options.codec,
+        chunk_size: options.chunk_size,
+        checksums: options.checksums,
+        level: options.level,
+        ..*cpu
+    }
+}
+
+/// The input bytes the CPU takes on a fixed split: all but the last
+/// `gpu_share` of the chunks (rounded to whole chunks).
+fn cpu_share_bytes(len: u64, chunk_size: u32, gpu_share: f64) -> Result<u64, GpuEncodeError> {
+    if !(0.0..=1.0).contains(&gpu_share) {
+        return Err(GpuEncodeError::BadShare(gpu_share));
+    }
+    let chunk = u64::from(chunk_size.max(1));
+    let chunks = len.div_ceil(chunk);
+    let cpu_chunks = chunks - (chunks as f64 * gpu_share).round() as u64;
+    Ok((cpu_chunks * chunk).min(len))
+}
+
 /// Compresses `input` on a fixed split: the CPU takes the first chunks with
 /// `cpu`'s encoder while the GPU takes the last `gpu_share` of them (rounded
 /// to whole chunks), at the same time. For LZ4 that encoder can be lz4_flex,
 /// the fastest CPU encoder: the file then differs from the GPU-only one, but
 /// depends only on the input and the settings, so it's still deterministic.
-/// Tuning `gpu_share` to the machine (~0.3 on an Apple M4 Pro) makes both
+/// Tuning `gpu_share` to the machine (~0.25 on an Apple M4 Pro) makes both
 /// sides finish together. `cpu`'s codec, chunk size, checksums and level are
 /// taken from `options`; its encoder and filters are its own.
 ///
@@ -189,20 +312,10 @@ pub fn compress_static(
     gpu_share: f64,
     cpu: &CompressOptions,
 ) -> Result<Vec<u8>, GpuEncodeError> {
-    if !(0.0..=1.0).contains(&gpu_share) {
-        return Err(GpuEncodeError::BadShare(gpu_share));
-    }
-    let cpu = CompressOptions {
-        codec: options.codec,
-        chunk_size: options.chunk_size,
-        checksums: options.checksums,
-        level: options.level,
-        ..*cpu
-    };
-    let chunk = options.chunk_size.max(1) as usize;
-    let chunks = input.len().div_ceil(chunk);
-    let cpu_chunks = chunks - (chunks as f64 * gpu_share).round() as usize;
-    let (cpu_input, gpu_input) = input.split_at((cpu_chunks * chunk).min(input.len()));
+    let cpu = split_cpu_options(options, cpu);
+    let cpu_len = cpu_share_bytes(input.len() as u64, options.chunk_size, gpu_share)?;
+    let chunks = input.len().div_ceil(options.chunk_size.max(1) as usize);
+    let (cpu_input, gpu_input) = input.split_at(cpu_len as usize);
     let header = header(input.len(), options)?;
     let table_len = format::Index {
         header,
@@ -226,7 +339,19 @@ pub fn compress_static(
         let cpu_entries = if cpu_input.is_empty() {
             Ok(Vec::new())
         } else {
-            cpu_pool().install(|| cpu::container::compress_into(cpu_input, &cpu, &mut out))
+            // On the pool of all cores but one, streamed in small groups.
+            let group = cpu::container::stream_group_bytes(cpu.chunk_size);
+            let mut reader = cpu_input;
+            let len = cpu_input.len() as u64;
+            cpu::container::compress_stream_data(
+                &mut reader,
+                len,
+                &mut out,
+                &cpu,
+                group,
+                Some(cpu_pool()),
+            )
+            .map(|(entries, _)| entries)
         };
         (gpu.join(), cpu_entries)
     });

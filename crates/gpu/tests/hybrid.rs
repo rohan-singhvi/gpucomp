@@ -9,9 +9,11 @@ use format::Codec;
 use gpu::decode::GpuDecoder;
 use gpu::encode::{EncodeParams, FilterMode, GpuCompressOptions, GpuEncoder};
 use gpu::hybrid::{
-    compress, compress_parts, compress_parts_with, compress_static, decompress, decompress_parts,
-    Device,
+    compress, compress_parts, compress_parts_with, compress_static, compress_static_stream,
+    decompress, decompress_parts, twin_options, Device, SplitInput,
 };
+use gpu::{Context, ContextOptions};
+use std::io::{Cursor, Seek, SeekFrom};
 
 /// 18 chunks: text, random bytes, zeros, and a short last chunk.
 fn input() -> Vec<u8> {
@@ -203,4 +205,90 @@ fn a_fixed_share_splits_the_chunks_deterministically() {
     let decoder = GpuDecoder::new(&ctx);
     assert!(decompress(&ctx, &decoder, &file, true).unwrap() == input);
     assert!(compress_static(&ctx, &encoder, &input, &options, 1.5, &flex).is_err());
+}
+
+/// A new context and level-1 encoder, as a one-shot command creates them.
+fn new_gpu() -> Result<(Context, GpuEncoder), gpu::encode::GpuEncodeError> {
+    let ctx = Context::new(&ContextOptions::default())?;
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default())?;
+    Ok((ctx, encoder))
+}
+
+#[test]
+fn a_streamed_fixed_split_writes_the_in_memory_file() {
+    let Some(ctx) = context() else { return };
+    let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();
+    let lz4 = GpuCompressOptions {
+        chunk_size: CHUNK,
+        checksums: true,
+        ..GpuCompressOptions::default()
+    };
+    let flex = cpu::container::CompressOptions {
+        encoder: cpu::container::Encoder::Lz4Flex,
+        ..Default::default()
+    };
+    let glze = GpuCompressOptions {
+        codec: Codec::GlzE,
+        ..lz4
+    };
+    let twin = twin_options(&glze, encoder.params());
+    for (options, cpu) in [(lz4, flex), (glze, twin)] {
+        for input in [input(), text(77), Vec::new()] {
+            for share in [0.0, 0.5, 1.0] {
+                let expected =
+                    compress_static(&ctx, &encoder, &input, &options, share, &cpu).unwrap();
+                // The file starts where the writer is.
+                let mut out = Cursor::new(b"prefix".to_vec());
+                out.seek(SeekFrom::End(0)).unwrap();
+                let split = SplitInput {
+                    head: &mut Cursor::new(&input),
+                    tail: Cursor::new(&input),
+                    len: input.len() as u64,
+                };
+                let n = compress_static_stream(split, &mut out, &options, share, &cpu, new_gpu)
+                    .unwrap();
+                let what = format!("{:?} {} bytes, share {share}", options.codec, input.len());
+                assert_eq!(n, expected.len() as u64, "{what}");
+                assert_eq!(out.stream_position().unwrap(), 6 + n, "{what}");
+                assert!(out.into_inner()[6..] == expected[..], "{what}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_streamed_split_starts_the_gpu_only_for_a_share() {
+    let input = input();
+    let options = GpuCompressOptions {
+        chunk_size: CHUNK,
+        ..GpuCompressOptions::default()
+    };
+    let flex = cpu::container::CompressOptions {
+        encoder: cpu::container::Encoder::Lz4Flex,
+        ..Default::default()
+    };
+    let no_gpu = || Err(gpu::encode::GpuEncodeError::Unsupported("no GPU".into()));
+    let run = |share, gpu: fn() -> Result<(Context, GpuEncoder), gpu::encode::GpuEncodeError>| {
+        let split = SplitInput {
+            head: &mut Cursor::new(&input),
+            tail: Cursor::new(&input),
+            len: input.len() as u64,
+        };
+        compress_static_stream(
+            split,
+            &mut Cursor::new(Vec::new()),
+            &options,
+            share,
+            &flex,
+            gpu,
+        )
+    };
+    // All on the CPU: no GPU needed, and the file is the CPU's.
+    assert!(run(0.0, no_gpu).is_ok());
+    // A GPU that can't start fails the whole file.
+    assert!(run(0.5, no_gpu).is_err());
+    assert!(matches!(
+        run(1.5, no_gpu),
+        Err(gpu::encode::GpuEncodeError::BadShare(_))
+    ));
 }

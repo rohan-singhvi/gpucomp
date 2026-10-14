@@ -5,7 +5,7 @@ GPU-accelerated LZ compression that isn't CUDA-only. Compress and decompress on 
 Data is split into independent chunks (64 KiB by default), so every chunk can be encoded and decoded in parallel, and any byte range can be read back without decoding the whole file.
 
 > **Status:** milestones M0–M10 of 11 are done; M11 (experiments) is next. The file format may still change.
-> On the Apple M4 Pro it's measured on, the GPU alone compresses at about half the speed of multi-threaded CPU compression. As a second processor next to lz4_flex, it makes LZ4 compression 1.3–1.4× faster than lz4_flex alone. See [Performance](#performance) and the [final benchmark report](bench/REPORT.md).
+> On the Apple M4 Pro it's measured on, the GPU alone compresses at about half the speed of multi-threaded CPU compression. In a running program, as a second processor next to lz4_flex, it makes LZ4 compression 1.15–1.3× faster than lz4_flex alone; one-shot commands don't gain, because the GPU's start-up takes as long as the CPU's whole job. See [Performance](#performance) and the [final benchmark report](bench/REPORT.md).
 
 ## Features
 
@@ -15,7 +15,7 @@ Data is split into independent chunks (64 KiB by default), so every chunk can be
   - **GLZ-E** (`glze`): GLZ with its byte streams Huffman-coded in up to 32 independent lanes each; about 28% smaller than GLZ on Silesia.
 - **Identical output on GPU and CPU.** The GPU encoder produces byte-for-byte the same file as its CPU twin, and every encoder round-trips through every decoder. The test suite enforces both.
 - **CPU and GPU together.** `--hybrid` splits one file's chunks between the GPU and every CPU core by their measured speeds. Because each chunk encodes to the same bytes on either device, the file is identical to `--gpu` alone, however the work was split. Decompression shares the same way, and the GPU joins only when it helps.
-- **lz4_flex plus the GPU.** `--hybrid --gpu-share 0.3` gives the GPU a fixed share of the chunks and the rest to the CPU's encoder: lz4_flex for LZ4, the CPU twin otherwise. The output is deterministic for the same settings, and for LZ4 it is the fastest compressor measured here.
+- **lz4_flex plus the GPU.** `--hybrid --gpu-share 0.25` gives the GPU a fixed share of the chunks and the rest to the CPU's encoder: lz4_flex for LZ4, the CPU twin otherwise. The CPU streams the head of the file while the GPU starts up and takes the tail. The output is deterministic for the same settings. In memory it is the fastest LZ4 compressor measured here; from a file on this machine it is no faster than the CPU alone.
 - **Random access.** `decompress --offset N --length M` reads only the header, the chunk table and the chunks that overlap the range.
 - **Per-chunk filters.** Optional byte-shuffle and delta filters for numeric data. `--filters auto` picks one per chunk by trial-encoding a sample, on CPU or GPU.
 - **Large files in bounded memory.** CPU compression and decompression stream file to file in groups of chunks, reading, coding and writing at the same time. GPU compression and decompression stream in batches that fit a GPU memory budget (`--gpu-memory`, default 3 GiB). A 4 GiB file round-trips on the GPU with about 480 MB of host memory.
@@ -35,7 +35,7 @@ gpucomp compress --gpu big.bin big.gpcz         # compress on the GPU (LZ4 block
 gpucomp compress --gpu --codec glz --filters auto big.bin big.gpcz
 gpucomp compress --gpu --level 3 big.bin big.gpcz  # smaller, slower
 gpucomp compress --gpu --hybrid --codec glze big.bin big.gpcz   # GPU and CPU together
-gpucomp compress --gpu --hybrid --gpu-share 0.3 big.bin big.gpcz  # lz4_flex + GPU, fastest LZ4
+gpucomp compress --gpu --hybrid --gpu-share 0.25 big.bin big.gpcz  # lz4_flex + GPU
 gpucomp compress big.bin big.gpcz               # CPU, multi-threaded (lz4_flex)
 
 gpucomp info big.gpcz                           # codec, chunks, ratio, filters used
@@ -54,7 +54,7 @@ Useful options (see `gpucomp <command> --help` for all of them):
 | `--checksum` / `--verify` | Store / check per-chunk checksums |
 | `--gpu`, `--backend metal\|dx12\|vulkan` | Run on the GPU, optionally forcing a backend |
 | `--hybrid` | With `--gpu`: use every CPU core too (same output; reads the whole input into memory) |
-| `--gpu-share 0.3` | With `--hybrid`: give the GPU this fixed share of the chunks, and the CPU's encoder (lz4_flex for LZ4) the rest. Deterministic, but not the GPU-only file |
+| `--gpu-share 0.25` | With `--hybrid`: give the GPU this fixed share of the chunks, and the CPU's encoder (lz4_flex for LZ4) the rest. Deterministic, but not the GPU-only file |
 | `--gpu-memory 512M` | Cap the GPU memory per batch |
 
 ## Library use
@@ -79,25 +79,25 @@ For files larger than memory, use `cpu::container::compress_stream` and `decompr
 
 ## Performance
 
-Apple M4 Pro (12 CPU cores, 20-core GPU), [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) (212 MB), 64 KiB chunks, `pipelined` run. GPU numbers are end to end: input in host memory, output back in host memory. Background system processes used about one core during the run, so multi-threaded CPU rows are 5–10% below this machine's best.
+Apple M4 Pro (12 CPU cores, 20-core GPU), [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) (212 MB), 64 KiB chunks, `split-stream` run. GPU numbers are end to end: input in host memory, output back in host memory. Multi-threaded CPU rows vary between runs: the lz4_flex row has ranged from about 5 to 5.8 GB/s, and reaches about 7 at best on an idle machine.
 
 | Path | Ratio | Compress GB/s | Decompress GB/s |
 |---|---|---|---|
-| GPU, LZ4 (default) | 1.99× | 3.01 | 2.71 |
-| GPU, LZ4 `--level 2` | 2.21× | 1.69 | 2.71 |
-| GPU, LZ4 `--level 3` | 2.32× | 0.91 | 2.71 |
-| GPU, GLZ | 1.95× | 2.95 | 3.83 |
-| GPU, **GLZ-E** (Huffman-coded GLZ) | **2.50×** | 2.26 | 2.81 |
-| GPU, GLZ-E `--level 3` | **2.75×** | 0.87 | 3.14 |
-| CPU+GPU (`--hybrid`), LZ4 | 1.99× | 3.75 | 14.0 |
-| CPU+GPU, GLZ-E | 2.50× | 3.02 | 6.28 |
-| CPU+GPU, GLZ-E `--level 3` | 2.75× | 1.23 | 6.88 |
-| **lz4_flex + GPU** (`--hybrid --gpu-share 0.3`), LZ4 | 2.04× | **7.06** | — |
-| CPU, GLZ (gpucomp), 12 threads | 1.95× | 2.12 | 13.5 |
-| CPU, GLZ-E (gpucomp), 12 threads | 2.50× | 1.64 | 6.73 |
-| CPU `lz4_flex`, 12 threads | 2.04× | 5.2 | 13.8 |
-| CPU zstd -1, 64 KiB chunks, 12 threads | 2.76× | 5.6 | 10.0 |
-| CPU zstd -1, whole file (no random access) | 2.89× | 5.5 | 1.64 (1 thread) |
+| GPU, LZ4 (default) | 1.99× | 2.97 | 2.66 |
+| GPU, LZ4 `--level 2` | 2.21× | 1.63 | 2.66 |
+| GPU, LZ4 `--level 3` | 2.32× | 0.92 | 2.66 |
+| GPU, GLZ | 1.95× | 2.93 | 3.81 |
+| GPU, **GLZ-E** (Huffman-coded GLZ) | **2.50×** | 2.22 | 2.82 |
+| GPU, GLZ-E `--level 3` | **2.75×** | 0.84 | 3.05 |
+| CPU+GPU (`--hybrid`), LZ4 | 1.99× | 3.76 | 13.4 |
+| CPU+GPU, GLZ-E | 2.50× | 2.89 | 5.93 |
+| CPU+GPU, GLZ-E `--level 3` | 2.75× | 1.20 | 6.79 |
+| **lz4_flex + GPU** (`--hybrid --gpu-share 0.25`), LZ4 | 2.03× | **7.34** | — |
+| CPU, GLZ (gpucomp), 12 threads | 1.95× | 2.11 | 13.8 |
+| CPU, GLZ-E (gpucomp), 12 threads | 2.50× | 1.70 | 6.85 |
+| CPU `lz4_flex`, 12 threads | 2.04× | 5.5 | 13.1 |
+| CPU zstd -1, 64 KiB chunks, 12 threads | 2.76× | 5.7 | 10.4 |
+| CPU zstd -1, whole file (no random access) | 2.89× | 5.8 | 1.63 (1 thread) |
 
 LZ4 decompression on the GPU is measured on the default level's file. zstd in 64 KiB chunks gives the same random access as gpucomp. CPU+GPU decompression leaves the GPU out on this machine, because the CPU finishes before a GPU pass would pay off. The lz4_flex + GPU file is an ordinary LZ4 file, so it decodes like the other LZ4 rows.
 
@@ -105,11 +105,12 @@ LZ4 decompression on the GPU is measured on the default level's file. zstd in 64
 
 | Command | Ratio | Compress | Decompress |
 |---|---|---|---|
-| `gpucomp compress` / `decompress` (CPU) | 2.04× | **36.3 ms** | **51.6 ms** |
-| zstd -1 with all threads; `zstd -d` | 2.89× | 43.1 ms | 140.5 ms |
-| `gpucomp ... --gpu` | 1.99× | 91.8 ms | 125.5 ms |
+| `gpucomp compress` / `decompress` (CPU) | 2.04× | **38.2 ms** | **44.9 ms** |
+| zstd -1 with all threads; `zstd -d` | 2.89× | 46.2 ms | 143.1 ms |
+| `gpucomp ... --gpu` | 1.99× | 94.5 ms | 124.7 ms |
+| `gpucomp compress --gpu --hybrid --gpu-share 0.25` | 2.03× | 43.5 ms | — |
 
-The real `lz4` command line tool (1.10) took 65 ms to compress and 76 ms to decompress on this machine. The GPU's file paths pipeline 16 MiB batches, but about 20 ms go to creating the GPU context and compiling kernels on every run.
+The real `lz4` command line tool (1.10) took 65 ms to compress and 76 ms to decompress on this machine. The GPU's file paths pipeline 16 MiB batches, but about 20 ms go to creating the GPU context and compiling kernels on every run, and a fresh process's first GPU work pays more on top. The benchmark keeps the GPU driver warm; as separate commands on this file, `--gpu-share 0.25` takes 68 ms and the CPU alone 40.
 
 **On numeric data**, GLZ-E with `--filters auto` beats `zstd -19` on most inputs. Byte-shuffle groups slowly changing bytes, and the entropy stage then exploits them. 32 MiB inputs, 64 KiB chunks:
 
@@ -120,7 +121,7 @@ The real `lz4` command line tool (1.10) took 65 ms to compress and 76 ms to deco
 | sorted u32 | 4.08× | 4.12× | 1.31× | 2.91× |
 | u64 timestamps | 3.17× | 8.96× | 3.90× | 3.90× |
 
-**Honest comparison:** on this machine, the GPU alone compresses at about half the speed of multi-threaded `lz4_flex` or zstd -1. With identical output, the CPU and GPU together reach about 70%. The GPU pays as a second processor: lz4_flex on 70% of the chunks and the GPU on the rest compress LZ4 1.3–1.4× faster than lz4_flex alone, at the same ratio. zstd keeps its lead in ratio per unit of speed, and decoding belongs to the CPU: the GPU decodes at about 3 GB/s, the CPU at 7–14. The GPU's parallel algorithm needs a match at every position, while a serial parse needs them at only about 40%, so the GPU does more work per byte. Its kernels are limited by latency, not bandwidth: barrier-synchronised match finding, serial parse walks and dependent memory reads. Transfers and host work take another 12–22% end to end. From file to file, the `gpucomp` command's CPU path is faster than zstd -1 and the `lz4` tool, at LZ4's ratio. A discrete GPU, against a typical desktop CPU, is the setting the project targets, but it hasn't been measured yet.
+**Honest comparison:** on this machine, the GPU alone compresses at about half the speed of multi-threaded `lz4_flex` or zstd -1. With identical output, the CPU and GPU together reach about 70%. The GPU pays as a second processor in a running program: lz4_flex on 75% of the chunks and the GPU on the rest compress LZ4 1.15–1.3× faster than lz4_flex alone, at the same ratio. zstd keeps its lead in ratio per unit of speed, and decoding belongs to the CPU: the GPU decodes at about 3 GB/s, the CPU at 7–14. The GPU's parallel algorithm needs a match at every position, while a serial parse needs them at only about 40%, so the GPU does more work per byte. Its kernels are limited by latency, not bandwidth: barrier-synchronised match finding, serial parse walks and dependent memory reads. Transfers and host work take another 12–22% end to end. From file to file, the `gpucomp` command's CPU path is faster than zstd -1 and the `lz4` tool, at LZ4's ratio. A discrete GPU, against a typical desktop CPU, is the setting the project targets, but it hasn't been measured yet.
 
 The [final benchmark report](bench/REPORT.md) has the full picture: per-file results, a ratio-vs-throughput table, a per-kernel profile, and a note on discrete GPUs vs unified memory. [BENCHMARKS.md](BENCHMARKS.md) has every run's history, and [DECISIONS.md](DECISIONS.md) has the reasoning behind design choices, including negative results.
 

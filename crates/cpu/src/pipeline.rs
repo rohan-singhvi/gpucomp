@@ -6,6 +6,17 @@
 use std::collections::BTreeMap;
 use std::sync::mpsc;
 
+/// `rayon::in_place_scope` on `pool`, or on the global pool.
+fn in_place_scope<'scope, R>(
+    pool: Option<&rayon::ThreadPool>,
+    op: impl FnOnce(&rayon::Scope<'scope>) -> R,
+) -> R {
+    match pool {
+        Some(pool) => pool.in_place_scope(op),
+        None => rayon::in_place_scope(op),
+    }
+}
+
 /// An item's buffers and its result, tagged with its position.
 type Done<M, E> = (usize, Vec<u8>, Vec<u8>, Result<M, E>);
 
@@ -15,10 +26,11 @@ type Done<M, E> = (usize, Vec<u8>, Vec<u8>, Result<M, E>);
 /// first error, in item order, stops the pipeline: later items' results are
 /// not written.
 ///
-/// `read` runs on its own thread, `work` on rayon's global pool (several
-/// items at once) and `write` on the calling thread, so no rayon worker ever
-/// waits for I/O.
+/// `read` runs on its own thread, `work` on `pool` (rayon's global pool if
+/// `None`; several items at once) and `write` on the calling thread, so no
+/// rayon worker ever waits for I/O.
 pub(crate) fn ordered<C, M, E>(
+    pool: Option<&rayon::ThreadPool>,
     depth: usize,
     mut read: impl FnMut(&mut Vec<u8>) -> Result<Option<C>, E> + Send,
     work: impl Fn(C, &[u8], &mut Vec<u8>) -> Result<M, E> + Sync,
@@ -38,7 +50,7 @@ where
     let work = &work;
     std::thread::scope(|s| {
         let reader = s.spawn(move || {
-            rayon::in_place_scope(|scope| {
+            in_place_scope(pool, |scope| {
                 let mut k = 0;
                 // Ends when the writer stops (and drops `free_tx`).
                 while let Ok((mut input, mut out)) = free_rx.recv() {
@@ -102,6 +114,7 @@ mod tests {
         let peak = AtomicUsize::new(0);
         let mut written = Vec::new();
         let result = ordered(
+            None,
             depth,
             |buf| {
                 if next == n {
@@ -156,6 +169,7 @@ mod tests {
         let mut next = 0u64;
         let mut written = Vec::new();
         let result = ordered(
+            None,
             2,
             |buf| {
                 next += 1;

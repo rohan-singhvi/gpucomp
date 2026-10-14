@@ -40,7 +40,10 @@ pub struct CompressArgs {
     /// With --hybrid: a fixed split instead. The GPU compresses this fraction
     /// of the chunks while the CPU compresses the rest, LZ4 with lz4_flex (the
     /// fastest CPU encoder). The file then differs from --gpu's, but is the
-    /// same for the same settings. ~0.3 suits an Apple M4 Pro.
+    /// same for the same settings. Streamed: the CPU compresses the head of
+    /// the file while the GPU starts up and compresses the tail. In memory,
+    /// ~0.25 suits an Apple M4 Pro; from a file there, the GPU's start-up and
+    /// shared power leave the CPU alone as fast.
     #[arg(long, requires = "hybrid", value_parser = parse_share)]
     pub gpu_share: Option<f64>,
     /// GPU backend (with --gpu).
@@ -214,14 +217,12 @@ pub fn describe(index: &Index, file_len: u64) -> String {
 
 pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
     if args.gpu {
-        let ctx = gpu::Context::new(&gpu::ContextOptions {
+        let context = gpu::ContextOptions {
             backends: args.backend.map(crate::BackendArg::backends),
-        })?;
+        };
         let budget = args.gpu_memory.unwrap_or(gpu::encode::DEFAULT_GPU_MEMORY);
         log::info!("GPU memory budget: {} MiB per batch", budget >> 20);
-        let encoder =
-            gpu::encode::GpuEncoder::new(&ctx, gpu::encode::EncodeParams::for_level(args.level))?
-                .with_memory_budget(budget);
+        let params = gpu::encode::EncodeParams::for_level(args.level);
         let options = gpu::encode::GpuCompressOptions {
             codec: match args.codec {
                 CodecArg::Lz4 => Codec::Lz4,
@@ -239,18 +240,35 @@ pub fn compress(args: &CompressArgs) -> anyhow::Result<()> {
                 FiltersArg::Exhaustive => gpu::encode::FilterMode::Exhaustive,
             },
         };
+        if let (true, Some(share)) = (args.hybrid, args.gpu_share) {
+            // Streamed: the CPU compresses the head of the file while the GPU
+            // starts up on its own thread, then reads and compresses the tail.
+            let mut cpu = gpu::hybrid::twin_options(&options, params);
+            if options.codec == Codec::Lz4 {
+                cpu.encoder = cpu::container::Encoder::Lz4Flex;
+            }
+            let gpu = move || {
+                let ctx = gpu::Context::new(&context)?;
+                let encoder =
+                    gpu::encode::GpuEncoder::new(&ctx, params)?.with_memory_budget(budget);
+                Ok((ctx, encoder))
+            };
+            let mut head = std::fs::File::open(&args.input)?;
+            let len = head.metadata()?.len();
+            let input = gpu::hybrid::SplitInput {
+                head: &mut head,
+                tail: std::fs::File::open(&args.input)?,
+                len,
+            };
+            let mut output = std::fs::File::create(&args.output)?;
+            gpu::hybrid::compress_static_stream(input, &mut output, &options, share, &cpu, gpu)?;
+            return Ok(());
+        }
+        let ctx = gpu::Context::new(&context)?;
+        let encoder = gpu::encode::GpuEncoder::new(&ctx, params)?.with_memory_budget(budget);
         if args.hybrid {
             let input = std::fs::read(&args.input)?;
-            let file = match args.gpu_share {
-                Some(share) => {
-                    let mut cpu = gpu::hybrid::twin_options(&options, encoder.params());
-                    if options.codec == Codec::Lz4 {
-                        cpu.encoder = cpu::container::Encoder::Lz4Flex;
-                    }
-                    gpu::hybrid::compress_static(&ctx, &encoder, &input, &options, share, &cpu)?
-                }
-                None => gpu::hybrid::compress(&ctx, &encoder, &input, &options)?,
-            };
+            let file = gpu::hybrid::compress(&ctx, &encoder, &input, &options)?;
             std::fs::write(&args.output, file)?;
             return Ok(());
         }
