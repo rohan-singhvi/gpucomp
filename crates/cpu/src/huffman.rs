@@ -273,22 +273,10 @@ pub fn decode_stream_into(src: &[u8], at: usize, out: &mut [u8]) -> Result<usize
             if end > src.len() {
                 return Err(StreamError::Truncated);
             }
-            // Decode table: entry = symbol | length << 8, indexed by the next
-            // MAX_LEN bits (least significant first). The table is complete
-            // (Kraft sum exactly 1), so every entry has a length.
-            let codes = codes(&lengths);
+            // The code is complete (Kraft sum exactly 1), so every entry of
+            // the decode table gets a symbol.
             let mut lookup = [0u16; 1 << MAX_LEN];
-            for s in 0..256 {
-                let len = u32::from(lengths[s]);
-                if len > 0 {
-                    let entry = s as u16 | (len as u16) << 8;
-                    let mut index = u32::from(codes[s]);
-                    while index < 1 << MAX_LEN {
-                        lookup[index as usize] = entry;
-                        index += 1 << len;
-                    }
-                }
-            }
+            build_lookup(&lengths, &mut lookup);
             // Lanes are independent: decode them four at a time, interleaved,
             // so the CPU overlaps their dependent lookup chains.
             let mut lane_at = data_at;
@@ -299,7 +287,7 @@ pub fn decode_stream_into(src: &[u8], at: usize, out: &mut [u8]) -> Result<usize
                 let (dst, tail) =
                     std::mem::take(&mut rest).split_at_mut(lane_range(n, lanes, k).len());
                 rest = tail;
-                group.push((Lane::new(&src[lane_at..lane_at + 4 * words]), dst));
+                group.push((Lane::new(src, lane_at, 4 * words), dst));
                 lane_at += 4 * words;
                 if group.len() == 4 || k + 1 == lanes {
                     decode_group(&mut group, &lookup)?;
@@ -312,58 +300,145 @@ pub fn decode_stream_into(src: &[u8], at: usize, out: &mut [u8]) -> Result<usize
     }
 }
 
-/// One lane's bit reader: its words, LSB first, through a 64-bit buffer
-/// refilled whole bytes at a time (zeros past the lane). Using a bit past the
-/// lane's words is an overrun; bits only accumulate, so checking once at the
-/// end ([`Lane::finish`]) catches exactly what a check per symbol would.
-struct Lane<'a> {
-    words: &'a [u8],
-    bits: u64,
-    avail: u32,
-    next: usize,
-    used: usize,
+/// Fills `lookup`, the decode table of a complete code with these `lengths`
+/// (each 1..=`MAX_LEN`, or 0 for unused): entry = symbol | length << 8,
+/// indexed by the next `MAX_LEN` bits, least significant first.
+///
+/// One entry per codeword, in canonical order (by length, then symbol), into
+/// a table that doubles as lengths grow: each doubling copies the shorter
+/// codes' entries into the new half. Codewords are kept bit-reversed, so the
+/// next one in canonical order sets the highest clear bit and clears those
+/// above it. Writing every index of every code separately took ~2.3 µs per
+/// table, a quarter of GLZ-E's entropy decoding.
+fn build_lookup(lengths: &[u8; 256], lookup: &mut [u16; 1 << MAX_LEN]) {
+    const BITS: usize = MAX_LEN as usize;
+    let mut count = [0usize; BITS + 1];
+    for &l in lengths {
+        count[usize::from(l)] += 1;
+    }
+    count[0] = 0;
+    let mut next = [0usize; BITS + 1];
+    for l in 1..BITS {
+        next[l + 1] = next[l] + count[l];
+    }
+    let mut sorted = [0u8; 256];
+    for (s, &l) in lengths.iter().enumerate() {
+        if l > 0 {
+            sorted[next[usize::from(l)]] = s as u8;
+            next[usize::from(l)] += 1;
+        }
+    }
+    let Some(mut len) = (1..=BITS).find(|&l| count[l] > 0) else {
+        return;
+    };
+    let mut end = 1usize << len;
+    let mut codeword = 0usize;
+    let mut symbols = sorted.iter();
+    loop {
+        for _ in 0..count[len] {
+            let &s = symbols.next().expect("a symbol per code");
+            lookup[codeword] = u16::from(s) | (len as u16) << 8;
+            if codeword == end - 1 {
+                // The last codeword (all ones): fill the rest of the table.
+                while end < 1 << BITS {
+                    lookup.copy_within(0..end, end);
+                    end <<= 1;
+                }
+                return;
+            }
+            let bit = 1 << (usize::BITS - 1 - (codeword ^ (end - 1)).leading_zeros());
+            codeword = (codeword & (bit - 1)) | bit;
+        }
+        // Longer codes: double the table until the next length in use.
+        loop {
+            len += 1;
+            if len > BITS {
+                return;
+            }
+            lookup.copy_within(0..end, end);
+            end <<= 1;
+            if count[len] > 0 {
+                break;
+            }
+        }
+    }
 }
 
+/// One lane's bit reader: its words, LSB first, through a 64-bit buffer
+/// refilled whole bytes at a time. A refill may read past the lane into what
+/// follows it in `src` (zeros past `src`'s end): those bits are used only if a
+/// symbol runs past the lane, which is an overrun either way. Bits only
+/// accumulate, so checking once at the end ([`Lane::finish`]) catches exactly
+/// what a check per symbol would.
+struct Lane<'a> {
+    src: &'a [u8],
+    /// The lane's first byte, and the byte after it, in `src`.
+    start: usize,
+    end: usize,
+    /// The next byte to load, and the buffer: `avail` bits, LSB first, plus
+    /// copies of the bytes after them above (refills OR the same bits in).
+    next: usize,
+    bits: u64,
+    avail: u32,
+}
+
+/// Symbols a lane decodes per refill: a refill leaves at least 56 bits, and
+/// a code has at most `MAX_LEN` = 11.
+const PER_REFILL: usize = 5;
+
 impl<'a> Lane<'a> {
-    fn new(words: &'a [u8]) -> Self {
+    fn new(src: &'a [u8], start: usize, len: usize) -> Self {
         Lane {
-            words,
+            src,
+            start,
+            end: start + len,
+            next: start,
             bits: 0,
             avail: 0,
-            next: 0,
-            used: 0,
         }
+    }
+
+    /// Loads whole bytes until at least 56 bits are buffered.
+    #[inline(always)]
+    fn refill(&mut self) {
+        let chunk = match self.src.get(self.next..self.next + 8) {
+            Some(b) => u64::from_le_bytes(b.try_into().unwrap()),
+            None => {
+                let mut b = [0u8; 8];
+                let tail = self.src.get(self.next..).unwrap_or(&[]);
+                let n = tail.len().min(8);
+                b[..n].copy_from_slice(&tail[..n]);
+                u64::from_le_bytes(b)
+            }
+        };
+        self.bits |= chunk << self.avail;
+        let take = (63 - self.avail) >> 3;
+        self.next += take as usize;
+        self.avail += 8 * take;
+    }
+
+    /// One symbol, with at least `MAX_LEN` bits buffered.
+    #[inline(always)]
+    fn step(&mut self, lookup: &[u16; 1 << MAX_LEN]) -> u8 {
+        let entry = lookup[(self.bits & ((1 << MAX_LEN) - 1)) as usize];
+        let len = u32::from(entry >> 8);
+        self.bits >>= len;
+        self.avail -= len;
+        entry as u8
     }
 
     #[inline(always)]
     fn decode(&mut self, lookup: &[u16; 1 << MAX_LEN]) -> u8 {
         if self.avail < MAX_LEN {
-            // As many whole bytes as fit, 8 at a time where the lane has them.
-            let take = (63 - self.avail) / 8;
-            let chunk = match self.words.get(self.next..self.next + 8) {
-                Some(b) => u64::from_le_bytes(b.try_into().unwrap()),
-                None => {
-                    let mut b = [0u8; 8];
-                    let tail = self.words.get(self.next..).unwrap_or(&[]);
-                    let n = tail.len().min(8);
-                    b[..n].copy_from_slice(&tail[..n]);
-                    u64::from_le_bytes(b)
-                }
-            };
-            self.bits |= (chunk & ((1u64 << (8 * take)) - 1)) << self.avail;
-            self.avail += 8 * take;
-            self.next += take as usize;
+            self.refill();
         }
-        let entry = lookup[(self.bits & ((1 << MAX_LEN) - 1)) as usize];
-        let len = u32::from(entry >> 8);
-        self.bits >>= len;
-        self.avail -= len;
-        self.used += len as usize;
-        entry as u8
+        self.step(lookup)
     }
 
     fn finish(&self) -> Result<(), StreamError> {
-        if self.used > 8 * self.words.len() {
+        // Bits consumed: every byte loaded, less what's still buffered.
+        let used = 8 * (self.next - self.start) - self.avail as usize;
+        if used > 8 * (self.end - self.start) {
             return Err(StreamError::LaneOverrun);
         }
         Ok(())
@@ -371,21 +446,43 @@ impl<'a> Lane<'a> {
 }
 
 /// Decodes up to four lanes into their outputs: interleaved while all have
-/// symbols left (their lengths differ by at most one), then each one's rest.
+/// symbols left (their lengths differ by at most one), [`PER_REFILL`]
+/// symbols per lane between refills, then each one's rest.
 fn decode_group(
     group: &mut [(Lane, &mut [u8])],
     lookup: &[u16; 1 << MAX_LEN],
 ) -> Result<(), StreamError> {
     let common = group.iter().map(|(_, out)| out.len()).min().unwrap_or(0);
+    let mut done = 0;
     if let [(a, oa), (b, ob), (c, oc), (d, od)] = group {
-        for i in 0..common {
-            oa[i] = a.decode(lookup);
-            ob[i] = b.decode(lookup);
-            oc[i] = c.decode(lookup);
-            od[i] = d.decode(lookup);
+        let rounds = common / PER_REFILL;
+        let (oa, ob, oc, od) = (
+            &mut oa[..rounds * PER_REFILL],
+            &mut ob[..rounds * PER_REFILL],
+            &mut oc[..rounds * PER_REFILL],
+            &mut od[..rounds * PER_REFILL],
+        );
+        for (((ra, rb), rc), rd) in oa
+            .as_chunks_mut::<PER_REFILL>()
+            .0
+            .iter_mut()
+            .zip(ob.as_chunks_mut::<PER_REFILL>().0.iter_mut())
+            .zip(oc.as_chunks_mut::<PER_REFILL>().0.iter_mut())
+            .zip(od.as_chunks_mut::<PER_REFILL>().0.iter_mut())
+        {
+            a.refill();
+            b.refill();
+            c.refill();
+            d.refill();
+            for i in 0..PER_REFILL {
+                ra[i] = a.step(lookup);
+                rb[i] = b.step(lookup);
+                rc[i] = c.step(lookup);
+                rd[i] = d.step(lookup);
+            }
         }
+        done = rounds * PER_REFILL;
     }
-    let done = if group.len() == 4 { common } else { 0 };
     for (lane, out) in group.iter_mut() {
         for symbol in &mut out[done..] {
             *symbol = lane.decode(lookup);
@@ -535,8 +632,57 @@ mod tests {
         assert_eq!(decode(&bad), Err(StreamError::LaneOverrun));
     }
 
+    /// The decode table the plain way: every index whose low `len` bits are
+    /// a symbol's (bit-reversed) code gets that symbol.
+    fn reference_lookup(lengths: &[u8; 256]) -> [u16; 1 << MAX_LEN] {
+        let codes = codes(lengths);
+        let mut lookup = [0u16; 1 << MAX_LEN];
+        for s in 0..256 {
+            let len = u32::from(lengths[s]);
+            if len > 0 {
+                let mut index = u32::from(codes[s]);
+                while index < 1 << MAX_LEN {
+                    lookup[index as usize] = s as u16 | (len as u16) << 8;
+                    index += 1 << len;
+                }
+            }
+        }
+        lookup
+    }
+
+    #[test]
+    fn decode_tables_cover_every_index_of_complete_codes() {
+        // Two symbols, one bit each; and the longest codes the format allows.
+        let mut two = [0u8; 256];
+        (two[3], two[200]) = (1, 1);
+        let mut deep = [0u8; 256];
+        for (s, l) in deep.iter_mut().enumerate().take(12) {
+            *l = (s + 1).min(11) as u8;
+        }
+        for lengths in [two, deep] {
+            let mut lookup = [0u16; 1 << MAX_LEN];
+            build_lookup(&lengths, &mut lookup);
+            assert_eq!(lookup, reference_lookup(&lengths));
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn decode_tables_equal_the_plain_construction(
+            c in prop::collection::vec(0u32..100_000, 256),
+            used in 2usize..256,
+        ) {
+            let mut counts = [0u32; 256];
+            for (i, &n) in c.iter().take(used).enumerate() {
+                counts[(i * 97) % 256] = n.max(1);
+            }
+            let lengths = code_lengths(&counts);
+            let mut lookup = [0xEEEEu16; 1 << MAX_LEN];
+            build_lookup(&lengths, &mut lookup);
+            prop_assert_eq!(lookup, reference_lookup(&lengths));
+        }
 
         #[test]
         fn any_stream_round_trips(

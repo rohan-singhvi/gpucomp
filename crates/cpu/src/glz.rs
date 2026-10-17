@@ -283,8 +283,9 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), GlzError> {
         }
     };
     let literals = &src[literals_at..];
+    let (offsets, _) = src[offsets_at..offsets_at + 2 * count].as_chunks::<2>();
     let (mut lp, mut op, mut next_ext) = (0usize, 0usize, 0usize);
-    for (i, &token) in tokens.iter().enumerate() {
+    for (i, (&token, offset)) in tokens.iter().zip(offsets).enumerate() {
         let mut length = |nibble: u8| {
             let mut len = usize::from(nibble);
             if nibble == 15 {
@@ -295,10 +296,7 @@ pub fn decode_block(src: &[u8], dst: &mut [u8]) -> Result<(), GlzError> {
         };
         let lit_len = length(token >> 4);
         let match_code = length(token & 15);
-        let offset = usize::from(u16::from_le_bytes([
-            src[offsets_at + 2 * i],
-            src[offsets_at + 2 * i + 1],
-        ]));
+        let offset = usize::from(u16::from_le_bytes(*offset));
         if lit_len > literals.len() - lp {
             return Err(GlzError::Truncated);
         }

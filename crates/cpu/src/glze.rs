@@ -86,9 +86,9 @@ pub fn to_glz(src: &[u8], uncomp_size: usize) -> Result<Vec<u8>, GlzError> {
     let (lo, hi) = offsets.split_at_mut(count);
     let at = stream(at, lo)?;
     let at = stream(at, hi)?;
-    for (i, (l, h)) in lo.iter().zip(hi.iter()).enumerate() {
-        glz[offsets_at + 2 * i] = *l;
-        glz[offsets_at + 2 * i + 1] = *h;
+    let (pairs, _) = glz[offsets_at..offsets_at + 2 * count].as_chunks_mut::<2>();
+    for ((pair, &l), &h) in pairs.iter_mut().zip(lo.iter()).zip(hi.iter()) {
+        *pair = [l, h];
     }
     let ext_len = (ext_count * if wide { 4 } else { 2 }).next_multiple_of(4);
     let ext = src.get(at..at + ext_len).ok_or(GlzError::Truncated)?;

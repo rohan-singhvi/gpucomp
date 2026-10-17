@@ -1506,3 +1506,29 @@ time is flat across batch sizes (256 → 4096 chunks: 93.5 / 92.6 / 93.3 / 95.2 
 93.7 ms) while LZ4's improves with smaller ones (74.5 → 69.3). Most likely its
 per-batch, latency-bound stages (the code build, one invocation per chunk and
 stream) cost what the overlap saves.
+
+## Faster CPU GLZ-E decoding (2026-10-17)
+GLZ-E is the ratio codec, and its CPU decoding trailed zstd -1 in 64 KiB chunks
+most: 6.78 against 10.35 GB/s. One thread, Silesia (in process, best of 5): the
+entropy stage took **155 ms** (rebuilding 108 MB of GLZ blocks, ~0.7 GB/s of
+symbols) and the GLZ stage 62 ms. All byte-identical; the Huffman round-trip and
+malformed-stream tests and the GPU-vs-CPU GLZ-E error-status tests guard it.
+
+| Change | Entropy ms (1 thread) | All cores GB/s |
+|---|---:|---:|
+| Before | 155 | 6.78 |
+| Five symbols per refill, four lanes: refill all four (a 64-bit buffer holds ≥ 56 bits after a refill, codes are ≤ 11), then decode five from each with no checks; bits used = 8 × bytes loaded − bits buffered, so no per-symbol counter | 106 | 8.34 |
+| Decode tables in canonical order, one entry per codeword, doubling the table as lengths grow (libdeflate's method), instead of every index of every code | 99 | 8.4–8.8 |
+| Offset bytes interleaved through `as_chunks_mut` (vectorised) | 94–96 | 8.8–9.0 |
+| GLZ decoder: offsets zipped with tokens, no indexed loads (also GLZ files) | 93–95 | 9.1–9.5 |
+
+A refill may read past its lane into the next one's bytes: those bits are used only
+if a symbol runs past the lane, which is an overrun (and an error) either way.
+Rejected:
+- **Eight lanes interleaved:** 99 → 121–124 ms, both as a loop over the group and
+  with eight named lanes. Each lane's state is about seven words; eight spill.
+- **Reusing the rebuilt block and offset buffers per thread:** within noise (8.34 →
+  8.45 GB/s), not worth a thread-local.
+
+The GLZ-E encoder's entropy transcode is 214 ms of 926 on one thread; the rest is
+the twin's LZ stage, which must match the GPU's output, so it was left alone.
