@@ -1,4 +1,4 @@
-//! M7: byte-shuffle and delta filters on the GPU, forward and inverse
+//! M7: byte-shuffle, delta and delta-shuffle filters on the GPU, forward and inverse
 //! (plan §4a; `cpu::filter` is the reference).
 //!
 //! A [`FilterJob`] transforms `len` bytes at `src_offset` of a source buffer
@@ -79,12 +79,15 @@ pub struct FilterKernels {
     shuffle_inverse: wgpu::ComputePipeline,
     delta_forward: wgpu::ComputePipeline,
     delta_inverse: wgpu::ComputePipeline,
+    delta_shuffle_forward: wgpu::ComputePipeline,
+    delta_shuffle_inverse: wgpu::ComputePipeline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Shuffle,
     Delta,
+    DeltaShuffle,
 }
 
 /// Jobs uploaded and bound to their buffers, ready to [`record`](FilterKernels::record).
@@ -145,6 +148,8 @@ impl FilterKernels {
             shuffle_inverse: pipeline("shuffle_inverse"),
             delta_forward: pipeline("delta_forward"),
             delta_inverse: pipeline("delta_inverse"),
+            delta_shuffle_forward: pipeline("delta_shuffle_forward"),
+            delta_shuffle_inverse: pipeline("delta_shuffle_inverse"),
             layout,
         }
     }
@@ -161,13 +166,14 @@ impl FilterKernels {
     ) -> Result<FilterPass, FilterError> {
         validate(jobs, src.size(), dst.size())?;
         let mut dispatches = Vec::new();
-        for kind in [Kind::Shuffle, Kind::Delta] {
+        for kind in [Kind::Shuffle, Kind::Delta, Kind::DeltaShuffle] {
             let descs: Vec<JobDesc> = jobs
                 .iter()
                 .filter_map(|j| {
                     let width = match (kind, j.filter) {
                         (Kind::Shuffle, Filter::Shuffle { width })
-                        | (Kind::Delta, Filter::Delta { width }) => width,
+                        | (Kind::Delta, Filter::Delta { width })
+                        | (Kind::DeltaShuffle, Filter::DeltaShuffle { width }) => width,
                         _ => return None,
                     };
                     Some(JobDesc {
@@ -223,6 +229,8 @@ impl FilterKernels {
                 (Kind::Shuffle, Direction::Inverse) => &self.shuffle_inverse,
                 (Kind::Delta, Direction::Forward) => &self.delta_forward,
                 (Kind::Delta, Direction::Inverse) => &self.delta_inverse,
+                (Kind::DeltaShuffle, Direction::Forward) => &self.delta_shuffle_forward,
+                (Kind::DeltaShuffle, Direction::Inverse) => &self.delta_shuffle_inverse,
             });
             cpass.set_bind_group(0, bind_group, &[]);
             let (x, y) = dispatch_grid(
@@ -271,7 +279,9 @@ fn validate(jobs: &[FilterJob], src_len: u64, dst_len: u64) -> Result<(), Filter
     for (job, j) in jobs.iter().enumerate() {
         match j.filter {
             Filter::None => continue,
-            Filter::Shuffle { width } | Filter::Delta { width } => {
+            Filter::Shuffle { width }
+            | Filter::Delta { width }
+            | Filter::DeltaShuffle { width } => {
                 if !matches!(width, 1 | 2 | 4 | 8) {
                     return Err(FilterError::BadWidth { job });
                 }

@@ -1079,7 +1079,8 @@ pub fn numeric_inputs(n: usize) -> Vec<(String, Vec<u8>)> {
 
 /// M7 filters: for each input and codec (`lz4` = the greedy twin, `glz`, `glze`),
 /// CPU multi-threaded compression with filters `none` and `auto` (level 1:
-/// none, shuffle-4, delta-4), each row carrying that file's ratio. With a GPU,
+/// none, shuffle-4, delta-4, delta-shuffle-4), each row carrying that file's
+/// ratio. With a GPU,
 /// decode of both files (kernel; `auto` also end to end), so the kernels'
 /// difference shows the inverse-filter stage's cost. Last, rows
 /// `cpu.<codec>.auto.wins.<filter>` whose value (in the GB/s column) is the
@@ -1223,6 +1224,7 @@ pub fn filters(
                 ("none", Filter::None),
                 ("shuffle-4", Filter::Shuffle { width: 4 }),
                 ("delta-4", Filter::Delta { width: 4 }),
+                ("delta-shuffle-4", Filter::DeltaShuffle { width: 4 }),
             ]
             .map(|(bucket, f)| {
                 let count = index

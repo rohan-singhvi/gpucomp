@@ -6,9 +6,10 @@
 // the only word a job shares with bytes outside it is its last one, where the
 // bytes past `len` are preserved (read-modify-write by the owner).
 //
-// Entry points: shuffle_forward, shuffle_inverse, delta_forward (per word,
-// independent) and delta_inverse (a prefix sum: per-invocation segment sums,
-// a workgroup scan, then each segment re-summed from its prefix).
+// Entry points: shuffle_forward, shuffle_inverse, delta_forward and
+// delta_shuffle_forward (per word, independent), and delta_inverse and
+// delta_shuffle_inverse (a prefix sum: per-invocation segment sums, a
+// workgroup scan, then each segment re-summed from its prefix).
 
 struct Job {
     src_offset: u32,
@@ -180,12 +181,82 @@ fn delta_forward(
     }
 }
 
+// Delta, then shuffle: output byte p < m * w is byte p / m of element
+// (p % m)'s delta.
+@compute @workgroup_size(WG_SIZE)
+fn delta_shuffle_forward(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let j = job_index(wg, nwg);
+    if (j >= arrayLength(&jobs)) {
+        return;
+    }
+    let job = jobs[j];
+    let w = job.width;
+    let m = job.len / w;
+    let words = (job.len + 3u) / 4u;
+    for (var k = lid; k < words; k += WG_SIZE) {
+        var v = 0u;
+        for (var b = 0u; b < 4u; b++) {
+            let p = 4u * k + b;
+            if (p < m * w) {
+                let e = p % m;
+                let byte = p / m;
+                var prev = vec2<u32>(0u, 0u);
+                if (e > 0u) {
+                    prev = elem(job, e - 1u);
+                }
+                let d = sub64(elem(job, e), prev);
+                let half = select(d.x, d.y, byte >= 4u);
+                v |= ((half >> (8u * (byte & 3u))) & 0xFFu) << (8u * b);
+            }
+        }
+        put_word(job, k, with_tail(job, k, v));
+    }
+}
+
+// Element e of the job's input: contiguous, or (delta-shuffle) gathered from
+// byte j's plane at j * m + e.
+fn input_elem(job: Job, e: u32, shuffled: bool) -> vec2<u32> {
+    if (!shuffled) {
+        return elem(job, e);
+    }
+    let m = job.len / job.width;
+    var v = vec2<u32>(0u, 0u);
+    for (var byte = 0u; byte < job.width; byte++) {
+        let b = src_byte(job.src_offset + byte * m + e);
+        if (byte < 4u) {
+            v.x |= b << (8u * byte);
+        } else {
+            v.y |= b << (8u * (byte - 4u));
+        }
+    }
+    return v;
+}
+
 @compute @workgroup_size(WG_SIZE)
 fn delta_inverse(
     @builtin(workgroup_id) wg: vec3<u32>,
     @builtin(num_workgroups) nwg: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
+    running_sum(wg, nwg, lid, false);
+}
+
+@compute @workgroup_size(WG_SIZE)
+fn delta_shuffle_inverse(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    running_sum(wg, nwg, lid, true);
+}
+
+// The inverse of delta (of delta-shuffle when `shuffled`): a running sum of
+// the job's elements.
+fn running_sum(wg: vec3<u32>, nwg: vec3<u32>, lid: u32, shuffled: bool) {
     let j = job_index(wg, nwg);
     if (j >= arrayLength(&jobs)) {
         return;
@@ -202,7 +273,7 @@ fn delta_inverse(
     // 1. Each invocation sums its segment.
     var sum = vec2<u32>(0u, 0u);
     for (var e = first; e < end; e++) {
-        sum = add64(sum, elem(job, e));
+        sum = add64(sum, input_elem(job, e, shuffled));
     }
 
     // 2. Inclusive scan of the segment sums (Hillis–Steele).
@@ -225,7 +296,7 @@ fn delta_inverse(
     // 3. Re-sum the segment from its prefix, writing whole words.
     if (w == 8u) {
         for (var e = first; e < end; e++) {
-            running = add64(running, elem(job, e));
+            running = add64(running, input_elem(job, e, shuffled));
             put_word(job, 2u * e, running.x);
             put_word(job, 2u * e + 1u, running.y);
         }
@@ -237,7 +308,7 @@ fn delta_inverse(
             for (var t = 0u; t < per; t++) {
                 let e = k * per + t;
                 if (e < end) {
-                    running = add64(running, elem(job, e));
+                    running = add64(running, input_elem(job, e, shuffled));
                     v |= (running.x & mask) << (8u * w * t);
                 }
             }

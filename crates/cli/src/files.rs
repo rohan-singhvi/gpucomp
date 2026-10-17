@@ -174,6 +174,7 @@ pub fn describe(index: &Index, file_len: u64) -> String {
             Filter::None => "none".to_string(),
             Filter::Shuffle { width } => format!("shuffle-{width}"),
             Filter::Delta { width } => format!("delta-{width}"),
+            Filter::DeltaShuffle { width } => format!("delta-shuffle-{width}"),
         };
         match filters.iter_mut().find(|(n, _)| *n == name) {
             Some((_, count)) => *count += 1,

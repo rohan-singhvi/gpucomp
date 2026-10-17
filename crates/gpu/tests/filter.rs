@@ -13,6 +13,7 @@ fn filters() -> Vec<Filter> {
     let mut out = Vec::new();
     out.extend(WIDTHS.map(|width| Filter::Shuffle { width }));
     out.extend(WIDTHS.map(|width| Filter::Delta { width }));
+    out.extend(WIDTHS.map(|width| Filter::DeltaShuffle { width }));
     out
 }
 

@@ -198,12 +198,13 @@ fn glz_suite_without_gpu_measures_the_cpu_paths() {
     );
 }
 
-const FILTER_CPU_ROWS: [&str; 6] = [
+const FILTER_CPU_ROWS: [&str; 7] = [
     "compress.none.mt",
     "compress.auto.mt",
     "auto.wins.none",
     "auto.wins.shuffle-4",
     "auto.wins.delta-4",
+    "auto.wins.delta-shuffle-4",
     "auto.wins.stored",
 ];
 

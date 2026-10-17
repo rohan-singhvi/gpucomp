@@ -59,8 +59,16 @@ pub enum Codec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Filter {
     None,
-    Shuffle { width: u8 },
-    Delta { width: u8 },
+    Shuffle {
+        width: u8,
+    },
+    Delta {
+        width: u8,
+    },
+    /// Delta, then byte-shuffle, over the same `width`.
+    DeltaShuffle {
+        width: u8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +139,7 @@ impl Filter {
             Filter::None => (0, 0),
             Filter::Shuffle { width } => (1, width),
             Filter::Delta { width } => (2, width),
+            Filter::DeltaShuffle { width } => (3, width),
         }
     }
 
@@ -140,7 +149,8 @@ impl Filter {
             (0, 0) => Ok(Filter::None),
             (1, w) if elem => Ok(Filter::Shuffle { width: w }),
             (2, w) if elem => Ok(Filter::Delta { width: w }),
-            (0..=2, _) => Err(FormatError::BadFilterWidth { id, width }),
+            (3, w) if elem => Ok(Filter::DeltaShuffle { width: w }),
+            (0..=3, _) => Err(FormatError::BadFilterWidth { id, width }),
             _ => Err(FormatError::UnknownFilter(id)),
         }
     }

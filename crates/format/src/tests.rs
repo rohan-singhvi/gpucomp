@@ -168,6 +168,7 @@ fn entries_round_trip_for_every_filter() {
         Filter::None,
         Filter::Shuffle { width: 8 },
         Filter::Delta { width: 2 },
+        Filter::DeltaShuffle { width: 4 },
     ] {
         let e = ChunkEntry {
             filter,
@@ -175,6 +176,17 @@ fn entries_round_trip_for_every_filter() {
         };
         assert_eq!(ChunkEntry::parse(&e.to_bytes()), Ok(e));
     }
+}
+
+#[test]
+fn delta_shuffle_is_filter_3() {
+    let e = ChunkEntry {
+        filter: Filter::DeltaShuffle { width: 8 },
+        ..entry(0, 1, false, 1)
+    };
+    let b = e.to_bytes();
+    assert_eq!((b[20], b[21]), (3, 8));
+    assert_eq!(ChunkEntry::parse(&b), Ok(e));
 }
 
 #[test]
@@ -186,7 +198,7 @@ fn entry_rejects_unknown_filter() {
 
 #[test]
 fn entry_rejects_bad_filter_widths() {
-    for (id, width) in [(1, 3), (2, 0), (2, 16), (0, 4)] {
+    for (id, width) in [(1, 3), (2, 0), (2, 16), (0, 4), (3, 5), (3, 0)] {
         let mut b = entry(0, 1, false, 1).to_bytes();
         (b[20], b[21]) = (id, width);
         assert_eq!(

@@ -14,7 +14,7 @@ Every table comes from the newest recorded benchmark run. `gpucomp bench --repor
 - **CPU and GPU, identical output.** Every chunk encodes to the same bytes on either device, so `--hybrid` shares one input between the GPU and every CPU core by their measured speeds and still writes the GPU-only file: 25–35% faster than the GPU alone at level 1.
 - **Same algorithm: the GPU leads by about 1.3×** over a CPU implementation writing the same files on all 12 cores. The CPU can skip work the GPU's parallel parse needs: it computes matches only where its serial parse looks.
 - **Decompression is the CPU's.** The GPU decodes at about 2.7–3.8 GB/s end to end. On all cores, lz4_flex and gpucomp's own LZ4 decoder both decode LZ4 at about 13 GB/s, gpucomp's decoders run GLZ at about 14 and GLZ-E at 9.3–9.8 (level 1 to 3), and zstd -1 in 64 KiB chunks decodes at 9.4–10.9 between runs. At the same ratio, GLZ-E level 3 now decodes about as fast as zstd -1. `--hybrid` leaves the GPU out of decoding on this machine: the CPU finishes before a GPU pass would pay off.
-- **Numeric data** is where the format shines. With per-chunk filters, GLZ-E compresses sorted integers 3× smaller than zstd -3 on the whole file.
+- **Numeric data** is where the format shines. With per-chunk filters, GLZ-E compresses sorted integers nearly 4× smaller than zstd -3 on the whole file, and at level 2 it compresses 64-bit timestamps over 3× smaller than zstd -19.
 - **Not measured: a discrete GPU.** The plan's goal of beating the CPU is defined for one. See [Discrete GPUs vs unified memory](#discrete-gpus-vs-unified-memory).
 
 ## Setup
@@ -77,11 +77,11 @@ Decompression, end-to-end GB/s:
 
 ## Numeric data
 
-Ratios, then the GPU's end-to-end GB/s with filter selection (`--filters auto`). The filters are byte-shuffle and delta over 4-byte elements, chosen per chunk.
+Ratios, then the GPU's end-to-end GB/s with filter selection (`--filters auto`). The filters are byte-shuffle, delta and delta-shuffle over 4-byte elements (level 1), chosen per chunk.
 
 {{numeric}}
 
-Filters plus entropy coding win clearly where a transform exposes structure. Delta turns sorted integers into small, repetitive gaps, and byte-shuffle groups the slowly changing high bytes of audio samples. Order-0 Huffman coding then exploits what LZ matching alone can't. zstd stays ahead on the timestamps and float points at level 1. Deeper matching changes that for timestamps: GLZ-E with filters at level 3 reached 8.96× against zstd's 3.90× on 32 MiB inputs (DECISIONS "Numeric data"). Level 3 with filters isn't part of this benchmark.
+Filters plus entropy coding win clearly where a transform exposes structure. Delta-shuffle turns sorted integers and audio samples into small gaps whose high bytes form long runs of zeros, and byte-shuffle groups the slowly changing bytes of floats. Order-0 Huffman coding then exploits what LZ matching alone can't. zstd stays ahead on the timestamps and float points at level 1, which tries only 4-byte elements. From level 2, 8-byte delta-shuffle changes that for timestamps: GLZ-E reached 12.6× against zstd -19's 3.90× on 32 MiB inputs, and 1.49× on the float points against 1.41× (DECISIONS "Delta-shuffle filter"). Levels 2 and 3 with filters aren't part of this benchmark.
 
 ## Where the time goes
 

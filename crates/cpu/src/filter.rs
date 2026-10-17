@@ -4,12 +4,13 @@
 
 use format::Filter;
 
-const LEVEL1: [Filter; 3] = [
+const LEVEL1: [Filter; 4] = [
     Filter::None,
     Filter::Shuffle { width: 4 },
     Filter::Delta { width: 4 },
+    Filter::DeltaShuffle { width: 4 },
 ];
-const LEVEL2: [Filter; 7] = [
+const LEVEL2: [Filter; 10] = [
     Filter::None,
     Filter::Shuffle { width: 2 },
     Filter::Shuffle { width: 4 },
@@ -17,11 +18,14 @@ const LEVEL2: [Filter; 7] = [
     Filter::Delta { width: 2 },
     Filter::Delta { width: 4 },
     Filter::Delta { width: 8 },
+    Filter::DeltaShuffle { width: 2 },
+    Filter::DeltaShuffle { width: 4 },
+    Filter::DeltaShuffle { width: 8 },
 ];
 
 /// Candidate filters tried per chunk at `level`, in tie-break order
-/// (none < shuffle < delta, then smaller width first). Levels 0 and 1 try
-/// `{none, shuffle-4, delta-4}`; level 2 and above add widths 2 and 8.
+/// (none < shuffle < delta < delta-shuffle, then smaller width first).
+/// Levels 0 and 1 try width 4 of each; level 2 and above add widths 2 and 8.
 pub fn candidates(level: u8) -> &'static [Filter] {
     if level <= 1 {
         &LEVEL1
@@ -75,6 +79,21 @@ pub fn forward_into(filter: Filter, src: &[u8], dst: &mut [u8]) {
             }
             dst[whole..].copy_from_slice(&src[whole..]);
         }
+        Filter::DeltaShuffle { width } => {
+            // In one pass: byte j of element i's delta goes to j * m + i.
+            let w = usize::from(width);
+            let m = src.len() / w;
+            let mut prev = 0u64;
+            for (i, elem) in src[..m * w].chunks_exact(w).enumerate() {
+                let v = load(elem);
+                let delta = v.wrapping_sub(prev).to_le_bytes();
+                prev = v;
+                for (j, &b) in delta[..w].iter().enumerate() {
+                    dst[j * m + i] = b;
+                }
+            }
+            dst[m * w..].copy_from_slice(&src[m * w..]);
+        }
     }
 }
 
@@ -96,6 +115,21 @@ pub fn inverse_into(filter: Filter, src: &[u8], dst: &mut [u8]) {
         Filter::Delta { .. } => {
             dst.copy_from_slice(src);
             inverse_in_place(filter, dst);
+        }
+        Filter::DeltaShuffle { width } => {
+            // In one pass: gather element i's delta, then the running sum.
+            let w = usize::from(width);
+            let m = src.len() / w;
+            let mut sum = 0u64;
+            for (i, elem) in dst[..m * w].chunks_exact_mut(w).enumerate() {
+                let mut delta = [0u8; 8];
+                for (j, b) in delta[..w].iter_mut().enumerate() {
+                    *b = src[j * m + i];
+                }
+                sum = sum.wrapping_add(u64::from_le_bytes(delta));
+                elem.copy_from_slice(&sum.to_le_bytes()[..w]);
+            }
+            dst[m * w..].copy_from_slice(&src[m * w..]);
         }
     }
 }
@@ -122,6 +156,10 @@ pub fn inverse_in_place(filter: Filter, buf: &mut [u8]) {
             let src = buf.to_vec();
             inverse_into(filter, &src, buf);
         }
+        Filter::DeltaShuffle { .. } => {
+            let src = buf.to_vec();
+            inverse_into(filter, &src, buf);
+        }
         Filter::Delta { width } => {
             let w = usize::from(width);
             let whole = buf.len() / w * w;
@@ -145,7 +183,27 @@ mod tests {
         let mut out = vec![Filter::None];
         out.extend(WIDTHS.map(|width| Filter::Shuffle { width }));
         out.extend(WIDTHS.map(|width| Filter::Delta { width }));
+        out.extend(WIDTHS.map(|width| Filter::DeltaShuffle { width }));
         out
+    }
+
+    #[test]
+    fn delta_shuffle_is_delta_then_shuffle() {
+        // u16 elements 0x0102, 0x0101, 0x0300 and a 1-byte tail: deltas 0x0102,
+        // 0xFFFF, 0x01FF, then low bytes before high bytes.
+        let src = [0x02, 0x01, 0x01, 0x01, 0x00, 0x03, 0xEE];
+        let out = forward(Filter::DeltaShuffle { width: 2 }, &src);
+        assert_eq!(out, [0x02, 0xFF, 0xFF, 0x01, 0xFF, 0x01, 0xEE]);
+        assert_eq!(inverse(Filter::DeltaShuffle { width: 2 }, &out), src);
+        let data: Vec<u8> = (0..1003u32).map(|i| (i * i / 7) as u8).collect();
+        for width in WIDTHS {
+            let delta = forward(Filter::Delta { width }, &data);
+            assert_eq!(
+                forward(Filter::DeltaShuffle { width }, &data),
+                forward(Filter::Shuffle { width }, &delta),
+                "{width}"
+            );
+        }
     }
 
     #[test]
@@ -195,7 +253,9 @@ mod tests {
         for f in all_filters() {
             if !matches!(
                 f,
-                Filter::Shuffle { width: 1 | 2 } | Filter::Delta { width: 1 | 2 }
+                Filter::Shuffle { width: 1 | 2 }
+                    | Filter::Delta { width: 1 | 2 }
+                    | Filter::DeltaShuffle { width: 1 | 2 }
             ) {
                 assert_eq!(forward(f, &[1, 2, 3]), [1, 2, 3], "{f:?}");
             }
@@ -209,11 +269,16 @@ mod tests {
     }
 
     #[test]
-    fn level_1_tries_none_shuffle4_delta4_and_higher_levels_add_widths_2_and_8() {
+    fn level_1_tries_width_4_and_higher_levels_add_widths_2_and_8() {
         use Filter::*;
         assert_eq!(
             candidates(1),
-            [None, Shuffle { width: 4 }, Delta { width: 4 }]
+            [
+                None,
+                Shuffle { width: 4 },
+                Delta { width: 4 },
+                DeltaShuffle { width: 4 },
+            ]
         );
         assert_eq!(
             candidates(2),
@@ -225,6 +290,9 @@ mod tests {
                 Delta { width: 2 },
                 Delta { width: 4 },
                 Delta { width: 8 },
+                DeltaShuffle { width: 2 },
+                DeltaShuffle { width: 4 },
+                DeltaShuffle { width: 8 },
             ]
         );
         assert_eq!(candidates(9), candidates(2));
@@ -243,7 +311,10 @@ mod tests {
                 inverse_in_place(f, &mut in_place);
                 prop_assert_eq!(&in_place, &data, "{:?} in place", f);
                 // The tail is untouched.
-                if let Filter::Shuffle { width } | Filter::Delta { width } = f {
+                if let Filter::Shuffle { width }
+                | Filter::Delta { width }
+                | Filter::DeltaShuffle { width } = f
+                {
                     let whole = data.len() / usize::from(width) * usize::from(width);
                     prop_assert_eq!(&filtered[whole..], &data[whole..]);
                 }

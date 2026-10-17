@@ -114,9 +114,14 @@ pub fn sample_len(chunk_size: u32) -> u32 {
 /// Filters tried per chunk at `level`, in tie-break order. Must equal
 /// `cpu::filter::candidates`, so GPU and CPU files are identical.
 pub fn filter_candidates(level: u8) -> &'static [format::Filter] {
-    use format::Filter::{Delta, None, Shuffle};
-    const LEVEL1: [format::Filter; 3] = [None, Shuffle { width: 4 }, Delta { width: 4 }];
-    const LEVEL2: [format::Filter; 7] = [
+    use format::Filter::{Delta, DeltaShuffle, None, Shuffle};
+    const LEVEL1: [format::Filter; 4] = [
+        None,
+        Shuffle { width: 4 },
+        Delta { width: 4 },
+        DeltaShuffle { width: 4 },
+    ];
+    const LEVEL2: [format::Filter; 10] = [
         None,
         Shuffle { width: 2 },
         Shuffle { width: 4 },
@@ -124,6 +129,9 @@ pub fn filter_candidates(level: u8) -> &'static [format::Filter] {
         Delta { width: 2 },
         Delta { width: 4 },
         Delta { width: 8 },
+        DeltaShuffle { width: 2 },
+        DeltaShuffle { width: 4 },
+        DeltaShuffle { width: 8 },
     ];
     if level <= 1 {
         &LEVEL1

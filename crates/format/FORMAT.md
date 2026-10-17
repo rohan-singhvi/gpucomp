@@ -35,8 +35,8 @@ chunks it overlaps.
 | 8      | 4    | `comp_size`    | payload size in bytes. **Bit 31 set = stored raw** (payload is the uncompressed bytes) |
 | 12     | 4    | `uncomp_size`  | `chunk_size`, or the remainder for the last chunk |
 | 16     | 4    | `checksum`     | low 32 bits of xxh3-64 of the uncompressed chunk. Must be 0 when flag bit 0 is clear |
-| 20     | 1    | `filter`       | `0` = none, `1` = byte-shuffle, `2` = delta. Applied before compression |
-| 21     | 1    | `filter_width` | element width for shuffle/delta: 1, 2, 4 or 8. Must be 0 for none |
+| 20     | 1    | `filter`       | `0` = none, `1` = byte-shuffle, `2` = delta, `3` = delta-shuffle. Applied before compression |
+| 21     | 1    | `filter_width` | element width for shuffle, delta and delta-shuffle: 1, 2, 4 or 8. Must be 0 for none |
 | 22     | 2    | reserved       | must be 0 |
 
 ## Data section
@@ -174,6 +174,9 @@ changed by either direction.
 - **delta (2):** elements are little-endian `w`-byte unsigned integers. Element `i > 0` becomes
   `elem[i] - elem[i - 1]` modulo `2^(8w)`; element 0 is unchanged. The inverse is a running sum
   modulo `2^(8w)`.
+- **delta-shuffle (3):** delta, then byte-shuffle, both with width `w`: byte `j` of element `i`'s
+  delta moves to position `j * m + i`. The inverse unshuffles, then takes the running sum. For
+  integer series whose deltas are small, the high bytes of every delta become long runs of zeros.
 
 Checksums are always of the original, **unfiltered** chunk, so they also catch a wrong filter.
 The format allows a filter on a stored chunk (its raw payload is then the filtered bytes), but
@@ -181,9 +184,10 @@ the encoders here never write one: a chunk that no candidate shrinks is stored u
 
 Encoders choose filters per chunk (M7, CPU encoder with `FilterMode::Auto`): the chunk is
 compressed under each candidate of the level's set and the smallest block wins; ties go to the
-earlier candidate in the order none < shuffle < delta, then smaller width. Level 1 tries
-`{none, shuffle-4, delta-4}`; level 2 and above try `{none, shuffle-2, shuffle-4, shuffle-8,
-delta-2, delta-4, delta-8}`. If the winning block is not smaller than the chunk, the chunk is
+earlier candidate in the order none < shuffle < delta < delta-shuffle, then smaller width.
+Level 1 tries `{none, shuffle-4, delta-4, delta-shuffle-4}`; level 2 and above try `{none,
+shuffle-2, shuffle-4, shuffle-8, delta-2, delta-4, delta-8, delta-shuffle-2, delta-shuffle-4,
+delta-shuffle-8}`. If the winning block is not smaller than the chunk, the chunk is
 stored raw with filter none. The choice is an encoder setting; decoders only read the table.
 
 ## Validation

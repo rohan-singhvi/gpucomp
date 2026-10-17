@@ -1532,3 +1532,41 @@ Rejected:
 
 The GLZ-E encoder's entropy transcode is 214 ms of 926 on one thread; the rest is
 the twin's LZ stage, which must match the GPU's output, so it was left alone.
+
+## Delta-shuffle filter (2026-10-17)
+Numeric data is where gpucomp already beats zstd (filters plus entropy coding). A
+new filter, **delta-shuffle (id 3)**: delta over `w`-byte elements, then byte-shuffle
+at the same width. For integer series with small deltas, every delta's high bytes
+are zero, and shuffling gathers them into long runs. Measured first (GLZ-E, 64 KiB
+chunks, one filter for the whole input, 32 MiB numeric inputs and Silesia's binary
+files):
+
+| Input | Best single filter before | Delta-shuffle (best width) |
+|---|---:|---:|
+| u64 timestamps, level 1 / 3 | 8.18× / 8.99× (delta-8) | **12.30× / 12.69×** (w 8) |
+| sorted u32, level 1 / 3 | 4.09× / 4.12× (delta-4) | **5.09× / 5.15×** (w 4) |
+| i16 audio, level 1 / 3 | 1.25× / 1.28× (delta-2, shuffle-2) | **1.42× / 1.45×** (w 2) |
+| x-ray, level 1 / 3 | 1.62× / 1.76× (delta-2) | 1.68× / 1.76× (w 2) |
+| f32 points | 1.42× / 1.56× (shuffle) | 1.36× / 1.50× |
+| mr, sao, osdb, nci, mozilla | — | worse (selection skips it) |
+
+zstd -19 on the whole file: timestamps 3.90×, sorted u32 2.91×, audio 1.04×.
+
+Both directions are one pass on the CPU (byte `j` of element `i`'s delta goes to
+`j * m + i`; the inverse gathers, then sums) and one fused kernel each on the GPU
+(the forward computes each output byte's delta; the inverse is delta's prefix sum
+with an element loader that gathers from the byte planes). The filter id is a new
+value, so files without it read as before. Candidates: level 1 adds
+delta-shuffle-4 (4 candidates, a third more sampled trial encodes); level 2 and
+above add widths 2, 4 and 8 (10 candidates). Tie-break order: none < shuffle <
+delta < delta-shuffle, then width.
+
+Recorded (`delta-shuffle` run, 256 MiB numeric inputs, level 1 auto): sorted u32
+GLZ-E 4.08 → **5.07×** (LZ4 1.99 → 3.86×; delta-shuffle-4 won every chunk), i16
+audio 1.25 → 1.28× (it won 21%; width 2 is a level-2 candidate), x-ray 1.56 →
+1.62×; timestamps and floats unchanged at level 1. The extra candidate costs level-1
+auto selection ~9% on Silesia (CPU GLZ-E 1.06 → 0.96 GB/s, GPU 1.23 → 1.13). 32 MiB
+inputs, GLZ-E auto at levels 1 / 2 / 3: floats 1.42 / 1.49 / 1.56×, audio 1.37 /
+1.44 / 1.45×, sorted u32 5.08 / 5.14 / 5.14×, timestamps 3.17 / **12.63** / 12.63×
+(zstd -19: 1.41, 1.04, 2.91, 3.90×). Level 1 keeps to width 4, as before, rather
+than paying two more trial encodes per chunk for widths 2 and 8.
