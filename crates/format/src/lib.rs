@@ -69,6 +69,15 @@ pub enum Filter {
     DeltaShuffle {
         width: u8,
     },
+    /// Delta, zigzag (small negative deltas become small positive ones),
+    /// then byte-shuffle, over the same `width`.
+    DeltaZigzagShuffle {
+        width: u8,
+    },
+    /// Delta, then bit-shuffle (bit `k` of every element into plane `k`).
+    DeltaBitShuffle {
+        width: u8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +142,22 @@ fn need(bytes: &[u8], need: u64) -> Result<(), FormatError> {
     Ok(())
 }
 
+/// The filter's name as the CLI and the bench print it: `none`, or the kind
+/// and width, e.g. `delta-shuffle-4`.
+impl std::fmt::Display for Filter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, width) = match *self {
+            Filter::None => return f.write_str("none"),
+            Filter::Shuffle { width } => ("shuffle", width),
+            Filter::Delta { width } => ("delta", width),
+            Filter::DeltaShuffle { width } => ("delta-shuffle", width),
+            Filter::DeltaZigzagShuffle { width } => ("delta-zigzag-shuffle", width),
+            Filter::DeltaBitShuffle { width } => ("delta-bitshuffle", width),
+        };
+        write!(f, "{kind}-{width}")
+    }
+}
+
 impl Filter {
     fn to_raw(self) -> (u8, u8) {
         match self {
@@ -140,6 +165,8 @@ impl Filter {
             Filter::Shuffle { width } => (1, width),
             Filter::Delta { width } => (2, width),
             Filter::DeltaShuffle { width } => (3, width),
+            Filter::DeltaZigzagShuffle { width } => (4, width),
+            Filter::DeltaBitShuffle { width } => (5, width),
         }
     }
 
@@ -150,7 +177,9 @@ impl Filter {
             (1, w) if elem => Ok(Filter::Shuffle { width: w }),
             (2, w) if elem => Ok(Filter::Delta { width: w }),
             (3, w) if elem => Ok(Filter::DeltaShuffle { width: w }),
-            (0..=3, _) => Err(FormatError::BadFilterWidth { id, width }),
+            (4, w) if elem => Ok(Filter::DeltaZigzagShuffle { width: w }),
+            (5, w) if elem => Ok(Filter::DeltaBitShuffle { width: w }),
+            (0..=5, _) => Err(FormatError::BadFilterWidth { id, width }),
             _ => Err(FormatError::UnknownFilter(id)),
         }
     }

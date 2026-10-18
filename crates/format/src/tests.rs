@@ -169,6 +169,8 @@ fn entries_round_trip_for_every_filter() {
         Filter::Shuffle { width: 8 },
         Filter::Delta { width: 2 },
         Filter::DeltaShuffle { width: 4 },
+        Filter::DeltaZigzagShuffle { width: 2 },
+        Filter::DeltaBitShuffle { width: 8 },
     ] {
         let e = ChunkEntry {
             filter,
@@ -190,15 +192,66 @@ fn delta_shuffle_is_filter_3() {
 }
 
 #[test]
+fn delta_zigzag_shuffle_is_filter_4_and_delta_bitshuffle_is_filter_5() {
+    for (filter, raw) in [
+        (Filter::DeltaZigzagShuffle { width: 2 }, (4, 2)),
+        (Filter::DeltaBitShuffle { width: 4 }, (5, 4)),
+    ] {
+        let e = ChunkEntry {
+            filter,
+            ..entry(0, 1, false, 1)
+        };
+        let b = e.to_bytes();
+        assert_eq!((b[20], b[21]), raw);
+        assert_eq!(ChunkEntry::parse(&b), Ok(e));
+    }
+}
+
+#[test]
+fn filters_display_as_kind_and_width() {
+    let names = [
+        Filter::None,
+        Filter::Shuffle { width: 4 },
+        Filter::Delta { width: 8 },
+        Filter::DeltaShuffle { width: 2 },
+        Filter::DeltaZigzagShuffle { width: 2 },
+        Filter::DeltaBitShuffle { width: 8 },
+    ]
+    .map(|f| f.to_string());
+    assert_eq!(
+        names,
+        [
+            "none",
+            "shuffle-4",
+            "delta-8",
+            "delta-shuffle-2",
+            "delta-zigzag-shuffle-2",
+            "delta-bitshuffle-8"
+        ]
+    );
+}
+
+#[test]
 fn entry_rejects_unknown_filter() {
     let mut b = entry(0, 1, false, 1).to_bytes();
     b[20] = 7;
     assert_eq!(ChunkEntry::parse(&b), Err(FormatError::UnknownFilter(7)));
+    b[20] = 6;
+    assert_eq!(ChunkEntry::parse(&b), Err(FormatError::UnknownFilter(6)));
 }
 
 #[test]
 fn entry_rejects_bad_filter_widths() {
-    for (id, width) in [(1, 3), (2, 0), (2, 16), (0, 4), (3, 5), (3, 0)] {
+    for (id, width) in [
+        (1, 3),
+        (2, 0),
+        (2, 16),
+        (0, 4),
+        (3, 5),
+        (3, 0),
+        (4, 3),
+        (5, 0),
+    ] {
         let mut b = entry(0, 1, false, 1).to_bytes();
         (b[20], b[21]) = (id, width);
         assert_eq!(

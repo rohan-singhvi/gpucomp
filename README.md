@@ -4,7 +4,7 @@ GPU-accelerated LZ compression that isn't CUDA-only. Compress and decompress on 
 
 Data is split into independent chunks (64 KiB by default), so every chunk can be encoded and decoded in parallel, and any byte range can be read back without decoding the whole file.
 
-> **Status:** milestones M0–M10 of 11 are done; M11 (experiments) is next. The file format may still change.
+> **Status:** milestones M0–M10 of 11 are done; M11 (experiments) is in progress. The file format may still change.
 > On the Apple M4 Pro it's measured on, the GPU alone compresses at about half the speed of multi-threaded CPU compression. In a running program, as a second processor next to lz4_flex, it makes LZ4 compression 1.15–1.3× faster than lz4_flex alone; one-shot commands don't gain, because the GPU's start-up takes as long as the CPU's whole job. See [Performance](#performance) and the [final benchmark report](bench/REPORT.md).
 
 ## Features
@@ -17,7 +17,7 @@ Data is split into independent chunks (64 KiB by default), so every chunk can be
 - **CPU and GPU together.** `--hybrid` splits one file's chunks between the GPU and every CPU core by their measured speeds. Because each chunk encodes to the same bytes on either device, the file is identical to `--gpu` alone, however the work was split. Decompression shares the same way, and the GPU joins only when it helps.
 - **lz4_flex plus the GPU.** `--hybrid --gpu-share 0.25` gives the GPU a fixed share of the chunks and the rest to the CPU's encoder: lz4_flex for LZ4, the CPU twin otherwise. The CPU streams the head of the file while the GPU starts up and takes the tail. The output is deterministic for the same settings. In memory it is the fastest LZ4 compressor measured here; from a file on this machine it is no faster than the CPU alone.
 - **Random access.** `decompress --offset N --length M` reads only the header, the chunk table and the chunks that overlap the range.
-- **Per-chunk filters.** Optional byte-shuffle, delta and delta-shuffle filters for numeric data. `--filters auto` picks one per chunk by trial-encoding a sample, on CPU or GPU.
+- **Per-chunk filters.** Optional filters for numeric data: byte-shuffle, delta, delta-shuffle (integer series), delta-zigzag-shuffle (16-bit samples and images) and delta-bitshuffle (floats). `--filters auto` picks one per chunk by trial-encoding a sample, on CPU or GPU.
 - **Large files in bounded memory.** CPU compression and decompression stream file to file in groups of chunks, reading, coding and writing at the same time. GPU compression and decompression stream in batches that fit a GPU memory budget (`--gpu-memory`, default 3 GiB). A 4 GiB file round-trips on the GPU with about 480 MB of host memory.
 - **Checksums.** Optional per-chunk checksums, verified with `--verify`.
 
@@ -113,16 +113,19 @@ LZ4 decompression on the GPU is measured on the default level's file. zstd in 64
 
 The real `lz4` command line tool (1.10) took 65 ms to compress and 76 ms to decompress on this machine. The GPU's file paths pipeline 16 MiB batches, but about 20 ms go to creating the GPU context and compiling kernels on every run, and a fresh process's first GPU work pays more on top. The benchmark keeps the GPU driver warm; as separate commands on this file, `--gpu-share 0.25` takes 68 ms and the CPU alone 40.
 
-**On numeric data**, GLZ-E with `--filters auto` beats `zstd -19` on every input from level 2, by up to 3×. Byte-shuffle groups slowly changing bytes, delta-shuffle turns integer series into runs of zero high bytes, and the entropy stage then exploits them. 32 MiB inputs, 64 KiB chunks:
+**On numeric data**, GLZ-E with `--filters auto` beats `zstd -19` on every input from level 1, by up to 3.2×. Delta-shuffle turns integer series into runs of zero high bytes, delta-zigzag-shuffle does the same for samples and pixels whose differences have either sign, and delta-bitshuffle splits floats and 64-bit values into bit planes of slowly changing bits; the entropy stage then exploits them. 32 MiB inputs and two Silesia files, 64 KiB chunks, CPU (the GPU writes the same files):
 
-| Input | GLZ-E `--filters auto` | `--level 2` | `--level 3` | zstd -1 | zstd -19 |
+| Input | GLZ-E `--filters auto` | `--level 2` | `--level 3` | zstd -1, 64 KiB | zstd -19, whole file |
 |---|---|---|---|---|---|
-| f32 points | 1.42× | 1.49× | 1.56× | 1.15× | 1.41× |
-| i16 audio | 1.37× | 1.44× | 1.45× | 1.04× | 1.04× |
-| sorted u32 | 5.08× | 5.14× | 5.14× | 1.31× | 2.91× |
-| u64 timestamps | 3.17× | 12.63× | 12.63× | 3.90× | 3.90× |
+| f32 points | 1.54× | 1.70× | 1.72× | 1.15× | 1.44× |
+| f64 random walk | 1.44× | 1.44× | 1.44× | 1.12× | 1.27× |
+| i16 audio | 1.35× | 1.40× | 1.41× | 1.04× | 1.07× |
+| sorted u32 | 5.08× | 5.22× | 5.22× | 1.31× | 2.93× |
+| u64 timestamps | 11.59× | 12.62× | 12.62× | 3.90× | 3.91× |
+| Silesia mr (16-bit image) | 3.51× | 3.57× | 3.58× | 2.60× | 3.21× |
+| Silesia x-ray (16-bit image) | 2.17× | 2.17× | 2.17× | 1.25× | 1.65× |
 
-Level 1 tries filters of 4-byte elements only; level 2 and above add 2- and 8-byte ones.
+Level 1 tries byte-shuffle, delta and delta-shuffle over 4-byte elements, delta-zigzag-shuffle over 2-byte and delta-bitshuffle over 8-byte elements; level 2 and above add more widths. Each chunk's filter is chosen on its first eighth, which can mislead: on Silesia's `mozilla`, auto selection is now 2% worse than no filter, and on the audio it is 1–3% worse than before delta-bitshuffle existed (DECISIONS "Float filters").
 
 **Honest comparison:** on this machine, the GPU alone compresses at about half the speed of multi-threaded `lz4_flex` or zstd -1. With identical output, the CPU and GPU together reach about 70%. The GPU pays as a second processor in a running program: lz4_flex on 75% of the chunks and the GPU on the rest compress LZ4 1.15–1.3× faster than lz4_flex alone, at the same ratio. zstd keeps its lead in compression, at ratio per unit of speed. Decoding belongs to the CPU: the GPU decodes at about 3 GB/s, the CPU at 9–14, and GLZ-E at level 3 decodes about as fast as zstd -1 in 64 KiB chunks at the same ratio. The GPU's parallel algorithm needs a match at every position, while a serial parse needs them at only about 40%, so the GPU does more work per byte. Its kernels are limited by latency, not bandwidth: barrier-synchronised match finding, serial parse walks and dependent memory reads. Transfers and host work take another 12–22% end to end. From file to file, the `gpucomp` command's CPU path is faster than zstd -1 and the `lz4` tool, at LZ4's ratio. A discrete GPU, against a typical desktop CPU, is the setting the project targets, but it hasn't been measured yet.
 

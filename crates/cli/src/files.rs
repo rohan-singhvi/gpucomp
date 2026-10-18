@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::ValueEnum;
 use cpu::container::{CompressOptions, DecompressOptions};
-use format::{Codec, Filter, Index};
+use format::{Codec, Index};
 
 #[derive(clap::Args, Debug)]
 pub struct CompressArgs {
@@ -53,8 +53,10 @@ pub struct CompressArgs {
     /// are processed in batches that fit.
     #[arg(long, value_parser = parse_bytes, requires = "gpu")]
     pub gpu_memory: Option<u64>,
-    /// Per-chunk filters: `auto` tries none, shuffle-4 and delta-4 on every
-    /// chunk and keeps the smallest.
+    /// Per-chunk filters for numeric data: `auto` tries the level's candidates
+    /// (level 1: none, shuffle-4, delta-4, delta-shuffle-4,
+    /// delta-zigzag-shuffle-2, delta-bitshuffle-8; more widths from level 2)
+    /// on every chunk and keeps the smallest.
     #[arg(long, value_enum, default_value_t = FiltersArg::None)]
     pub filters: FiltersArg,
     /// Compression level, 1 (fastest) to 3 (smallest): more match candidates
@@ -170,12 +172,7 @@ pub fn describe(index: &Index, file_len: u64) -> String {
     let stored = index.chunks.iter().filter(|c| c.stored).count();
     let mut filters: Vec<(String, usize)> = Vec::new();
     for c in &index.chunks {
-        let name = match c.filter {
-            Filter::None => "none".to_string(),
-            Filter::Shuffle { width } => format!("shuffle-{width}"),
-            Filter::Delta { width } => format!("delta-{width}"),
-            Filter::DeltaShuffle { width } => format!("delta-shuffle-{width}"),
-        };
+        let name = c.filter.to_string();
         match filters.iter_mut().find(|(n, _)| *n == name) {
             Some((_, count)) => *count += 1,
             None => filters.push((name, 1)),
@@ -380,7 +377,7 @@ pub fn info(path: &std::path::Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use format::{ChunkEntry, Header};
+    use format::{ChunkEntry, Filter, Header};
 
     use super::*;
 

@@ -35,8 +35,8 @@ chunks it overlaps.
 | 8      | 4    | `comp_size`    | payload size in bytes. **Bit 31 set = stored raw** (payload is the uncompressed bytes) |
 | 12     | 4    | `uncomp_size`  | `chunk_size`, or the remainder for the last chunk |
 | 16     | 4    | `checksum`     | low 32 bits of xxh3-64 of the uncompressed chunk. Must be 0 when flag bit 0 is clear |
-| 20     | 1    | `filter`       | `0` = none, `1` = byte-shuffle, `2` = delta, `3` = delta-shuffle. Applied before compression |
-| 21     | 1    | `filter_width` | element width for shuffle, delta and delta-shuffle: 1, 2, 4 or 8. Must be 0 for none |
+| 20     | 1    | `filter`       | `0` = none, `1` = byte-shuffle, `2` = delta, `3` = delta-shuffle, `4` = delta-zigzag-shuffle, `5` = delta-bitshuffle. Applied before compression |
+| 21     | 1    | `filter_width` | element width for every filter but none: 1, 2, 4 or 8. Must be 0 for none |
 | 22     | 2    | reserved       | must be 0 |
 
 ## Data section
@@ -177,6 +177,19 @@ changed by either direction.
 - **delta-shuffle (3):** delta, then byte-shuffle, both with width `w`: byte `j` of element `i`'s
   delta moves to position `j * m + i`. The inverse unshuffles, then takes the running sum. For
   integer series whose deltas are small, the high bytes of every delta become long runs of zeros.
+- **delta-zigzag-shuffle (4):** delta, then zigzag, then byte-shuffle, all with width `w`. Zigzag
+  reads a delta `d` as a `w`-byte two's-complement integer and maps it to `2d` if `d >= 0` and
+  `-2d - 1` otherwise, modulo `2^(8w)` (0, −1, 1, −2, … become 0, 1, 2, 3, …). The inverse
+  unshuffles, maps each `z` back to `z / 2` if `z` is even and `-(z + 1) / 2` otherwise, then takes
+  the running sum. Small deltas of either sign get zero high bytes (images, samples).
+- **delta-bitshuffle (5):** delta with width `w`, then bit-shuffle. With `m32 = m / 32 * 32`, the
+  deltas of elements `0..m32` are spread over `8w` bit planes of `m32 / 8` bytes each, plane `k`
+  first holding bit `k` of every delta (bit `k % 8` of byte `k / 8`, little-endian): bit `k` of
+  delta `i` moves to bit `i % 8` of byte `k * m32 / 8 + i / 8`. The deltas of elements `m32..m`
+  follow unchanged, at their own positions `i * w`, then the tail. Every plane is a whole number of
+  32-bit words. The inverse gathers each delta's bits, then takes the running sum. For floats,
+  the sign, exponent and high mantissa bits that change slowly become planes of nearly constant
+  bits.
 
 Checksums are always of the original, **unfiltered** chunk, so they also catch a wrong filter.
 The format allows a filter on a stored chunk (its raw payload is then the filtered bytes), but
@@ -184,10 +197,11 @@ the encoders here never write one: a chunk that no candidate shrinks is stored u
 
 Encoders choose filters per chunk (M7, CPU encoder with `FilterMode::Auto`): the chunk is
 compressed under each candidate of the level's set and the smallest block wins; ties go to the
-earlier candidate in the order none < shuffle < delta < delta-shuffle, then smaller width.
-Level 1 tries `{none, shuffle-4, delta-4, delta-shuffle-4}`; level 2 and above try `{none,
-shuffle-2, shuffle-4, shuffle-8, delta-2, delta-4, delta-8, delta-shuffle-2, delta-shuffle-4,
-delta-shuffle-8}`. If the winning block is not smaller than the chunk, the chunk is
+earlier candidate in the order none < shuffle < delta < delta-shuffle < delta-zigzag-shuffle <
+delta-bitshuffle, then smaller width. Level 1 tries `{none, shuffle-4, delta-4, delta-shuffle-4,
+delta-zigzag-shuffle-2, delta-bitshuffle-8}`; level 2 and above try `{none, shuffle-2, shuffle-4,
+shuffle-8, delta-2, delta-4, delta-8, delta-shuffle-2, delta-shuffle-4, delta-shuffle-8,
+delta-zigzag-shuffle-2, delta-bitshuffle-4, delta-bitshuffle-8}`. If the winning block is not smaller than the chunk, the chunk is
 stored raw with filter none. The choice is an encoder setting; decoders only read the table.
 
 ## Validation

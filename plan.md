@@ -303,15 +303,20 @@ Promoted from M11. It's the biggest single ratio lever: zstd -1 at 64 KiB chunks
 
 As built: the prose lives in `bench/REPORT.template.md`, and `gpucomp bench --report` fills its `{{section}}` placeholders from the newest corpus run of each adapter. M10 also added zstd -1/-3 baselines (64 KiB chunks and whole file), GLZ-E at levels 2 and 3, GLZ-E with filters, and a per-stage kernel profile to the bench. With the zstd rows, `BENCHMARKS.md` now has M9's ratio-vs-throughput table.
 
-### M11 (stretch) — Experiments
-Pick based on the M10 results. Each is independent.
-
-Done first, from the M10 profile (DECISIONS "Optimization research (2026-10-11)"): kernel speed-ups (the parse copies its speculative path instead of re-walking it, emit keeps literal-run bookkeeping in workgroup memory and writes words, match finding is software-pipelined), a fast CPU twin with identical output, and **CPU+GPU compression and decompression** (`gpu::hybrid`, `--hybrid`). Because every chunk encodes identically on either device, the two can share one input under an adaptive schedule and still write the GPU-only file.
+### M11 (stretch) — Experiments — IN PROGRESS
+Pick based on the M10 results. Each is independent. Done so far, each with its measurements and rejected alternatives in DECISIONS.md:
+- **Kernel speed-ups and CPU+GPU** ("Optimization research (2026-10-11)"): the parse copies its speculative path instead of re-walking it, emit keeps literal-run bookkeeping in workgroup memory, match finding is software-pipelined; a fast CPU twin with identical output; **CPU+GPU compression and decompression** (`gpu::hybrid`, `--hybrid`): because every chunk encodes identically on either device, the two share one input under an adaptive schedule and still write the GPU-only file.
+- **lz4_flex + GPU** ("Catching up with lz4_flex and zstd", "Streamed fixed split"): a fixed split (`--hybrid --gpu-share`), lz4_flex on the first chunks and the GPU on the rest, deterministic; streamed from file to file. In memory it's the fastest LZ4 compressor measured (1.15–1.3× lz4_flex); from a file, on Apple Silicon, it doesn't beat the CPU alone.
+- **Streamed file paths** ("Streaming CLI paths", "Pipelined GPU batches"): the CPU paths read, code and write at the same time (`cpu::container::compress_stream`, `decompress_stream`); the GPU encoder pipelines 16 MiB batches over two buffer sets, the decoder writes straight from its readback buffer, pipelines compile in parallel.
+- **Faster CPU decoders and encoders** ("Catching up…", "Faster CPU GLZ-E decoding", "Profile and optimize, as a loop"): wild copies, a 64-bit four-lane Huffman decoder with five symbols per refill, canonical-order decode tables, a faster twin match finder and Huffman encoder. GLZ-E level 3 now decodes about as fast as zstd -1 at the same ratio.
 - ~~**Entropy stage**~~ (done in M9e as GLZ-E, codec 3).
-- **GDeflate codec (codec id 4; id 3 is GLZ-E):** a GPU encoder (M3-style match finding, then distributing symbols across 32 sub-streams with Huffman coding) and a WGSL decoder ported from the Microsoft HLSL reference. Validate against the reference implementation in both directions.
+- ~~**Zero-copy path on Apple Silicon**~~ (measured, "Streaming CLI paths"): copies into mapped memory already run at memcpy speed and GPU copies at ~104 GB/s, so mappable storage buffers would save ~3 ms of ~70. Not pursued.
+- **More filters:** delta-shuffle (id 3, "Delta-shuffle filter": timestamps 12.6× from level 2, sorted integers 5.1×), delta-zigzag-shuffle (id 4) and delta-bitshuffle (id 5) ("Float filters": XOR with the previous value lost to delta then bit-shuffle; Silesia's 16-bit images gain 17–29%). Still open: strides for interleaved channels, bitpacking/FOR, and a cheaper selector than trial encodes.
+
+Still open:
+- **GDeflate codec (codec id 4):** a GPU encoder (M3-style match finding, then distributing symbols across 32 sub-streams with Huffman coding) and a WGSL decoder ported from the Microsoft HLSL reference. Validate against the reference implementation in both directions.
 - **Multi-byte symbols (from GPULZ):** match on 2- or 4-byte units for numeric data.
-- **More filters:** bitpack, float-specific transforms (e.g. XOR with the previous value), and per-chunk selection over them, added to M7's framework.
-- **Zero-copy path on Apple Silicon:** measure whether mapped or shared buffers reduce end-to-end time.
+- **A discrete-GPU measurement** (D3D12 or Vulkan): the definition of done in §1 is stated for one, and none has been measured yet.
 
 ## 6. wgpu / WGSL gotchas (read before writing shaders)
 
@@ -347,11 +352,18 @@ The goal is a running, data-backed record of what each change bought.
 
 ## 8. CLI
 
+As built (`gpucomp <command> --help` has the details):
+
 ```
-gpucomp compress   <in> <out> [--gpu|--cpu] [--codec lz4|glz] [--level N] [--filters auto|none] [--chunk-size 64K] [--checksum] [--backend metal|dx12|vulkan]
-gpucomp decompress <in> <out> [--gpu|--cpu] [--offset N --length M] [--backend metal|dx12|vulkan] [--verify]
-gpucomp bench      [<in>]     [--codec ...] [--direction compress|decompress|both] [--runs N] [--json] [--record] [--report] [--corpus]
-gpucomp info       [<file>]   # with no file: print adapter/backends/limits; with file: print header, chunk stats and filter histogram
+gpucomp compress   <in> <out> [--codec stored|lz4|glz|glze] [--level 1|2|3] [--chunk-size 64K]
+                   [--filters none|auto|exhaustive] [--checksum] [--encoder lz4-flex|greedy]
+                   [--independent-groups N] [--gpu [--backend metal|dx12|vulkan] [--gpu-memory 512M]
+                   [--hybrid [--gpu-share F]]]
+gpucomp decompress <in> <out> [--offset N --length M] [--verify] [--decoder hand-written|lz4-flex]
+                   [--gpu [--backend ...] [--gpu-memory ...] [--hybrid]]
+gpucomp bench      [--corpus DIR] [--label L --note TEXT] [--record] [--report] [--report-only]
+                   [--size-mib N] [--runs N] [--warmup N] [--cpu-only] [--backend ...]
+gpucomp info       [<file>]   # no file: adapter, backend and limits; a file: header, chunks, ratio, filters
 ```
 
 ## 9. Prior work to read and build on

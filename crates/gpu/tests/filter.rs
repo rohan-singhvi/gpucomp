@@ -14,6 +14,8 @@ fn filters() -> Vec<Filter> {
     out.extend(WIDTHS.map(|width| Filter::Shuffle { width }));
     out.extend(WIDTHS.map(|width| Filter::Delta { width }));
     out.extend(WIDTHS.map(|width| Filter::DeltaShuffle { width }));
+    out.extend(WIDTHS.map(|width| Filter::DeltaZigzagShuffle { width }));
+    out.extend(WIDTHS.map(|width| Filter::DeltaBitShuffle { width }));
     out
 }
 
@@ -154,7 +156,7 @@ proptest! {
     #[test]
     fn gpu_forward_matches_cpu_and_gpu_inverse_undoes_it(
         data in proptest::collection::vec(any::<u8>(), 0..3000),
-        which in 0usize..8,
+        which in 0..filters().len(),
     ) {
         let Some(ctx) = context() else { return Ok(()) };
         let kernels = FilterKernels::new(&ctx);

@@ -1,5 +1,6 @@
-//! M7: byte-shuffle, delta and delta-shuffle filters on the GPU, forward and inverse
-//! (plan §4a; `cpu::filter` is the reference).
+//! M7: byte-shuffle, delta, delta-shuffle, delta-zigzag-shuffle and
+//! delta-bitshuffle filters on the GPU, forward and inverse (plan §4a;
+//! `cpu::filter` is the reference).
 //!
 //! A [`FilterJob`] transforms `len` bytes at `src_offset` of a source buffer
 //! into `len` bytes at `dst_offset` of a *different* destination buffer.
@@ -81,6 +82,10 @@ pub struct FilterKernels {
     delta_inverse: wgpu::ComputePipeline,
     delta_shuffle_forward: wgpu::ComputePipeline,
     delta_shuffle_inverse: wgpu::ComputePipeline,
+    delta_zigzag_shuffle_forward: wgpu::ComputePipeline,
+    delta_zigzag_shuffle_inverse: wgpu::ComputePipeline,
+    delta_bitshuffle_forward: wgpu::ComputePipeline,
+    delta_bitshuffle_inverse: wgpu::ComputePipeline,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +93,8 @@ enum Kind {
     Shuffle,
     Delta,
     DeltaShuffle,
+    DeltaZigzagShuffle,
+    DeltaBitShuffle,
 }
 
 /// Jobs uploaded and bound to their buffers, ready to [`record`](FilterKernels::record).
@@ -150,6 +157,10 @@ impl FilterKernels {
             delta_inverse: pipeline("delta_inverse"),
             delta_shuffle_forward: pipeline("delta_shuffle_forward"),
             delta_shuffle_inverse: pipeline("delta_shuffle_inverse"),
+            delta_zigzag_shuffle_forward: pipeline("delta_zigzag_shuffle_forward"),
+            delta_zigzag_shuffle_inverse: pipeline("delta_zigzag_shuffle_inverse"),
+            delta_bitshuffle_forward: pipeline("delta_bitshuffle_forward"),
+            delta_bitshuffle_inverse: pipeline("delta_bitshuffle_inverse"),
             layout,
         }
     }
@@ -166,14 +177,22 @@ impl FilterKernels {
     ) -> Result<FilterPass, FilterError> {
         validate(jobs, src.size(), dst.size())?;
         let mut dispatches = Vec::new();
-        for kind in [Kind::Shuffle, Kind::Delta, Kind::DeltaShuffle] {
+        for kind in [
+            Kind::Shuffle,
+            Kind::Delta,
+            Kind::DeltaShuffle,
+            Kind::DeltaZigzagShuffle,
+            Kind::DeltaBitShuffle,
+        ] {
             let descs: Vec<JobDesc> = jobs
                 .iter()
                 .filter_map(|j| {
                     let width = match (kind, j.filter) {
                         (Kind::Shuffle, Filter::Shuffle { width })
                         | (Kind::Delta, Filter::Delta { width })
-                        | (Kind::DeltaShuffle, Filter::DeltaShuffle { width }) => width,
+                        | (Kind::DeltaShuffle, Filter::DeltaShuffle { width })
+                        | (Kind::DeltaZigzagShuffle, Filter::DeltaZigzagShuffle { width })
+                        | (Kind::DeltaBitShuffle, Filter::DeltaBitShuffle { width }) => width,
                         _ => return None,
                     };
                     Some(JobDesc {
@@ -231,6 +250,14 @@ impl FilterKernels {
                 (Kind::Delta, Direction::Inverse) => &self.delta_inverse,
                 (Kind::DeltaShuffle, Direction::Forward) => &self.delta_shuffle_forward,
                 (Kind::DeltaShuffle, Direction::Inverse) => &self.delta_shuffle_inverse,
+                (Kind::DeltaZigzagShuffle, Direction::Forward) => {
+                    &self.delta_zigzag_shuffle_forward
+                }
+                (Kind::DeltaZigzagShuffle, Direction::Inverse) => {
+                    &self.delta_zigzag_shuffle_inverse
+                }
+                (Kind::DeltaBitShuffle, Direction::Forward) => &self.delta_bitshuffle_forward,
+                (Kind::DeltaBitShuffle, Direction::Inverse) => &self.delta_bitshuffle_inverse,
             });
             cpass.set_bind_group(0, bind_group, &[]);
             let (x, y) = dispatch_grid(
@@ -281,7 +308,9 @@ fn validate(jobs: &[FilterJob], src_len: u64, dst_len: u64) -> Result<(), Filter
             Filter::None => continue,
             Filter::Shuffle { width }
             | Filter::Delta { width }
-            | Filter::DeltaShuffle { width } => {
+            | Filter::DeltaShuffle { width }
+            | Filter::DeltaZigzagShuffle { width }
+            | Filter::DeltaBitShuffle { width } => {
                 if !matches!(width, 1 | 2 | 4 | 8) {
                     return Err(FilterError::BadWidth { job });
                 }

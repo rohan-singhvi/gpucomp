@@ -111,7 +111,8 @@ pub fn canterbury() -> Vec<(String, Vec<u8>)> {
 }
 
 /// Numeric inputs that filters help (M7): sorted u32s, smooth f32 xyz points,
-/// i16 sine + noise and u64 timestamps, each with a ragged tail.
+/// i16 sine + noise, u64 timestamps and a 12-bit u16 image, each with a
+/// ragged tail.
 pub fn numeric() -> Vec<(&'static str, Vec<u8>)> {
     let mut s = 0x2545_F491_4F6C_DD1Du64;
     let mut next = move || {
@@ -150,10 +151,20 @@ pub fn numeric() -> Vec<(&'static str, Vec<u8>)> {
         })
         .chain([9; 5])
         .collect();
+    // A 12-bit image in u16 pixels: small deltas of both signs (zigzag wins).
+    let image: Vec<u8> = (0..30_001u32)
+        .flat_map(|i| {
+            let (x, y) = ((i % 200) as f32, (i / 200) as f32);
+            let v = 2000.0 + (x * 0.05).sin() * 300.0 + (y * 0.07).cos() * 300.0;
+            (v as u16 + (next() % 16) as u16).to_le_bytes()
+        })
+        .chain([7])
+        .collect();
     vec![
         ("sorted u32", sorted),
         ("f32 points", points),
         ("i16 audio", audio),
         ("u64 timestamps", stamps),
+        ("u16 image", image),
     ]
 }

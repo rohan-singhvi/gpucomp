@@ -1624,3 +1624,120 @@ cores LZ4 2.17 → **2.40** GB/s, GLZ 2.22 → 2.36, GLZ-E 1.75 → **1.91**, le
 File rows with flushing: gpucomp CPU decompress to a file 45.4 → **22.4 ms** (zstd
 -d 141.1), compress 36.3 → 34.0 (zstd -1 -T0 43.5). The streamed split's file row
 was noisier (43.9 → 54.5 ms).
+
+## Float filters (2026-10-18)
+Floats were the weakest numeric case (f32 points 1.42× at level 1). Measured first, in
+a scratch test: candidate transforms applied per 64 KiB chunk, GLZ-E at levels 1 and
+3, 32 MiB each of the bench's numeric inputs and more synthetic floats (f32 noisy
+sine, f32 smooth 2-D field, f32 two interleaved channels, f64 random walk at full
+precision, f64 decimal-rounded sensor values, f32 weight-like normals), and Silesia's
+binaries.
+Level 1, the whole input under one transform:
+
+| Input | none | shuffle | delta-shuffle | XOR-shuffle | XOR-bitshuffle | delta-zigzag-shuffle | delta-bitshuffle |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| f32 noisy sine (w 4) | 1.10 | 1.34 | 1.33 | 1.43 | 1.50 | 1.47 | **1.58** |
+| f64 walk (w 8) | 1.10 | 1.31 | 1.23 | 1.34 | 1.39 | 1.36 | **1.44** |
+| f32 2-D field (w 4) | 1.09 | 1.51 | 1.69 | 1.56 | 1.44 | 1.67 | **1.71** |
+| f32 points, xyz (w 4) | 1.14 | 1.42 | 1.36 | 1.38 | **1.86** | 1.32 | 1.69 |
+| Silesia mr (w 2) | 2.61 | 2.81 | 2.52 | 3.08 | 2.99 | **3.53** | 3.27 |
+| Silesia x-ray (w 2) | 1.25 | 1.61 | 1.68 | 1.78 | 1.81 | **2.17** | 2.08 |
+
+- **Gorilla-style XOR loses to plain delta** once LZ matching and Huffman coding
+  follow: delta then bit-shuffle beats XOR then bit-shuffle everywhere except the xyz
+  points, where neither neighbour is the same coordinate.
+- **Bit-shuffle beats byte-shuffle for floats:** sign, exponent and high mantissa bits
+  change slowly and become nearly constant bit planes.
+- **Zigzag matters for 16-bit images:** small deltas of both signs otherwise flip the
+  high byte between 0x00 and 0xFF. Silesia's two medical images gain 17–29% over the
+  best earlier filter.
+- An order-preserving float-to-integer map before the delta (as fpzip) added nothing
+  over zigzag. Weight-like floats gain nothing from any filter (all within 0.3%).
+- **Strides** help interleaved data most: delta-shuffle over every third f32 takes the
+  xyz points to 3.21×, every second the two-channel data from 1.51 to 1.95×. A stride
+  needs a field (the entry's reserved bytes) and more candidates; not done. Width 8
+  gets part of it for two f32 channels (an 8-byte delta subtracts both).
+
+Candidate sets, by greedy selection over per-chunk sizes (the best filter per chunk,
+an upper bound on sampled selection). The greedy picks delta-bitshuffle-8 first and
+delta-zigzag-shuffle-2 second at both levels:
+
+| Set (per-chunk best) | timestamps | f32 2-ch | f64 walk | f32 noisy | mr | x-ray |
+|---|---:|---:|---:|---:|---:|---:|
+| Level 1 before (4) | 3.46 | 1.51 | 1.11 | 1.34 | 2.67 | 1.62 |
+| Level 1 + zigzag-2, bitshuffle-8 (6) | **11.64** | **2.48** | **1.44** | **1.57** | **3.53** | **2.17** |
+| Level 3 before (10) | 12.69 | 2.32 | 1.32 | 1.37 | 3.21 | 1.77 |
+| Level 3 + zigzag-2, bitshuffle-4, -8 (13) | 12.69 | **2.63** | **1.44** | **1.58** | **3.61** | **2.18** |
+
+Text, executables and databases (sao, osdb, nci, samba) are unchanged. Width 8 at
+level 1 also covers 64-bit integers, so timestamps reach 11.6× at level 1 (3.46
+before). Dropping delta-4 from level 1 would cost nothing measured here, but it alone
+compresses arithmetic progressions with a large stride (a test pins it), so both
+lists only grow.
+
+**Format and code.** Filter ids 4 (delta-zigzag-shuffle) and 5 (delta-bitshuffle),
+widths 1, 2, 4, 8; `Display` gives the names the CLI and the bench print.
+Delta-bitshuffle spreads the first `m / 32 * 32` deltas over `8w` bit planes, so every
+plane is a whole number of 32-bit words and the GPU writes whole words; later deltas
+(only in a file's last chunk) stay in place. The CPU transposes 8×8 bit matrices
+(Hacker's Delight 7-3), both ways. On the GPU, delta-zigzag-shuffle is the
+delta-shuffle kernels with a map per delta; delta-bitshuffle's forward kernel takes
+one 32-element tile and byte per item and writes eight plane words at once; the
+inverse is the existing prefix sum with an element loader that gathers bits.
+
+**Speed.** CPU, one thread, 64 MiB of Silesia: forward / inverse delta-zigzag-shuffle-2
+0.72 / 1.12 GB/s, delta-bitshuffle-2/4/8 0.81–1.48 / 0.94–1.55 GB/s, against
+delta-shuffle-2/4/8 1.11–2.62 and delta-4 1.07: no slower than the existing filters,
+and far above per-thread encode speed. GPU, 64 MiB in 64 KiB jobs: forward
+delta-bitshuffle 2.1–2.5 ms (delta-shuffle 2.9–3.3); the inverse took 13.7–17.1 ms
+(delta-shuffle 4.1–7.7) because every element gathers `8w` bits. The prefix sum's
+first pass only needs each segment's sum, and a sum of deltas is Σₖ 2ᵏ × popcount of
+plane k, so it now counts bits per word: 7.4–8.9 ms. Auto selection on Silesia, all
+cores, A/B in one session (old lists as prefixes of the new): GLZ-E level 1 ratio
+2.552 → 2.595×, 1.07 → 0.87 GB/s (−19%: two more trial encodes per chunk); level 3
+2.805 → 2.843×, 0.343 → 0.303 GB/s (−12%). A cheaper selector is the next step.
+
+**Batch sizes.** With six level-1 candidates, a filtered GPU batch fell to 2,730
+chunks: the binding limit was divided by the candidate count, from when candidates
+shared buffers (M7). Each candidate now has its own buffers, no larger than an
+unfiltered batch's, and the budget counts them all, so the division only added
+serial batches; removed. The sampled path also frees the candidates' sample buffers
+before it makes the filtered copy, so the memory model counts the larger of the two,
+not their sum. 256 MiB with level-1 auto is one batch again (a test pins it).
+
+Recorded (`float-filters` run against `profile-loop`, 256 MiB numeric inputs, level-1
+auto): GLZ-E timestamps 3.17 → **11.57×**, audio 1.28 → 1.44×, f32 points 1.45 →
+1.50×, sorted u32 unchanged at 5.07× (LZ4 3.86 → 4.36×), the new f64 walk 1.10 →
+1.44×; Silesia mr 2.64 → **3.51×**, x-ray 1.62 → **2.17×**, all of Silesia 2.552 →
+2.595×. zstd -19 on the whole file is behind on every numeric input (32 MiB: f32
+points 1.44×, f64 walk 1.27×, audio 1.07×, mr 3.21×, x-ray 1.65×). CPU auto
+compression is up to 30% slower (GLZ-E on all of Silesia 1.02 → 0.82 GB/s, −20%);
+GPU decoding of filtered audio drops 4.07 → 2.47 GB/s end to end (the bit-plane
+inverse).
+
+**Sampled selection went wrong in two places.** On `mozilla`, GLZ-E auto fell 2.290 →
+2.247× (unfiltered 2.299×, exhaustive 2.320×): delta-bitshuffle-8 wins the first
+eighth of 46 chunks whose first eighth is a table of numbers and whose rest is code,
+and those chunks end up 448 KB larger than unfiltered (shuffle-4 already lost 62 KB
+the same way). And delta-bitshuffle looks better on samples than on whole chunks
+even on uniform data: on 32 MiB of audio it wins 263 of 512 chunks at level 1 and
+costs 495 KB against each chunk's best filter, so audio is 1.37 / 1.44 / 1.45 →
+1.35 / 1.40 / 1.41× at levels 1 / 2 / 3. Three fixes tried, CPU simulation with
+the same candidates:
+
+| Rule (level 1) | mozilla | 12 Silesia files, bytes | sorted u32 | audio | f32 points | timestamps L3 |
+|---|---:|---:|---:|---:|---:|---:|
+| First eighth (current) | 2.249 | 81.16 M | 5.086 | 1.353 | 1.536 | 12.68 |
+| 4 evenly spaced slices, same size | 2.314 | 80.49 M | 4.974 | 1.360 | 1.583 | 12.69 |
+| 8 evenly spaced slices | 2.318 | 80.45 M | 4.966 | 1.373 | 1.583 | 11.89 |
+| Later candidate must win by 4% | 2.266 | — | 5.086 | 1.380 | 1.456 | 12.69 |
+| Exhaustive (bound) | 2.322 | 80.36 M | 5.086 | 1.381 | 1.583 | 12.69 |
+
+Spread samples fix mozilla and recover 0.8–1.0% on Silesia, but each slice boundary
+adds an outlier delta, which tips uniform integer series toward the wrong filter
+(sorted u32 −2.2%; with 8 slices, timestamps at level 3 −6%). A margin trades one
+input for another. Bit-shuffling in blocks of 256–4096 elements (as Blosc), so a
+sample is filtered exactly like the start of its chunk, didn't remove the bias
+(audio 1.350–1.379×) and cost whole-chunk ratio (timestamps 11.64 → 8.9–11.2×).
+None is a clear win, so selection stays as it was; a better and cheaper selector
+is the next step, with these numbers as its baseline.

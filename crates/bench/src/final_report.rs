@@ -424,7 +424,17 @@ const fn col(label: &'static str, row: &'static str, cell: Cell) -> Column {
 }
 
 const SYNTHETIC: [&str; 4] = ["zeros", "random", "text", "mixed"];
-const NUMERIC: [&str; 4] = ["f32-points", "sorted-u32", "i16-audio", "u64-timestamps"];
+/// The bench's numeric inputs, then Silesia's two 16-bit images (the
+/// filters suite runs on the corpus too).
+const NUMERIC: [&str; 7] = [
+    "f32-points",
+    "f64-walk",
+    "sorted-u32",
+    "i16-audio",
+    "u64-timestamps",
+    "silesia/mr",
+    "silesia/x-ray",
+];
 
 const FILE_COMPRESS: [Column; 6] = [
     col("GPU LZ4 l1", "gpu.lz4.compress.e2e", Cell::Both),

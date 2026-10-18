@@ -429,6 +429,30 @@ fn gpu_filter_candidates_match_the_cpu() {
 }
 
 #[test]
+fn numeric_test_inputs_select_the_newest_filters() {
+    // So the GPU-equals-CPU tests below cover chunks under these filters.
+    let mut used = Vec::new();
+    for level in [1, 2] {
+        for (_, input) in common::numeric() {
+            let file = cpu_compress(&input, &cpu_auto(Codec::Lz4, level)).unwrap();
+            used.extend(
+                format::Index::parse(&file)
+                    .unwrap()
+                    .chunks
+                    .iter()
+                    .map(|c| c.filter),
+            );
+        }
+    }
+    for wanted in [
+        format::Filter::DeltaZigzagShuffle { width: 2 },
+        format::Filter::DeltaBitShuffle { width: 8 },
+    ] {
+        assert!(used.contains(&wanted), "{wanted:?}");
+    }
+}
+
+#[test]
 fn gpu_auto_filtered_files_equal_cpu_auto_files() {
     let Some(ctx) = context() else { return };
     let encoder = GpuEncoder::new(&ctx, EncodeParams::default()).unwrap();

@@ -1035,8 +1035,9 @@ fn file_rows(
 
 /// Numeric benchmark inputs of exactly `n` bytes each, the data filters are
 /// for (M7): `f32-points` (xyz of a smooth curve), `sorted-u32` (small random
-/// gaps), `i16-audio` (two sines plus noise) and `u64-timestamps` (≈1 ms
-/// steps with jitter). Deterministic.
+/// gaps), `i16-audio` (two sines plus noise), `u64-timestamps` (≈1 ms
+/// steps with jitter) and `f64-walk` (a random walk at full precision).
+/// Deterministic.
 pub fn numeric_inputs(n: usize) -> Vec<(String, Vec<u8>)> {
     let mut rng = 0x9E37_79B9_7F4A_7C15u64;
     let mut next = move || {
@@ -1084,11 +1085,20 @@ pub fn numeric_inputs(n: usize) -> Vec<(String, Vec<u8>)> {
         stamp += 1_000 + next() % 16;
         stamp.to_le_bytes().to_vec()
     }));
+    // A random walk in f64 at full precision (prices, simulation state):
+    // steps of about 0.1%, roughly normal (a sum of four uniforms).
+    let mut price = 100.0f64;
+    let walk = fill(Box::new(|_| {
+        let step = (0..4).map(|_| (next() >> 11) as f64).sum::<f64>() / (1u64 << 53) as f64;
+        price *= 1.0 + (step - 2.0) * 1e-3;
+        price.to_le_bytes().to_vec()
+    }));
     vec![
         ("f32-points".into(), points),
         ("sorted-u32".into(), sorted),
         ("i16-audio".into(), audio),
         ("u64-timestamps".into(), stamps),
+        ("f64-walk".into(), walk),
     ]
 }
 
@@ -1107,7 +1117,7 @@ pub fn filters(
     cfg: &SuiteConfig,
 ) -> anyhow::Result<Vec<Measurement>> {
     use cpu::container::{compress, decompress, CompressOptions, Encoder, FilterMode};
-    use format::{Codec, Filter, Index};
+    use format::{Codec, Index};
     use gpu::decode::GpuDecoder;
 
     let gpu = match ctx {
@@ -1235,22 +1245,20 @@ pub fn filters(
 
             let index = Index::parse(&files[1].1)?;
             let total = index.chunks.len() as f64;
-            for (bucket, wins) in [
-                ("none", Filter::None),
-                ("shuffle-4", Filter::Shuffle { width: 4 }),
-                ("delta-4", Filter::Delta { width: 4 }),
-                ("delta-shuffle-4", Filter::DeltaShuffle { width: 4 }),
-            ]
-            .map(|(bucket, f)| {
-                let count = index
-                    .chunks
-                    .iter()
-                    .filter(|c| !c.stored && c.filter == f)
-                    .count();
-                (bucket, count)
-            })
-            .into_iter()
-            .chain([("stored", index.chunks.iter().filter(|c| c.stored).count())])
+            for (bucket, wins) in cpu::filter::candidates(1)
+                .iter()
+                .map(|&f| {
+                    let count = index
+                        .chunks
+                        .iter()
+                        .filter(|c| !c.stored && c.filter == f)
+                        .count();
+                    (f.to_string(), count)
+                })
+                .chain([(
+                    "stored".to_string(),
+                    index.chunks.iter().filter(|c| c.stored).count(),
+                )])
             {
                 row(
                     format!("cpu.{codec_name}.auto.wins.{bucket}"),

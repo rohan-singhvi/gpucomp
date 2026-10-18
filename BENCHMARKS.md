@@ -6,149 +6,155 @@ Ratio = original size / compressed size. Timing: `gpu-timestamp` = kernel only, 
 
 ## Apple M4 Pro (metal)
 
-### Latest run — profile-loop · 2026-10-18T00:38:41Z · `2ff698d-dirty` · macos
+### Latest run — float-filters · 2026-10-18T20:26:29Z · `b7fc10b-dirty` · macos
 
 GB/s, with compression ratio where it applies.
 
-| Measurement | random | zeros | text | mixed | silesia/all | f32-points | sorted-u32 | i16-audio | u64-timestamps | Timing |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| cpu.memcpy | 65.48 | — | — | — | — | — | — | — | — | cpu |
-| gpu.upload | 10.26 | — | — | — | — | — | — | — | — | wall-e2e |
-| gpu.readback | 6.94 | — | — | — | — | — | — | — | — | wall-e2e |
-| gpu.xor.kernel | 91.31 | — | — | — | — | — | — | — | — | wall-gpu |
-| gpu.xor.e2e | 2.68 | — | — | — | — | — | — | — | — | wall-e2e |
-| cpu.lz4_flex.compress.1t | 5.08 · 1.00× | 30.82 · 224.43× | 4.08 · 2.10× | 4.26 · 2.03× | 3.64 · 2.04× | — | — | — | — | cpu |
-| cpu.lz4_flex.compress.mt | 8.96 · 1.00× | 40.36 · 224.43× | 5.33 · 2.10× | 8.18 · 2.03× | 6.23 · 2.04× | — | — | — | — | cpu |
-| cpu.greedy.compress.mt | 2.31 · 1.00× | 31.59 · 156.04× | 2.09 · 1.92× | 2.94 · 1.96× | 2.40 · 1.99× | — | — | — | — | cpu |
-| cpu.lz4_flex.decompress.1t | 15.73 · 1.00× | 18.06 · 224.43× | 2.80 · 2.10× | 6.47 · 2.03× | 3.14 · 2.04× | — | — | — | — | cpu |
-| cpu.lz4_flex.decompress.mt | 16.69 · 1.00× | 16.40 · 224.43× | 13.66 · 2.10× | 17.05 · 2.03× | 12.98 · 2.04× | — | — | — | — | cpu |
-| cpu.handwritten.decompress.mt | 16.44 · 1.00× | 6.57 · 224.43× | 13.72 · 2.10× | 11.10 · 2.03× | 13.75 · 2.04× | — | — | — | — | cpu |
-| cpu.zstd-1.compress.mt | 25.32 · 1.00× | 52.29 · 3276.80× | 4.38 · 3.42× | 9.26 · 2.32× | 5.76 · 2.76× | 7.63 · 1.56× | 6.84 · 1.31× | 10.07 · 1.04× | 5.81 · 3.90× | cpu |
-| cpu.zstd-1.decompress.mt | 16.35 · 1.00× | 13.99 · 3276.80× | 9.07 · 3.42× | 13.59 · 2.32× | 10.43 · 2.76× | 10.84 · 1.56× | 11.27 · 1.31× | 11.03 · 1.04× | 9.98 · 3.90× | cpu |
-| cpu.zstd-1-file.compress.mt | 10.50 · 1.00× | 43.76 · 29498.40× | 4.39 · 3.65× | 8.41 · 2.35× | 5.91 · 2.89× | 6.92 · 1.56× | 5.74 · 1.31× | 8.71 · 1.04× | 5.30 · 2.97× | cpu |
-| cpu.zstd-1-file.decompress.1t | 17.63 · 1.00× | 15.29 · 29498.40× | 1.34 · 3.65× | 3.40 · 2.35× | 1.62 · 2.89× | 1.44 · 1.56× | 1.52 · 1.31× | 1.43 · 1.04× | 1.39 · 2.97× | cpu |
-| cpu.zstd-3.compress.mt | 22.76 · 1.00× | 42.48 · 3276.80× | 3.62 · 3.62× | 7.51 · 2.35× | 4.34 · 2.88× | 5.19 · 1.56× | 3.66 · 1.32× | 9.64 · 1.04× | 5.28 · 3.90× | cpu |
-| cpu.zstd-3.decompress.mt | 16.77 · 1.00× | 15.10 · 3276.80× | 9.52 · 3.62× | 13.79 · 2.35× | 10.31 · 2.88× | 10.86 · 1.56× | 11.32 · 1.32× | 11.17 · 1.04× | 10.05 · 3.90× | cpu |
-| cpu.zstd-3-file.compress.mt | 8.86 · 1.00× | 23.18 · 31850.43× | 3.41 · 3.86× | 6.39 · 2.38× | 2.86 · 3.20× | 3.47 · 1.59× | 2.48 · 1.38× | 5.29 · 1.04× | 4.28 · 3.91× | cpu |
-| cpu.zstd-3-file.decompress.1t | 15.96 · 1.00× | 20.08 · 31850.43× | 1.41 · 3.86× | 3.64 · 2.38× | 1.50 · 3.20× | 1.30 · 1.59× | 1.27 · 1.38× | 1.29 · 1.04× | 1.38 · 3.91× | cpu |
-| cpu.glz.compress.mt | 2.43 · 1.00× | 37.49 · 364.07× | 2.18 · 1.92× | 2.97 · 1.97× | 2.36 · 1.95× | — | — | — | — | cpu |
-| cpu.glz.decompress.mt | 18.40 · 1.00× | 6.91 · 364.07× | 13.63 · 1.92× | 11.59 · 1.97× | 13.93 · 1.95× | — | — | — | — | cpu |
-| gpu.glz.compress.kernel | 7.86 · 1.00× | 4.99 · 364.07× | 2.93 · 1.92× | 4.46 · 1.97× | 3.46 · 1.95× | — | — | — | — | wall-gpu |
-| gpu.glz.compress.e2e | 5.10 · 1.00× | 4.46 · 364.07× | 2.58 · 1.92× | 3.72 · 1.97× | 2.91 · 1.95× | — | — | — | — | wall-e2e |
-| gpu.glz.decompress.kernel | 54.02 · 1.00× | 35.34 · 364.07× | 3.62 · 1.92× | 9.63 · 1.97× | 4.87 · 1.95× | — | — | — | — | wall-gpu |
-| gpu.glz.decompress.e2e | 10.54 · 1.00× | 11.04 · 364.07× | 2.86 · 1.92× | 5.67 · 1.97× | 3.84 · 1.95× | — | — | — | — | wall-e2e |
-| cpu.glz-g64.compress.mt | 2.93 · 1.00× | 1.43 · 364.07× | 0.71 · 1.66× | 1.13 · 1.87× | 0.96 · 1.57× | — | — | — | — | cpu |
-| gpu.glz-g64.compress.kernel | 6.72 · 1.00× | 6.06 · 364.07× | 2.04 · 1.66× | 2.58 · 1.87× | 1.39 · 1.57× | — | — | — | — | wall-gpu |
-| gpu.glz-g64.compress.e2e | 2.22 · 1.00× | 3.20 · 364.07× | 0.43 · 1.66× | 0.90 · 1.87× | 0.26 · 1.57× | — | — | — | — | wall-e2e |
-| gpu.glz-g64.decompress.kernel | 54.37 · 1.00× | 35.16 · 364.07× | 5.04 · 1.66× | 12.82 · 1.87× | 6.96 · 1.57× | — | — | — | — | wall-gpu |
-| gpu.glz-g64.decompress.e2e | 10.56 · 1.00× | 11.16 · 364.07× | 3.82 · 1.66× | 6.53 · 1.87× | 5.04 · 1.57× | — | — | — | — | wall-e2e |
-| cpu.glze.compress.mt | 1.84 · 1.00× | 34.54 · 1023.88× | 1.57 · 3.01× | 2.38 · 2.25× | 1.91 · 2.50× | — | — | — | — | cpu |
-| cpu.glze.decompress.mt | 17.61 · 1.00× | 6.67 · 1023.88× | 9.15 · 3.01× | 10.34 · 2.25× | 9.36 · 2.50× | — | — | — | — | cpu |
-| gpu.glze.compress.kernel | 4.14 · 1.00× | 4.42 · 1023.88× | 2.40 · 3.01× | 3.39 · 2.25× | 2.64 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.compress.e2e | 2.83 · 1.00× | 3.90 · 1023.88× | 2.11 · 3.01× | 2.83 · 2.25× | 2.24 · 2.50× | — | — | — | — | wall-e2e |
-| gpu.glze.decompress.kernel | 26.79 · 1.00× | 34.33 · 1023.88× | 2.96 · 3.01× | 7.69 · 2.25× | 3.62 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.decompress.e2e | 9.42 · 1.00× | 11.77 · 1023.88× | 2.53 · 3.01× | 4.79 · 2.25× | 2.85 · 2.50× | — | — | — | — | wall-e2e |
-| cpu.glze.l2.compress.mt | 0.88 · 1.00× | 16.68 · 1023.88× | 1.06 · 3.30× | 1.36 · 2.30× | 1.17 · 2.68× | — | — | — | — | cpu |
-| cpu.glze.l2.decompress.mt | 17.63 · 1.00× | 6.89 · 1023.88× | 9.87 · 3.30× | 10.89 · 2.30× | 9.79 · 2.68× | — | — | — | — | cpu |
-| gpu.glze.l2.compress.kernel | 2.52 · 1.00× | 3.53 · 1023.88× | 1.42 · 3.30× | 2.23 · 2.30× | 1.57 · 2.68× | — | — | — | — | wall-gpu |
-| gpu.glze.l2.compress.e2e | 2.03 · 1.00× | 3.07 · 1023.88× | 1.32 · 3.30× | 1.95 · 2.30× | 1.43 · 2.68× | — | — | — | — | wall-e2e |
-| gpu.glze.l2.decompress.kernel | 26.78 · 1.00× | 34.29 · 1023.88× | 3.39 · 3.30× | 8.61 · 2.30× | 3.78 · 2.68× | — | — | — | — | wall-gpu |
-| gpu.glze.l2.decompress.e2e | 9.33 · 1.00× | 11.16 · 1023.88× | 2.81 · 3.30× | 5.29 · 2.30× | 2.97 · 2.68× | — | — | — | — | wall-e2e |
-| cpu.glze.l3.compress.mt | 0.30 · 1.00× | 28.72 · 1023.88× | 0.59 · 3.51× | 0.59 · 2.33× | 0.68 · 2.75× | — | — | — | — | cpu |
-| cpu.glze.l3.decompress.mt | 17.27 · 1.00× | 6.89 · 1023.88× | 9.80 · 3.51× | 10.98 · 2.33× | 9.97 · 2.75× | — | — | — | — | cpu |
-| gpu.glze.l3.compress.kernel | 1.56 · 1.00× | 3.52 · 1023.88× | 0.69 · 3.51× | 1.32 · 2.33× | 0.91 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.e2e | 1.53 · 1.00× | 3.04 · 1023.88× | 0.66 · 3.51× | 1.22 · 2.33× | 0.85 · 2.75× | — | — | — | — | wall-e2e |
-| gpu.glze.l3.decompress.kernel | 26.91 · 1.00× | 34.25 · 1023.88× | 3.90 · 3.51× | 9.69 · 2.33× | 3.94 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.decompress.e2e | 9.36 · 1.00× | 11.93 · 1023.88× | 3.17 · 3.51× | 5.70 · 2.33× | 3.10 · 2.75× | — | — | — | — | wall-e2e |
-| gpu.lz4.decompress.naive.kernel | 44.77 · 1.00× | 29.09 · 224.43× | 7.62 · 2.10× | 8.45 · 2.03× | 1.98 · 2.04× | — | — | — | — | wall-gpu |
-| gpu.lz4.decompress.naive.e2e | 10.57 · 1.00× | 10.50 · 224.43× | 3.46 · 2.10× | 4.70 · 2.03× | 0.95 · 2.04× | — | — | — | — | wall-e2e |
-| gpu.lz4.decompress.coop.kernel | 50.99 · 1.00× | 33.75 · 224.43× | 1.91 · 2.10× | 5.00 · 2.03× | 3.30 · 2.04× | — | — | — | — | wall-gpu |
-| gpu.lz4.decompress.coop.e2e | 10.64 · 1.00× | 11.71 · 224.43× | 1.68 · 2.10× | 3.68 · 2.03× | 2.70 · 2.04× | — | — | — | — | wall-e2e |
-| gpu.lz4.compress.kernel | 7.88 · 1.00× | 4.97 · 156.04× | 2.95 · 1.92× | 4.44 · 1.96× | 3.48 · 1.99× | — | — | — | — | wall-gpu |
-| gpu.lz4.compress.e2e | 5.21 · 1.00× | 4.47 · 156.04× | 2.57 · 1.92× | 3.71 · 1.96× | 3.02 · 1.99× | — | — | — | — | wall-e2e |
-| gpu.lz4.l2.compress.kernel | 3.57 · 1.00× | 3.88 · 156.04× | 1.59 · 2.26× | 2.65 · 2.07× | 1.82 · 2.21× | — | — | — | — | wall-gpu |
-| gpu.lz4.l2.compress.e2e | 2.98 · 1.00× | 3.31 · 156.04× | 1.47 · 2.26× | 2.30 · 2.07× | 1.65 · 2.21× | — | — | — | — | wall-e2e |
-| gpu.lz4.l3.compress.kernel | 1.92 · 1.00× | 3.87 · 156.04× | 0.72 · 2.61× | 1.46 · 2.16× | 0.98 · 2.32× | — | — | — | — | wall-gpu |
-| gpu.lz4.l3.compress.e2e | 1.96 · 1.00× | 3.31 · 156.04× | 0.69 · 2.61× | 1.33 · 2.16× | 0.92 · 2.32× | — | — | — | — | wall-e2e |
-| gpu.lz4.compress.upto.match | — | — | — | — | 7.02 · 1.99× | — | — | — | — | wall-gpu |
-| gpu.lz4.compress.upto.parse | — | — | — | — | 4.34 · 1.99× | — | — | — | — | wall-gpu |
-| gpu.lz4.compress.upto.emit | — | — | — | — | 3.47 · 1.99× | — | — | — | — | wall-gpu |
-| gpu.lz4.l3.compress.upto.match | — | — | — | — | 6.64 · 2.32× | — | — | — | — | wall-gpu |
-| gpu.lz4.l3.compress.upto.deep | — | — | — | — | 1.14 · 2.32× | — | — | — | — | wall-gpu |
-| gpu.lz4.l3.compress.upto.parse | — | — | — | — | 1.03 · 2.32× | — | — | — | — | wall-gpu |
-| gpu.lz4.l3.compress.upto.emit | — | — | — | — | 0.98 · 2.32× | — | — | — | — | wall-gpu |
-| gpu.glze.compress.upto.match | — | — | — | — | 6.91 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.compress.upto.parse | — | — | — | — | 4.30 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.compress.upto.emit | — | — | — | — | 3.44 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.compress.upto.glze-hist | — | — | — | — | 3.14 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.compress.upto.glze-build | — | — | — | — | 3.07 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.compress.upto.glze-write | — | — | — | — | 2.64 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.upto.match | — | — | — | — | 6.52 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.upto.deep | — | — | — | — | 1.14 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.upto.parse | — | — | — | — | 1.04 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.upto.emit | — | — | — | — | 0.98 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.upto.glze-hist | — | — | — | — | 0.96 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.upto.glze-build | — | — | — | — | 0.95 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.glze.l3.compress.upto.glze-write | — | — | — | — | 0.91 · 2.75× | — | — | — | — | wall-gpu |
-| gpu.lz4.decompress.upto.decode | — | — | — | — | 3.29 · 2.04× | — | — | — | — | wall-gpu |
-| gpu.glz.decompress.upto.decode | — | — | — | — | 4.92 · 1.95× | — | — | — | — | wall-gpu |
-| gpu.glze.decompress.upto.glze-entropy | — | — | — | — | 12.80 · 2.50× | — | — | — | — | wall-gpu |
-| gpu.glze.decompress.upto.decode | — | — | — | — | 3.62 · 2.50× | — | — | — | — | wall-gpu |
-| hybrid.lz4.compress.e2e | 3.81 · 1.00× | 42.32 · 156.04× | 3.44 · 1.92× | 2.75 · 1.96× | 3.94 · 1.99× | — | — | — | — | wall-e2e |
-| hybrid.lz4.decompress.e2e | 15.13 · 1.00× | 16.70 · 156.04× | 14.11 · 1.92× | 16.63 · 1.96× | 13.14 · 1.99× | — | — | — | — | wall-e2e |
-| hybrid.glze.compress.e2e | 3.15 · 1.00× | 58.32 · 1023.88× | 3.17 · 3.01× | 2.44 · 2.25× | 3.18 · 2.50× | — | — | — | — | wall-e2e |
-| hybrid.glze.decompress.e2e | 14.58 · 1.00× | 7.34 · 1023.88× | 8.91 · 3.01× | 10.16 · 2.25× | 8.52 · 2.50× | — | — | — | — | wall-e2e |
-| hybrid.glze.l3.compress.e2e | 1.47 · 1.00× | 47.83 · 1023.88× | 1.14 · 3.51× | 0.58 · 2.33× | 1.28 · 2.75× | — | — | — | — | wall-e2e |
-| hybrid.glze.l3.decompress.e2e | 16.39 · 1.00× | 7.10 · 1023.88× | 9.39 · 3.51× | 10.85 · 2.33× | 9.14 · 2.75× | — | — | — | — | wall-e2e |
-| hybrid.lz4_flex.compress.e2e | 10.57 · 1.00× | 15.43 · 202.27× | 6.24 · 2.06× | 10.12 · 2.02× | 7.47 · 2.03× | — | — | — | — | wall-e2e |
-| file.cpu.lz4_flex.compress | — | — | — | — | 6.23 · 2.04× | — | — | — | — | cpu |
-| file.cpu.lz4.decompress | — | — | — | — | 9.45 · 2.04× | — | — | — | — | cpu |
-| file.zstd-1.compress.mt | — | — | — | — | 4.88 · 2.89× | — | — | — | — | cpu |
-| file.zstd-1.decompress.1t | — | — | — | — | 1.50 · 2.89× | — | — | — | — | cpu |
-| file.gpu.lz4.compress | — | — | — | — | 2.26 · 1.99× | — | — | — | — | wall-e2e |
-| file.gpu.lz4.decompress | — | — | — | — | 1.77 · 1.99× | — | — | — | — | wall-e2e |
-| file.hybrid.lz4_flex.compress | — | — | — | — | 3.89 · 2.03× | — | — | — | — | wall-e2e |
-| cpu.lz4.compress.none.mt | — | — | — | — | 2.41 · 1.99× | 2.12 · 1.05× | 2.29 · 1.00× | 2.21 · 1.00× | 2.77 · 1.56× | cpu |
-| cpu.lz4.compress.auto.mt | — | — | — | — | 1.40 · 2.05× | 1.47 · 1.38× | 2.15 · 3.86× | 1.01 · 1.18× | 1.73 · 2.58× | cpu |
-| gpu.lz4.decompress.none.kernel | — | — | — | — | 2.80 · 1.99× | 6.84 · 1.05× | 50.04 · 1.00× | 53.82 · 1.00× | 2.10 · 1.56× | wall-gpu |
-| gpu.lz4.decompress.auto.kernel | — | — | — | — | 2.79 · 2.05× | 9.79 · 1.38× | 6.55 · 3.86× | 2.52 · 1.18× | 3.85 · 2.58× | wall-gpu |
-| gpu.lz4.decompress.auto.e2e | — | — | — | — | 2.30 · 2.05× | 5.95 · 1.38× | 4.93 · 3.86× | 2.02 · 1.18× | 2.99 · 2.58× | wall-e2e |
-| gpu.lz4.compress.auto.e2e | — | — | — | — | 1.55 · 2.05× | 1.78 · 1.38× | 1.77 · 3.86× | 1.53 · 1.18× | 1.58 · 2.58× | wall-e2e |
-| cpu.lz4.auto.wins.none | — | — | — | — | 0.88 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
-| cpu.lz4.auto.wins.shuffle-4 | — | — | — | — | 0.10 | 0.87 | 0.00 | 0.00 | 0.92 | cpu |
-| cpu.lz4.auto.wins.delta-4 | — | — | — | — | 0.01 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
-| cpu.lz4.auto.wins.delta-shuffle-4 | — | — | — | — | 0.00 | 0.13 | 1.00 | 1.00 | 0.08 | cpu |
-| cpu.lz4.auto.wins.stored | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
-| cpu.lz4.compress.exhaustive.mt | — | — | — | — | 0.54 · 2.06× | 0.59 · 1.39× | 0.72 · 3.86× | 0.47 · 1.18× | 0.65 · 2.60× | cpu |
-| gpu.lz4.compress.exhaustive.e2e | — | — | — | — | 0.72 · 2.06× | 0.97 · 1.39× | 0.92 · 3.86× | 0.91 · 1.18× | 0.81 · 2.60× | wall-e2e |
-| cpu.glz.compress.none.mt | — | — | — | — | 2.37 · 1.95× | 2.11 · 1.04× | 2.31 · 1.00× | 2.28 · 1.00× | 2.70 · 1.56× | cpu |
-| cpu.glz.compress.auto.mt | — | — | — | — | 1.40 · 2.01× | 1.48 · 1.38× | 2.16 · 3.91× | 1.01 · 1.18× | 1.74 · 2.52× | cpu |
-| gpu.glz.decompress.none.kernel | — | — | — | — | 4.85 · 1.95× | 13.69 · 1.04× | 48.44 · 1.00× | 49.33 · 1.00× | 4.69 · 1.56× | wall-gpu |
-| gpu.glz.decompress.auto.kernel | — | — | — | — | 4.69 · 2.01× | 10.84 · 1.38× | 6.70 · 3.91× | 3.65 · 1.18× | 5.24 · 2.52× | wall-gpu |
-| gpu.glz.decompress.auto.e2e | — | — | — | — | 3.68 · 2.01× | 6.45 · 1.38× | 4.95 · 3.91× | 2.83 · 1.18× | 3.97 · 2.52× | wall-e2e |
-| gpu.glz.compress.auto.e2e | — | — | — | — | 1.55 · 2.01× | 1.78 · 1.38× | 1.77 · 3.91× | 1.54 · 1.18× | 1.58 · 2.52× | wall-e2e |
-| cpu.glz.auto.wins.none | — | — | — | — | 0.88 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
-| cpu.glz.auto.wins.shuffle-4 | — | — | — | — | 0.10 | 0.87 | 0.00 | 0.00 | 0.91 | cpu |
-| cpu.glz.auto.wins.delta-4 | — | — | — | — | 0.01 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
-| cpu.glz.auto.wins.delta-shuffle-4 | — | — | — | — | 0.00 | 0.13 | 1.00 | 1.00 | 0.09 | cpu |
-| cpu.glz.auto.wins.stored | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
-| cpu.glz.compress.exhaustive.mt | — | — | — | — | 0.53 · 2.01× | 0.59 · 1.39× | 0.69 · 3.91× | 0.48 · 1.18× | 0.64 · 2.54× | cpu |
-| gpu.glz.compress.exhaustive.e2e | — | — | — | — | 0.72 · 2.01× | 0.98 · 1.39× | 0.92 · 3.91× | 0.93 · 1.18× | 0.81 · 2.54× | wall-e2e |
-| cpu.glze.compress.none.mt | — | — | — | — | 1.91 · 2.50× | 1.63 · 1.21× | 1.72 · 1.29× | 1.76 · 1.03× | 2.26 · 2.81× | cpu |
-| cpu.glze.compress.auto.mt | — | — | — | — | 1.02 · 2.55× | 1.11 · 1.45× | 1.67 · 5.07× | 0.81 · 1.28× | 1.30 · 3.17× | cpu |
-| gpu.glze.decompress.none.kernel | — | — | — | — | 3.58 · 2.50× | 5.02 · 1.21× | 10.99 · 1.29× | 11.12 · 1.03× | 3.87 · 2.81× | wall-gpu |
-| gpu.glze.decompress.auto.kernel | — | — | — | — | 3.46 · 2.55× | 6.63 · 1.45× | 5.97 · 5.07× | 5.16 · 1.28× | 3.76 · 3.17× | wall-gpu |
-| gpu.glze.decompress.auto.e2e | — | — | — | — | 2.85 · 2.55× | 4.94 · 1.45× | 4.52 · 5.07× | 4.07 · 1.28× | 3.10 · 3.17× | wall-e2e |
-| gpu.glze.compress.auto.e2e | — | — | — | — | 1.11 · 2.55× | 1.15 · 1.45× | 1.27 · 5.07× | 1.10 · 1.28× | 1.15 · 3.17× | wall-e2e |
-| cpu.glze.auto.wins.none | — | — | — | — | 0.89 | 0.00 | 0.00 | 0.00 | 0.40 | cpu |
-| cpu.glze.auto.wins.shuffle-4 | — | — | — | — | 0.05 | 1.00 | 0.00 | 0.00 | 0.60 | cpu |
-| cpu.glze.auto.wins.delta-4 | — | — | — | — | 0.03 | 0.00 | 0.00 | 0.79 | 0.00 | cpu |
-| cpu.glze.auto.wins.delta-shuffle-4 | — | — | — | — | 0.04 | 0.00 | 1.00 | 0.21 | 0.00 | cpu |
-| cpu.glze.auto.wins.stored | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
-| cpu.glze.compress.exhaustive.mt | — | — | — | — | 0.42 · 2.56× | 0.46 · 1.45× | 0.57 · 5.07× | 0.38 · 1.34× | 0.52 · 3.45× | cpu |
-| gpu.glze.compress.exhaustive.e2e | — | — | — | — | 0.54 · 2.56× | 0.60 · 1.45× | 0.66 · 5.07× | 0.56 · 1.34× | 0.62 · 3.45× | wall-e2e |
+| Measurement | random | zeros | text | mixed | silesia/all | f32-points | sorted-u32 | i16-audio | u64-timestamps | f64-walk | Timing |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| cpu.memcpy | 66.81 | — | — | — | — | — | — | — | — | — | cpu |
+| gpu.upload | 10.64 | — | — | — | — | — | — | — | — | — | wall-e2e |
+| gpu.readback | 7.16 | — | — | — | — | — | — | — | — | — | wall-e2e |
+| gpu.xor.kernel | 68.51 | — | — | — | — | — | — | — | — | — | wall-gpu |
+| gpu.xor.e2e | 2.75 | — | — | — | — | — | — | — | — | — | wall-e2e |
+| cpu.lz4_flex.compress.1t | 4.94 · 1.00× | 29.15 · 224.43× | 4.35 · 2.10× | 3.98 · 2.03× | 2.77 · 2.04× | — | — | — | — | — | cpu |
+| cpu.lz4_flex.compress.mt | 9.30 · 1.00× | 39.78 · 224.43× | 5.53 · 2.10× | 8.55 · 2.03× | 5.19 · 2.04× | — | — | — | — | — | cpu |
+| cpu.greedy.compress.mt | 2.43 · 1.00× | 31.44 · 156.04× | 2.20 · 1.92× | 2.94 · 1.96× | 2.14 · 1.99× | — | — | — | — | — | cpu |
+| cpu.lz4_flex.decompress.1t | 16.58 · 1.00× | 20.84 · 224.43× | 2.92 · 2.10× | 6.44 · 2.03× | 3.16 · 2.04× | — | — | — | — | — | cpu |
+| cpu.lz4_flex.decompress.mt | 16.95 · 1.00× | 18.12 · 224.43× | 14.08 · 2.10× | 17.21 · 2.03× | 13.24 · 2.04× | — | — | — | — | — | cpu |
+| cpu.handwritten.decompress.mt | 16.43 · 1.00× | 7.02 · 224.43× | 13.98 · 2.10× | 11.21 · 2.03× | 12.38 · 2.04× | — | — | — | — | — | cpu |
+| cpu.zstd-1.compress.mt | 22.48 · 1.00× | 43.56 · 3276.80× | 4.30 · 3.42× | 9.62 · 2.32× | 5.75 · 2.76× | 7.99 · 1.56× | 6.96 · 1.31× | 10.36 · 1.04× | 5.84 · 3.90× | 10.15 · 1.11× | cpu |
+| cpu.zstd-1.decompress.mt | 16.11 · 1.00× | 13.93 · 3276.80× | 9.15 · 3.42× | 13.90 · 2.32× | 10.12 · 2.76× | 11.07 · 1.56× | 11.32 · 1.31× | 10.65 · 1.04× | 9.98 · 3.90× | 11.02 · 1.11× | cpu |
+| cpu.zstd-1-file.compress.mt | 10.20 · 1.00× | 46.61 · 29498.40× | 4.45 · 3.65× | 8.51 · 2.35× | 5.81 · 2.89× | 7.23 · 1.56× | 5.99 · 1.31× | 8.85 · 1.04× | 5.27 · 2.97× | 9.00 · 1.11× | cpu |
+| cpu.zstd-1-file.decompress.1t | 16.30 · 1.00× | 15.22 · 29498.40× | 1.35 · 3.65× | 3.42 · 2.35× | 1.63 · 2.89× | 1.43 · 1.56× | 1.53 · 1.31× | 1.41 · 1.04× | 1.37 · 2.97× | 1.42 · 1.11× | cpu |
+| cpu.zstd-3.compress.mt | 22.07 · 1.00× | 39.68 · 3276.80× | 3.61 · 3.62× | 7.99 · 2.35× | 4.29 · 2.88× | 5.46 · 1.56× | 3.76 · 1.32× | 9.83 · 1.04× | 5.29 · 3.90× | 9.61 · 1.11× | cpu |
+| cpu.zstd-3.decompress.mt | 15.83 · 1.00× | 14.91 · 3276.80× | 9.68 · 3.62× | 14.21 · 2.35× | 10.27 · 2.88× | 10.88 · 1.56× | 11.49 · 1.32× | 10.95 · 1.04× | 9.99 · 3.90× | 10.75 · 1.11× | cpu |
+| cpu.zstd-3-file.compress.mt | 8.68 · 1.00× | 24.29 · 31850.43× | 3.47 · 3.86× | 6.64 · 2.38× | 2.93 · 3.20× | 3.55 · 1.59× | 2.51 · 1.38× | 5.24 · 1.04× | 4.22 · 3.91× | 6.28 · 1.12× | cpu |
+| cpu.zstd-3-file.decompress.1t | 16.60 · 1.00× | 19.39 · 31850.43× | 1.42 · 3.86× | 3.63 · 2.38× | 1.51 · 3.20× | 1.31 · 1.59× | 1.27 · 1.38× | 1.27 · 1.04× | 1.36 · 3.91× | 1.28 · 1.12× | cpu |
+| cpu.glz.compress.mt | 2.56 · 1.00× | 36.69 · 364.07× | 2.30 · 1.92× | 3.26 · 1.97× | 2.46 · 1.95× | — | — | — | — | — | cpu |
+| cpu.glz.decompress.mt | 18.03 · 1.00× | 7.31 · 364.07× | 14.58 · 1.92× | 11.19 · 1.97× | 12.78 · 1.95× | — | — | — | — | — | cpu |
+| gpu.glz.compress.kernel | 7.91 · 1.00× | 5.01 · 364.07× | 3.00 · 1.92× | 4.51 · 1.97× | 3.52 · 1.95× | — | — | — | — | — | wall-gpu |
+| gpu.glz.compress.e2e | 5.24 · 1.00× | 4.53 · 364.07× | 2.63 · 1.92× | 3.77 · 1.97× | 3.03 · 1.95× | — | — | — | — | — | wall-e2e |
+| gpu.glz.decompress.kernel | 54.89 · 1.00× | 35.58 · 364.07× | 3.68 · 1.92× | 9.82 · 1.97× | 4.98 · 1.95× | — | — | — | — | — | wall-gpu |
+| gpu.glz.decompress.e2e | 10.45 · 1.00× | 11.25 · 364.07× | 2.92 · 1.92× | 5.74 · 1.97× | 3.92 · 1.95× | — | — | — | — | — | wall-e2e |
+| cpu.glz-g64.compress.mt | 3.05 · 1.00× | 1.35 · 364.07× | 0.76 · 1.66× | 1.22 · 1.87× | 0.98 · 1.57× | — | — | — | — | — | cpu |
+| gpu.glz-g64.compress.kernel | 6.77 · 1.00× | 6.08 · 364.07× | 2.05 · 1.66× | 2.59 · 1.87× | 1.41 · 1.57× | — | — | — | — | — | wall-gpu |
+| gpu.glz-g64.compress.e2e | 2.24 · 1.00× | 3.21 · 364.07× | 0.43 · 1.66× | 0.91 · 1.87× | 0.29 · 1.57× | — | — | — | — | — | wall-e2e |
+| gpu.glz-g64.decompress.kernel | 54.90 · 1.00× | 35.56 · 364.07× | 5.17 · 1.66× | 13.08 · 1.87× | 7.03 · 1.57× | — | — | — | — | — | wall-gpu |
+| gpu.glz-g64.decompress.e2e | 10.17 · 1.00× | 11.05 · 364.07× | 3.96 · 1.66× | 6.73 · 1.87× | 5.10 · 1.57× | — | — | — | — | — | wall-e2e |
+| cpu.glze.compress.mt | 1.77 · 1.00× | 38.21 · 1023.88× | 1.72 · 3.01× | 2.69 · 2.25× | 1.91 · 2.50× | — | — | — | — | — | cpu |
+| cpu.glze.decompress.mt | 17.34 · 1.00× | 7.60 · 1023.88× | 9.37 · 3.01× | 10.55 · 2.25× | 8.94 · 2.50× | — | — | — | — | — | cpu |
+| gpu.glze.compress.kernel | 4.18 · 1.00× | 4.45 · 1023.88× | 2.44 · 3.01× | 3.43 · 2.25× | 2.68 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.compress.e2e | 2.90 · 1.00× | 3.94 · 1023.88× | 2.18 · 3.01× | 2.87 · 2.25× | 2.28 · 2.50× | — | — | — | — | — | wall-e2e |
+| gpu.glze.decompress.kernel | 27.33 · 1.00× | 34.71 · 1023.88× | 3.01 · 3.01× | 7.85 · 2.25× | 3.61 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.decompress.e2e | 9.54 · 1.00× | 11.80 · 1023.88× | 2.58 · 3.01× | 4.91 · 2.25× | 2.89 · 2.50× | — | — | — | — | — | wall-e2e |
+| cpu.glze.l2.compress.mt | 0.88 · 1.00× | 18.08 · 1023.88× | 1.12 · 3.30× | 1.57 · 2.30× | 1.21 · 2.68× | — | — | — | — | — | cpu |
+| cpu.glze.l2.decompress.mt | 17.38 · 1.00× | 7.28 · 1023.88× | 9.92 · 3.30× | 11.10 · 2.30× | 9.92 · 2.68× | — | — | — | — | — | cpu |
+| gpu.glze.l2.compress.kernel | 2.52 · 1.00× | 3.57 · 1023.88× | 1.44 · 3.30× | 2.25 · 2.30× | 1.59 · 2.68× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l2.compress.e2e | 2.24 · 1.00× | 3.11 · 1023.88× | 1.34 · 3.30× | 1.97 · 2.30× | 1.45 · 2.68× | — | — | — | — | — | wall-e2e |
+| gpu.glze.l2.decompress.kernel | 27.34 · 1.00× | 34.77 · 1023.88× | 3.45 · 3.30× | 8.73 · 2.30× | 3.86 · 2.68× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l2.decompress.e2e | 9.50 · 1.00× | 12.14 · 1023.88× | 2.87 · 3.30× | 5.31 · 2.30× | 3.03 · 2.68× | — | — | — | — | — | wall-e2e |
+| cpu.glze.l3.compress.mt | 0.31 · 1.00× | 31.49 · 1023.88× | 0.62 · 3.51× | 0.61 · 2.33× | 0.69 · 2.75× | — | — | — | — | — | cpu |
+| cpu.glze.l3.decompress.mt | 17.62 · 1.00× | 7.84 · 1023.88× | 10.45 · 3.51× | 10.51 · 2.33× | 9.98 · 2.75× | — | — | — | — | — | cpu |
+| gpu.glze.l3.compress.kernel | 1.57 · 1.00× | 3.57 · 1023.88× | 0.69 · 3.51× | 1.34 · 2.33× | 0.92 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.e2e | 1.53 · 1.00× | 3.12 · 1023.88× | 0.67 · 3.51× | 1.23 · 2.33× | 0.87 · 2.75× | — | — | — | — | — | wall-e2e |
+| gpu.glze.l3.decompress.kernel | 27.25 · 1.00× | 34.79 · 1023.88× | 3.96 · 3.51× | 9.69 · 2.33× | 3.97 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.decompress.e2e | 9.52 · 1.00× | 12.11 · 1023.88× | 3.20 · 3.51× | 4.75 · 2.33× | 3.15 · 2.75× | — | — | — | — | — | wall-e2e |
+| gpu.lz4.decompress.naive.kernel | 41.49 · 1.00× | 32.33 · 224.43× | 7.70 · 2.10× | 8.55 · 2.03× | 1.98 · 2.04× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.decompress.naive.e2e | 10.38 · 1.00× | 10.41 · 224.43× | 3.58 · 2.10× | 4.71 · 2.03× | 0.94 · 2.04× | — | — | — | — | — | wall-e2e |
+| gpu.lz4.decompress.coop.kernel | 49.57 · 1.00× | 33.87 · 224.43× | 2.08 · 2.10× | 5.14 · 2.03× | 3.41 · 2.04× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.decompress.coop.e2e | 10.58 · 1.00× | 11.61 · 224.43× | 1.77 · 2.10× | 3.85 · 2.03× | 2.78 · 2.04× | — | — | — | — | — | wall-e2e |
+| gpu.lz4.compress.kernel | 7.92 · 1.00× | 4.99 · 156.04× | 3.00 · 1.92× | 4.50 · 1.96× | 3.52 · 1.99× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.compress.e2e | 5.25 · 1.00× | 4.49 · 156.04× | 2.65 · 1.92× | 3.82 · 1.96× | 3.06 · 1.99× | — | — | — | — | — | wall-e2e |
+| gpu.lz4.l2.compress.kernel | 3.58 · 1.00× | 3.91 · 156.04× | 1.61 · 2.26× | 2.67 · 2.07× | 1.84 · 2.21× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.l2.compress.e2e | 3.02 · 1.00× | 3.35 · 156.04× | 1.34 · 2.26× | 2.31 · 2.07× | 1.70 · 2.21× | — | — | — | — | — | wall-e2e |
+| gpu.lz4.l3.compress.kernel | 1.93 · 1.00× | 3.90 · 156.04× | 0.73 · 2.61× | 1.41 · 2.16× | 0.96 · 2.32× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.l3.compress.e2e | 2.02 · 1.00× | 3.34 · 156.04× | 0.70 · 2.61× | 1.33 · 2.16× | 0.89 · 2.32× | — | — | — | — | — | wall-e2e |
+| gpu.lz4.compress.upto.match | — | — | — | — | 6.91 · 1.99× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.compress.upto.parse | — | — | — | — | 4.30 · 1.99× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.compress.upto.emit | — | — | — | — | 3.41 · 1.99× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.l3.compress.upto.match | — | — | — | — | 6.59 · 2.32× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.l3.compress.upto.deep | — | — | — | — | 1.13 · 2.32× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.l3.compress.upto.parse | — | — | — | — | 1.02 · 2.32× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.l3.compress.upto.emit | — | — | — | — | 0.97 · 2.32× | — | — | — | — | — | wall-gpu |
+| gpu.glze.compress.upto.match | — | — | — | — | 6.88 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.compress.upto.parse | — | — | — | — | 4.31 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.compress.upto.emit | — | — | — | — | 3.44 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.compress.upto.glze-hist | — | — | — | — | 3.14 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.compress.upto.glze-build | — | — | — | — | 3.07 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.compress.upto.glze-write | — | — | — | — | 2.64 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.upto.match | — | — | — | — | 6.55 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.upto.deep | — | — | — | — | 1.12 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.upto.parse | — | — | — | — | 1.02 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.upto.emit | — | — | — | — | 0.98 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.upto.glze-hist | — | — | — | — | 0.95 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.upto.glze-build | — | — | — | — | 0.93 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.glze.l3.compress.upto.glze-write | — | — | — | — | 0.90 · 2.75× | — | — | — | — | — | wall-gpu |
+| gpu.lz4.decompress.upto.decode | — | — | — | — | 3.33 · 2.04× | — | — | — | — | — | wall-gpu |
+| gpu.glz.decompress.upto.decode | — | — | — | — | 4.92 · 1.95× | — | — | — | — | — | wall-gpu |
+| gpu.glze.decompress.upto.glze-entropy | — | — | — | — | 12.87 · 2.50× | — | — | — | — | — | wall-gpu |
+| gpu.glze.decompress.upto.decode | — | — | — | — | 3.58 · 2.50× | — | — | — | — | — | wall-gpu |
+| hybrid.lz4.compress.e2e | 4.17 · 1.00× | 56.64 · 156.04× | 3.56 · 1.92× | 2.74 · 1.96× | 3.85 · 1.99× | — | — | — | — | — | wall-e2e |
+| hybrid.lz4.decompress.e2e | 15.51 · 1.00× | 16.79 · 156.04× | 14.25 · 1.92× | 16.44 · 1.96× | 13.41 · 1.99× | — | — | — | — | — | wall-e2e |
+| hybrid.glze.compress.e2e | 3.17 · 1.00× | 60.36 · 1023.88× | 3.24 · 3.01× | 2.44 · 2.25× | 3.18 · 2.50× | — | — | — | — | — | wall-e2e |
+| hybrid.glze.decompress.e2e | 15.89 · 1.00× | 7.96 · 1023.88× | 8.63 · 3.01× | 10.34 · 2.25× | 8.42 · 2.50× | — | — | — | — | — | wall-e2e |
+| hybrid.glze.l3.compress.e2e | 1.48 · 1.00× | 45.62 · 1023.88× | 1.14 · 3.51× | 0.57 · 2.33× | 1.26 · 2.75× | — | — | — | — | — | wall-e2e |
+| hybrid.glze.l3.decompress.e2e | 15.47 · 1.00× | 7.24 · 1023.88× | 9.24 · 3.51× | 10.56 · 2.33× | 9.09 · 2.75× | — | — | — | — | — | wall-e2e |
+| hybrid.lz4_flex.compress.e2e | 9.74 · 1.00× | 15.74 · 202.27× | 6.20 · 2.06× | 9.78 · 2.02× | 7.52 · 2.03× | — | — | — | — | — | wall-e2e |
+| file.cpu.lz4_flex.compress | — | — | — | — | 6.18 · 2.04× | — | — | — | — | — | cpu |
+| file.cpu.lz4.decompress | — | — | — | — | 9.26 · 2.04× | — | — | — | — | — | cpu |
+| file.zstd-1.compress.mt | — | — | — | — | 4.88 · 2.89× | — | — | — | — | — | cpu |
+| file.zstd-1.decompress.1t | — | — | — | — | 1.37 · 2.89× | — | — | — | — | — | cpu |
+| file.gpu.lz4.compress | — | — | — | — | 2.10 · 1.99× | — | — | — | — | — | wall-e2e |
+| file.gpu.lz4.decompress | — | — | — | — | 1.49 · 1.99× | — | — | — | — | — | wall-e2e |
+| file.hybrid.lz4_flex.compress | — | — | — | — | 3.38 · 2.03× | — | — | — | — | — | wall-e2e |
+| cpu.lz4.compress.none.mt | — | — | — | — | 2.46 · 1.99× | 2.10 · 1.05× | 2.20 · 1.00× | 2.13 · 1.00× | 2.76 · 1.56× | 2.17 · 1.00× | cpu |
+| cpu.lz4.compress.auto.mt | — | — | — | — | 1.14 · 2.09× | 1.12 · 1.43× | 1.59 · 4.36× | 0.81 · 1.25× | 1.85 · 11.23× | 1.06 · 1.43× | cpu |
+| gpu.lz4.decompress.none.kernel | — | — | — | — | 2.85 · 1.99× | 7.01 · 1.05× | 49.67 · 1.00× | 48.56 · 1.00× | 2.14 · 1.56× | 49.22 · 1.00× | wall-gpu |
+| gpu.lz4.decompress.auto.kernel | — | — | — | — | 2.94 · 2.09× | 5.78 · 1.43× | 6.82 · 4.36× | 3.14 · 1.25× | 6.72 · 11.23× | 6.97 · 1.43× | wall-gpu |
+| gpu.lz4.decompress.auto.e2e | — | — | — | — | 2.51 · 2.09× | 4.07 · 1.43× | 5.10 · 4.36× | 2.40 · 1.25× | 5.17 · 11.23× | 4.75 · 1.43× | wall-e2e |
+| gpu.lz4.compress.auto.e2e | — | — | — | — | 1.38 · 2.09× | 1.55 · 1.43× | 1.61 · 4.36× | 1.46 · 1.25× | 1.65 · 11.23× | 1.84 · 1.43× | wall-e2e |
+| cpu.lz4.auto.wins.none | — | — | — | — | 0.86 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.lz4.auto.wins.shuffle-4 | — | — | — | — | 0.01 | 0.50 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.lz4.auto.wins.delta-4 | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.lz4.auto.wins.delta-shuffle-4 | — | — | — | — | 0.00 | 0.08 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.lz4.auto.wins.delta-zigzag-shuffle-2 | — | — | — | — | 0.07 | 0.00 | 0.00 | 0.75 | 0.00 | 0.00 | cpu |
+| cpu.lz4.auto.wins.delta-bitshuffle-8 | — | — | — | — | 0.06 | 0.43 | 1.00 | 0.25 | 1.00 | 1.00 | cpu |
+| cpu.lz4.auto.wins.stored | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.lz4.compress.exhaustive.mt | — | — | — | — | 0.35 · 2.12× | 0.36 · 1.50× | 0.43 · 4.36× | 0.31 · 1.25× | 0.44 · 11.23× | 0.35 · 1.43× | cpu |
+| gpu.lz4.compress.exhaustive.e2e | — | — | — | — | 0.50 · 2.12× | 0.62 · 1.50× | 0.58 · 4.36× | 0.60 · 1.25× | 0.57 · 11.23× | 0.72 · 1.43× | wall-e2e |
+| cpu.glz.compress.none.mt | — | — | — | — | 2.41 · 1.95× | 2.08 · 1.04× | 2.20 · 1.00× | 2.29 · 1.00× | 2.72 · 1.56× | 2.22 · 1.00× | cpu |
+| cpu.glz.compress.auto.mt | — | — | — | — | 1.14 · 2.05× | 1.10 · 1.43× | 1.62 · 4.41× | 0.87 · 1.26× | 1.86 · 11.62× | 1.07 · 1.44× | cpu |
+| gpu.glz.decompress.none.kernel | — | — | — | — | 4.83 · 1.95× | 13.67 · 1.04× | 51.41 · 1.00× | 49.99 · 1.00× | 4.52 · 1.56× | 49.51 · 1.00× | wall-gpu |
+| gpu.glz.decompress.auto.kernel | — | — | — | — | 4.72 · 2.05× | 6.92 · 1.43× | 6.88 · 4.41× | 4.32 · 1.26× | 6.79 · 11.62× | 6.95 · 1.44× | wall-gpu |
+| gpu.glz.decompress.auto.e2e | — | — | — | — | 3.69 · 2.05× | 4.73 · 1.43× | 5.12 · 4.41× | 3.29 · 1.26× | 5.23 · 11.62× | 4.86 · 1.44× | wall-e2e |
+| gpu.glz.compress.auto.e2e | — | — | — | — | 1.39 · 2.05× | 1.55 · 1.43× | 1.60 · 4.41× | 1.48 · 1.26× | 1.65 · 11.62× | 1.85 · 1.44× | wall-e2e |
+| cpu.glz.auto.wins.none | — | — | — | — | 0.86 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glz.auto.wins.shuffle-4 | — | — | — | — | 0.01 | 0.49 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glz.auto.wins.delta-4 | — | — | — | — | 0.01 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glz.auto.wins.delta-shuffle-4 | — | — | — | — | 0.00 | 0.08 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glz.auto.wins.delta-zigzag-shuffle-2 | — | — | — | — | 0.07 | 0.00 | 0.00 | 0.75 | 0.00 | 0.00 | cpu |
+| cpu.glz.auto.wins.delta-bitshuffle-8 | — | — | — | — | 0.06 | 0.43 | 1.00 | 0.25 | 1.00 | 1.00 | cpu |
+| cpu.glz.auto.wins.stored | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glz.compress.exhaustive.mt | — | — | — | — | 0.34 · 2.08× | 0.36 · 1.50× | 0.42 · 4.42× | 0.32 · 1.26× | 0.45 · 11.62× | 0.36 · 1.44× | cpu |
+| gpu.glz.compress.exhaustive.e2e | — | — | — | — | 0.50 · 2.08× | 0.62 · 1.50× | 0.58 · 4.42× | 0.60 · 1.26× | 0.57 · 11.62× | 0.75 · 1.44× | wall-e2e |
+| cpu.glze.compress.none.mt | — | — | — | — | 1.92 · 2.50× | 1.59 · 1.21× | 1.71 · 1.29× | 1.78 · 1.03× | 2.28 · 2.81× | 1.75 · 1.10× | cpu |
+| cpu.glze.compress.auto.mt | — | — | — | — | 0.82 · 2.59× | 0.82 · 1.50× | 1.26 · 5.07× | 0.64 · 1.44× | 1.39 · 11.57× | 0.86 · 1.44× | cpu |
+| gpu.glze.decompress.none.kernel | — | — | — | — | 3.50 · 2.50× | 4.98 · 1.21× | 11.07 · 1.29× | 11.09 · 1.03× | 3.77 · 2.81× | 7.59 · 1.10× | wall-gpu |
+| gpu.glze.decompress.auto.kernel | — | — | — | — | 3.53 · 2.59× | 5.05 · 1.50× | 5.96 · 5.07× | 2.91 · 1.44× | 6.70 · 11.57× | 6.42 · 1.44× | wall-gpu |
+| gpu.glze.decompress.auto.e2e | — | — | — | — | 2.76 · 2.59× | 3.93 · 1.50× | 4.44 · 5.07× | 2.47 · 1.44× | 4.85 · 11.57× | 4.78 · 1.44× | wall-e2e |
+| gpu.glze.compress.auto.e2e | — | — | — | — | 0.94 · 2.59× | 0.96 · 1.50× | 1.04 · 5.07× | 0.90 · 1.44× | 1.11 · 11.57× | 1.08 · 1.44× | wall-e2e |
+| cpu.glze.auto.wins.none | — | — | — | — | 0.87 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glze.auto.wins.shuffle-4 | — | — | — | — | 0.02 | 0.62 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glze.auto.wins.delta-4 | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glze.auto.wins.delta-shuffle-4 | — | — | — | — | 0.00 | 0.00 | 1.00 | 0.06 | 0.00 | 0.00 | cpu |
+| cpu.glze.auto.wins.delta-zigzag-shuffle-2 | — | — | — | — | 0.08 | 0.00 | 0.00 | 0.88 | 0.00 | 0.00 | cpu |
+| cpu.glze.auto.wins.delta-bitshuffle-8 | — | — | — | — | 0.02 | 0.37 | 0.00 | 0.06 | 1.00 | 1.00 | cpu |
+| cpu.glze.auto.wins.stored | — | — | — | — | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | cpu |
+| cpu.glze.compress.exhaustive.mt | — | — | — | — | 0.27 · 2.63× | 0.28 · 1.59× | 0.34 · 5.07× | 0.25 · 1.45× | 0.36 · 11.57× | 0.28 · 1.44× | cpu |
+| gpu.glze.compress.exhaustive.e2e | — | — | — | — | 0.35 · 2.63× | 0.40 · 1.59× | 0.43 · 5.07× | 0.38 · 1.45× | 0.42 · 11.57× | 0.42 · 1.44× | wall-e2e |
 
-Input sizes: random 256 MiB, zeros 256 MiB, text 256 MiB, mixed 256 MiB, silesia/all 202.1 MiB, f32-points 256 MiB, sorted-u32 256 MiB, i16-audio 256 MiB, u64-timestamps 256 MiB.
+Input sizes: random 256 MiB, zeros 256 MiB, text 256 MiB, mixed 256 MiB, silesia/all 202.1 MiB, f32-points 256 MiB, sorted-u32 256 MiB, i16-audio 256 MiB, u64-timestamps 256 MiB, f64-walk 256 MiB.
 
 ### Compression: ratio vs throughput
 
@@ -158,177 +164,182 @@ Input: `silesia/all` (202.1 MiB).
 
 | Encoder | Ratio | GPU kernel GB/s | End-to-end GB/s | Pareto |
 |---|---:|---:|---:|:---:|
-| lz4_flex + GPU, LZ4, fixed split (25% on the GPU) | 2.03× | — | 7.47 | ◆ |
-| CPU lz4_flex | 2.04× | — | 6.23 | ◆ |
-| CPU zstd -1, whole file | 2.89× | — | 5.91 | ◆ |
-| CPU zstd -1, 64 KiB chunks | 2.76× | — | 5.76 |  |
-| CPU zstd -3, 64 KiB chunks | 2.88× | — | 4.34 |  |
-| CPU+GPU LZ4, level 1 | 1.99× | — | 3.94 |  |
-| CPU lz4_flex, 1 thread | 2.04× | — | 3.64 |  |
+| lz4_flex + GPU, LZ4, fixed split (25% on the GPU) | 2.03× | — | 7.52 | ◆ |
+| CPU zstd -1, whole file | 2.89× | — | 5.81 | ◆ |
+| CPU zstd -1, 64 KiB chunks | 2.76× | — | 5.75 |  |
+| CPU lz4_flex | 2.04× | — | 5.19 |  |
+| CPU zstd -3, 64 KiB chunks | 2.88× | — | 4.29 |  |
+| CPU+GPU LZ4, level 1 | 1.99× | — | 3.85 |  |
 | CPU+GPU GLZ-E, level 1 | 2.50× | — | 3.18 |  |
-| GPU LZ4, level 1 | 1.99× | 3.48 | 3.02 |  |
-| GPU GLZ | 1.95× | 3.46 | 2.91 |  |
-| CPU zstd -3, whole file | 3.20× | — | 2.86 | ◆ |
-| CPU LZ4 twin (GPU level 1's output) | 1.99× | — | 2.40 |  |
-| CPU GLZ twin | 1.95× | — | 2.36 |  |
-| GPU GLZ-E, level 1 | 2.50× | 2.64 | 2.24 |  |
+| GPU LZ4, level 1 | 1.99× | 3.52 | 3.06 |  |
+| GPU GLZ | 1.95× | 3.52 | 3.03 |  |
+| CPU zstd -3, whole file | 3.20× | — | 2.93 | ◆ |
+| CPU lz4_flex, 1 thread | 2.04× | — | 2.77 |  |
+| CPU GLZ twin | 1.95× | — | 2.46 |  |
+| GPU GLZ-E, level 1 | 2.50× | 2.68 | 2.28 |  |
+| CPU LZ4 twin (GPU level 1's output) | 1.99× | — | 2.14 |  |
 | CPU GLZ-E twin, level 1 | 2.50× | — | 1.91 |  |
-| GPU LZ4, level 2 | 2.21× | 1.82 | 1.65 |  |
-| GPU LZ4, level 1, filters auto | 2.05× | — | 1.55 |  |
-| GPU GLZ-E, level 2 | 2.68× | 1.57 | 1.43 |  |
-| CPU LZ4 twin, level 1, filters auto | 2.05× | — | 1.40 |  |
-| CPU+GPU GLZ-E, level 3 | 2.75× | — | 1.28 |  |
-| CPU GLZ-E twin, level 2 | 2.68× | — | 1.17 |  |
-| GPU GLZ-E, level 1, filters auto | 2.55× | — | 1.11 |  |
-| CPU GLZ-E twin, level 1, filters auto | 2.55× | — | 1.02 |  |
-| GPU LZ4, level 3 | 2.32× | 0.98 | 0.92 |  |
-| GPU GLZ-E, level 3 | 2.75× | 0.91 | 0.85 |  |
-| CPU GLZ-E twin, level 3 | 2.75× | — | 0.68 |  |
-| GPU GLZ, independent groups of 64 | 1.57× | 1.39 | 0.26 |  |
+| GPU LZ4, level 2 | 2.21× | 1.84 | 1.70 |  |
+| GPU GLZ-E, level 2 | 2.68× | 1.59 | 1.45 |  |
+| GPU LZ4, level 1, filters auto | 2.09× | — | 1.38 |  |
+| CPU+GPU GLZ-E, level 3 | 2.75× | — | 1.26 |  |
+| CPU GLZ-E twin, level 2 | 2.68× | — | 1.21 |  |
+| CPU LZ4 twin, level 1, filters auto | 2.09× | — | 1.14 |  |
+| GPU GLZ-E, level 1, filters auto | 2.59× | — | 0.94 |  |
+| GPU LZ4, level 3 | 2.32× | 0.96 | 0.89 |  |
+| GPU GLZ-E, level 3 | 2.75× | 0.92 | 0.87 |  |
+| CPU GLZ-E twin, level 1, filters auto | 2.59× | — | 0.82 |  |
+| CPU GLZ-E twin, level 3 | 2.75× | — | 0.69 |  |
+| GPU GLZ, independent groups of 64 | 1.57× | 1.41 | 0.29 |  |
 
 ### History (GB/s, oldest → newest)
 
-| Measurement (input) | hybrid `c13f23e-dirty` | catch-up `0681fbd-dirty` | streams `8e89910-dirty` | pipelined `8e89910-dirty` | split-stream `2ca17b5-dirty` | huffman-decode `2246356-dirty` | delta-shuffle `88a0790-dirty` | profile-loop `2ff698d-dirty` |
+| Measurement (input) | catch-up `0681fbd-dirty` | streams `8e89910-dirty` | pipelined `8e89910-dirty` | split-stream `2ca17b5-dirty` | huffman-decode `2246356-dirty` | delta-shuffle `88a0790-dirty` | profile-loop `2ff698d-dirty` | float-filters `b7fc10b-dirty` |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| cpu.memcpy (random) | 69.21 | 67.52 | 62.86 | 63.67 | 64.55 | 63.46 | 67.03 | 65.48 |
-| gpu.upload (random) | 10.08 | 11.40 | 9.33 | 10.61 | 10.10 | 9.70 | 10.58 | 10.26 |
-| gpu.readback (random) | 6.94 | 7.89 | 6.77 | 7.53 | 6.72 | 6.58 | 7.30 | 6.94 |
-| gpu.xor.kernel (random) | 94.46 | 87.45 | 108.64 | 102.91 | 103.32 | 90.28 | 91.83 | 91.31 |
-| gpu.xor.e2e (random) | 2.61 | 2.95 | 2.54 | 2.75 | 2.57 | 2.54 | 2.71 | 2.68 |
-| cpu.lz4_flex.compress.1t (silesia/all) | 0.87 | 0.86 | 0.84 | 0.85 | 2.29 | 3.04 | 2.95 | 3.64 |
-| cpu.lz4_flex.compress.mt (silesia/all) | 5.35 | 5.80 | 4.91 | 5.21 | 5.54 | 5.71 | 5.57 | 6.23 |
-| cpu.greedy.compress.mt (silesia/all) | 1.97 | 2.11 | 1.85 | 1.95 | 2.13 | 2.18 | 2.17 | 2.40 |
-| cpu.lz4_flex.decompress.1t (silesia/all) | 3.33 | 3.23 | 3.00 | 3.19 | 3.13 | 3.02 | 3.16 | 3.14 |
-| cpu.lz4_flex.decompress.mt (silesia/all) | 13.58 | 14.22 | 13.03 | 13.75 | 13.11 | 13.14 | 12.93 | 12.98 |
-| cpu.handwritten.decompress.mt (silesia/all) | 8.24 | 8.49 | 12.79 | 13.55 | 12.78 | 12.74 | 13.11 | 13.75 |
-| cpu.zstd-1.compress.mt (silesia/all) | 5.69 | 5.90 | 5.06 | 5.57 | 5.68 | 5.57 | 5.60 | 5.76 |
-| cpu.zstd-1.decompress.mt (silesia/all) | 10.50 | 10.92 | 9.97 | 10.02 | 10.35 | 9.37 | 10.23 | 10.43 |
-| cpu.zstd-1-file.compress.mt (silesia/all) | 5.85 | 5.99 | 5.37 | 5.48 | 5.80 | 5.85 | 5.71 | 5.91 |
-| cpu.zstd-1-file.decompress.1t (silesia/all) | 1.66 | 1.65 | 1.65 | 1.64 | 1.63 | 1.62 | 1.62 | 1.62 |
-| cpu.zstd-3.compress.mt (silesia/all) | 4.20 | 4.34 | 3.86 | 4.00 | 4.27 | 4.27 | 4.19 | 4.34 |
-| cpu.zstd-3.decompress.mt (silesia/all) | 10.29 | 10.56 | 9.79 | 9.76 | 10.07 | 9.98 | 9.70 | 10.31 |
-| cpu.zstd-3-file.compress.mt (silesia/all) | 2.90 | 2.95 | 2.72 | 2.80 | 2.87 | 2.93 | 2.86 | 2.86 |
-| cpu.zstd-3-file.decompress.1t (silesia/all) | 1.52 | 1.52 | 1.52 | 1.51 | 1.48 | 1.46 | 1.49 | 1.50 |
-| cpu.glz.compress.mt (silesia/all) | 2.06 | 2.19 | 1.90 | 2.12 | 2.11 | 2.18 | 2.22 | 2.36 |
-| cpu.glz.decompress.mt (silesia/all) | 6.86 | 12.56 | 12.44 | 13.45 | 13.75 | 14.31 | 13.66 | 13.93 |
-| gpu.glz.compress.kernel (silesia/all) | 3.40 | 3.52 | 3.46 | 3.45 | 3.44 | 3.45 | 3.43 | 3.46 |
-| gpu.glz.compress.e2e (silesia/all) | 2.74 | 2.84 | 2.76 | 2.95 | 2.93 | 2.93 | 2.91 | 2.91 |
-| gpu.glz.decompress.kernel (silesia/all) | 4.93 | 4.95 | 4.83 | 4.80 | 4.79 | 4.84 | 4.84 | 4.87 |
-| gpu.glz.decompress.e2e (silesia/all) | 3.50 | 3.48 | 3.40 | 3.83 | 3.81 | 3.85 | 3.91 | 3.84 |
-| cpu.glz-g64.compress.mt (silesia/all) | 0.93 | 0.96 | 0.82 | 0.93 | 0.92 | 0.94 | 0.96 | 0.96 |
-| gpu.glz-g64.compress.kernel (silesia/all) | 1.38 | 1.40 | 1.39 | 1.39 | 1.39 | 1.38 | 1.38 | 1.39 |
-| gpu.glz-g64.compress.e2e (silesia/all) | 1.24 | 1.26 | 1.25 | 0.28 | 0.28 | 0.26 | 0.28 | 0.26 |
-| gpu.glz-g64.decompress.kernel (silesia/all) | 7.03 | 6.99 | 6.90 | 6.92 | 6.86 | 6.88 | 6.88 | 6.96 |
-| gpu.glz-g64.decompress.e2e (silesia/all) | 4.36 | 4.39 | 4.28 | 5.01 | 4.96 | 4.94 | 5.01 | 5.04 |
-| cpu.glze.compress.mt (silesia/all) | 1.66 | 1.68 | 1.51 | 1.64 | 1.70 | 1.74 | 1.75 | 1.91 |
-| cpu.glze.decompress.mt (silesia/all) | 2.91 | 6.85 | 6.20 | 6.73 | 6.85 | 9.32 | 9.45 | 9.36 |
-| gpu.glze.compress.kernel (silesia/all) | 2.60 | 2.67 | 2.62 | 2.64 | 2.61 | 2.61 | 2.59 | 2.64 |
-| gpu.glze.compress.e2e (silesia/all) | 2.26 | 2.31 | 2.25 | 2.26 | 2.22 | 2.22 | 2.23 | 2.24 |
-| gpu.glze.decompress.kernel (silesia/all) | 3.67 | 3.62 | 3.57 | 3.57 | 3.56 | 3.59 | 3.62 | 3.62 |
-| gpu.glze.decompress.e2e (silesia/all) | 2.81 | 2.81 | 2.75 | 2.81 | 2.82 | 2.92 | 2.98 | 2.85 |
-| cpu.glze.l2.compress.mt (silesia/all) | 0.95 | 0.96 | 0.86 | 0.94 | 1.00 | 1.05 | 1.06 | 1.17 |
-| cpu.glze.l2.decompress.mt (silesia/all) | 3.11 | 7.12 | 6.51 | 6.77 | 7.21 | 9.73 | 9.68 | 9.79 |
-| gpu.glze.l2.compress.kernel (silesia/all) | 1.42 | 1.59 | 1.56 | 1.58 | 1.56 | 1.56 | 1.54 | 1.57 |
-| gpu.glze.l2.compress.e2e (silesia/all) | 1.31 | 1.45 | 1.42 | 1.42 | 1.40 | 1.41 | 1.39 | 1.43 |
-| gpu.glze.l2.decompress.kernel (silesia/all) | 3.87 | 3.86 | 3.75 | 3.82 | 3.76 | 3.77 | 3.76 | 3.78 |
-| gpu.glze.l2.decompress.e2e (silesia/all) | 2.94 | 2.93 | 2.88 | 3.00 | 2.97 | 2.97 | 3.01 | 2.97 |
-| cpu.glze.l3.compress.mt (silesia/all) | 0.62 | 0.62 | 0.54 | 0.61 | 0.62 | 0.64 | 0.64 | 0.68 |
-| cpu.glze.l3.decompress.mt (silesia/all) | 3.28 | 7.23 | 6.61 | 7.32 | 7.25 | 9.77 | 9.93 | 9.97 |
-| gpu.glze.l3.compress.kernel (silesia/all) | 0.75 | 0.92 | 0.90 | 0.91 | 0.90 | 0.90 | 0.91 | 0.91 |
-| gpu.glze.l3.compress.e2e (silesia/all) | 0.72 | 0.87 | 0.85 | 0.87 | 0.84 | 0.84 | 0.87 | 0.85 |
-| gpu.glze.l3.decompress.kernel (silesia/all) | 3.99 | 3.98 | 3.90 | 3.96 | 3.91 | 3.91 | 3.99 | 3.94 |
-| gpu.glze.l3.decompress.e2e (silesia/all) | 3.01 | 3.03 | 2.95 | 3.14 | 3.05 | 3.04 | 3.14 | 3.10 |
-| gpu.lz4.decompress.naive.kernel (silesia/all) | 1.99 | 1.99 | 1.96 | 1.99 | 1.98 | 1.97 | 1.94 | 1.98 |
-| gpu.lz4.decompress.naive.e2e (silesia/all) | 1.73 | 1.73 | 1.68 | 0.95 | 0.94 | 0.95 | 0.92 | 0.95 |
-| gpu.lz4.decompress.coop.kernel (silesia/all) | 3.42 | 3.41 | 3.19 | 3.30 | 3.09 | 3.13 | 3.41 | 3.30 |
-| gpu.lz4.decompress.coop.e2e (silesia/all) | 2.71 | 2.70 | 2.56 | 2.71 | 2.66 | 2.64 | 2.85 | 2.70 |
-| gpu.lz4.compress.kernel (silesia/all) | 3.41 | 3.53 | 3.41 | 3.46 | 3.45 | 3.46 | 3.52 | 3.48 |
-| gpu.lz4.compress.e2e (silesia/all) | 2.80 | 2.87 | 2.77 | 3.01 | 2.97 | 2.98 | 3.06 | 3.02 |
-| gpu.lz4.l2.compress.kernel (silesia/all) | 1.62 | 1.83 | 1.78 | 1.84 | 1.80 | 1.81 | 1.84 | 1.82 |
-| gpu.lz4.l2.compress.e2e (silesia/all) | 1.47 | 1.64 | 1.58 | 1.69 | 1.63 | 1.63 | 1.70 | 1.65 |
-| gpu.lz4.l3.compress.kernel (silesia/all) | 0.80 | 0.99 | 0.97 | 0.99 | 0.97 | 0.98 | 0.99 | 0.98 |
-| gpu.lz4.l3.compress.e2e (silesia/all) | 0.76 | 0.93 | 0.90 | 0.91 | 0.92 | 0.91 | 0.94 | 0.92 |
-| gpu.lz4.compress.upto.match (silesia/all) | 6.60 | 7.07 | 6.94 | 6.87 | 6.95 | 6.96 | 7.07 | 7.02 |
-| gpu.lz4.compress.upto.parse (silesia/all) | 4.25 | 4.43 | 4.34 | 4.28 | 4.30 | 4.31 | 4.41 | 4.34 |
-| gpu.lz4.compress.upto.emit (silesia/all) | 3.41 | 3.53 | 3.48 | 3.41 | 3.44 | 3.44 | 3.52 | 3.47 |
-| gpu.lz4.l3.compress.upto.match (silesia/all) | 6.38 | 6.69 | 6.67 | 6.60 | 6.61 | 6.57 | 6.68 | 6.64 |
-| gpu.lz4.l3.compress.upto.deep (silesia/all) | 0.91 | 1.16 | 1.13 | 1.13 | 1.13 | 1.14 | 1.15 | 1.14 |
-| gpu.lz4.l3.compress.upto.parse (silesia/all) | 0.84 | 1.05 | 1.02 | 1.03 | 1.03 | 1.03 | 1.05 | 1.03 |
-| gpu.lz4.l3.compress.upto.emit (silesia/all) | 0.80 | 0.99 | 0.96 | 0.98 | 0.97 | 0.98 | 0.99 | 0.98 |
-| gpu.glze.compress.upto.match (silesia/all) | 6.49 | 6.97 | 6.75 | 6.84 | 6.85 | 6.85 | 6.95 | 6.91 |
-| gpu.glze.compress.upto.parse (silesia/all) | 4.20 | 4.39 | 4.35 | 4.28 | 4.27 | 4.26 | 4.34 | 4.30 |
-| gpu.glze.compress.upto.emit (silesia/all) | 3.37 | 3.50 | 3.43 | 3.42 | 3.41 | 3.41 | 3.47 | 3.44 |
-| gpu.glze.compress.upto.glze-hist (silesia/all) | 3.08 | 3.18 | 3.10 | 3.11 | 3.12 | 3.11 | 3.17 | 3.14 |
-| gpu.glze.compress.upto.glze-build (silesia/all) | 3.02 | 3.11 | 3.06 | 3.05 | 3.04 | 3.04 | 3.10 | 3.07 |
-| gpu.glze.compress.upto.glze-write (silesia/all) | 2.60 | 2.67 | 2.55 | 2.63 | 2.61 | 2.61 | 2.66 | 2.64 |
-| gpu.glze.l3.compress.upto.match (silesia/all) | 6.29 | 6.55 | 6.56 | 6.49 | 6.49 | 6.50 | 6.57 | 6.52 |
-| gpu.glze.l3.compress.upto.deep (silesia/all) | 0.90 | 1.15 | 1.10 | 1.14 | 1.13 | 1.13 | 1.15 | 1.14 |
-| gpu.glze.l3.compress.upto.parse (silesia/all) | 0.84 | 1.04 | 1.03 | 1.03 | 1.03 | 1.03 | 1.04 | 1.04 |
-| gpu.glze.l3.compress.upto.emit (silesia/all) | 0.80 | 0.99 | 0.94 | 0.98 | 0.97 | 0.97 | 0.99 | 0.98 |
-| gpu.glze.l3.compress.upto.glze-hist (silesia/all) | 0.78 | 0.96 | 0.95 | 0.95 | 0.95 | 0.94 | 0.96 | 0.96 |
-| gpu.glze.l3.compress.upto.glze-build (silesia/all) | 0.78 | 0.95 | 0.93 | 0.94 | 0.94 | 0.94 | 0.95 | 0.95 |
-| gpu.glze.l3.compress.upto.glze-write (silesia/all) | 0.75 | 0.91 | 0.90 | 0.90 | 0.90 | 0.90 | 0.91 | 0.91 |
-| gpu.lz4.decompress.upto.decode (silesia/all) | 3.42 | 3.42 | 3.27 | 3.15 | 3.19 | 3.18 | 3.43 | 3.29 |
-| gpu.glz.decompress.upto.decode (silesia/all) | 4.99 | 4.94 | 4.84 | 4.90 | 4.89 | 4.86 | 4.98 | 4.92 |
-| gpu.glze.decompress.upto.glze-entropy (silesia/all) | 12.97 | 12.97 | 12.64 | 12.81 | 12.77 | 12.77 | 12.97 | 12.80 |
-| gpu.glze.decompress.upto.decode (silesia/all) | 3.65 | 3.68 | 3.61 | 3.59 | 3.58 | 3.57 | 3.61 | 3.62 |
-| hybrid.lz4.compress.e2e (silesia/all) | 3.65 | 3.90 | 3.57 | 3.75 | 3.76 | 3.75 | 3.91 | 3.94 |
-| hybrid.lz4.decompress.e2e (silesia/all) | 14.35 | 13.91 | 13.81 | 13.98 | 13.43 | 13.65 | 13.47 | 13.14 |
-| hybrid.glze.compress.e2e (silesia/all) | 2.97 | 3.16 | 2.98 | 3.02 | 2.89 | 3.00 | 3.17 | 3.18 |
-| hybrid.glze.decompress.e2e (silesia/all) | 4.09 | 6.42 | 5.63 | 6.28 | 5.93 | 8.55 | 8.71 | 8.52 |
-| hybrid.glze.l3.compress.e2e (silesia/all) | 1.16 | 1.27 | 0.92 | 1.23 | 1.20 | 1.21 | 1.25 | 1.28 |
-| hybrid.glze.l3.decompress.e2e (silesia/all) | 4.52 | 7.15 | 5.10 | 6.88 | 6.79 | 9.20 | 9.47 | 9.14 |
-| hybrid.lz4_flex.compress.e2e (silesia/all) | — | 7.57 | 6.90 | 7.06 | 7.34 | 7.43 | 7.71 | 7.47 |
-| file.cpu.lz4_flex.compress (silesia/all) | — | — | 5.23 | 5.83 | 5.55 | 5.55 | 5.84 | 6.23 |
-| file.cpu.lz4.decompress (silesia/all) | — | — | 4.65 | 4.10 | 4.72 | 4.09 | 4.67 | 9.45 |
-| file.zstd-1.compress.mt (silesia/all) | — | — | 4.43 | 4.92 | 4.59 | 4.78 | 4.96 | 4.88 |
-| file.zstd-1.decompress.1t (silesia/all) | — | — | 1.50 | 1.51 | 1.48 | 1.50 | 1.52 | 1.50 |
-| file.gpu.lz4.compress (silesia/all) | — | — | 1.12 | 2.31 | 2.24 | 2.25 | 2.24 | 2.26 |
-| file.gpu.lz4.decompress (silesia/all) | — | — | 1.30 | 1.69 | 1.70 | 1.71 | 1.79 | 1.77 |
-| file.hybrid.lz4_flex.compress (silesia/all) | — | — | — | — | 4.87 | 4.66 | 4.83 | 3.89 |
-| cpu.lz4.compress.none.mt (silesia/all) | 1.71 | 2.08 | 1.97 | 2.12 | 2.29 | 2.16 | 2.26 | 2.41 |
-| cpu.lz4.compress.auto.mt (silesia/all) | 1.19 | 1.40 | 1.35 | 1.44 | 1.53 | 1.45 | 1.34 | 1.40 |
-| gpu.lz4.decompress.none.kernel (silesia/all) | 2.79 | 3.00 | 3.00 | 2.77 | 2.78 | 2.80 | 2.98 | 2.80 |
-| gpu.lz4.decompress.auto.kernel (silesia/all) | 2.75 | 2.96 | 2.95 | 2.76 | 2.78 | 2.76 | 2.97 | 2.79 |
-| gpu.lz4.decompress.auto.e2e (silesia/all) | 2.26 | 2.41 | 2.37 | 2.31 | 2.33 | 2.35 | 2.47 | 2.30 |
-| gpu.lz4.compress.auto.e2e (silesia/all) | 1.62 | 1.69 | 1.69 | 1.64 | 1.66 | 1.65 | 1.59 | 1.55 |
-| cpu.lz4.auto.wins.none (silesia/all) | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 |
-| cpu.lz4.auto.wins.shuffle-4 (silesia/all) | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 |
-| cpu.lz4.auto.wins.delta-4 (silesia/all) | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 |
-| cpu.lz4.auto.wins.delta-shuffle-4 (silesia/all) | — | — | — | — | — | — | 0.00 | 0.00 |
+| cpu.memcpy (random) | 67.52 | 62.86 | 63.67 | 64.55 | 63.46 | 67.03 | 65.48 | 66.81 |
+| gpu.upload (random) | 11.40 | 9.33 | 10.61 | 10.10 | 9.70 | 10.58 | 10.26 | 10.64 |
+| gpu.readback (random) | 7.89 | 6.77 | 7.53 | 6.72 | 6.58 | 7.30 | 6.94 | 7.16 |
+| gpu.xor.kernel (random) | 87.45 | 108.64 | 102.91 | 103.32 | 90.28 | 91.83 | 91.31 | 68.51 |
+| gpu.xor.e2e (random) | 2.95 | 2.54 | 2.75 | 2.57 | 2.54 | 2.71 | 2.68 | 2.75 |
+| cpu.lz4_flex.compress.1t (silesia/all) | 0.86 | 0.84 | 0.85 | 2.29 | 3.04 | 2.95 | 3.64 | 2.77 |
+| cpu.lz4_flex.compress.mt (silesia/all) | 5.80 | 4.91 | 5.21 | 5.54 | 5.71 | 5.57 | 6.23 | 5.19 |
+| cpu.greedy.compress.mt (silesia/all) | 2.11 | 1.85 | 1.95 | 2.13 | 2.18 | 2.17 | 2.40 | 2.14 |
+| cpu.lz4_flex.decompress.1t (silesia/all) | 3.23 | 3.00 | 3.19 | 3.13 | 3.02 | 3.16 | 3.14 | 3.16 |
+| cpu.lz4_flex.decompress.mt (silesia/all) | 14.22 | 13.03 | 13.75 | 13.11 | 13.14 | 12.93 | 12.98 | 13.24 |
+| cpu.handwritten.decompress.mt (silesia/all) | 8.49 | 12.79 | 13.55 | 12.78 | 12.74 | 13.11 | 13.75 | 12.38 |
+| cpu.zstd-1.compress.mt (silesia/all) | 5.90 | 5.06 | 5.57 | 5.68 | 5.57 | 5.60 | 5.76 | 5.75 |
+| cpu.zstd-1.decompress.mt (silesia/all) | 10.92 | 9.97 | 10.02 | 10.35 | 9.37 | 10.23 | 10.43 | 10.12 |
+| cpu.zstd-1-file.compress.mt (silesia/all) | 5.99 | 5.37 | 5.48 | 5.80 | 5.85 | 5.71 | 5.91 | 5.81 |
+| cpu.zstd-1-file.decompress.1t (silesia/all) | 1.65 | 1.65 | 1.64 | 1.63 | 1.62 | 1.62 | 1.62 | 1.63 |
+| cpu.zstd-3.compress.mt (silesia/all) | 4.34 | 3.86 | 4.00 | 4.27 | 4.27 | 4.19 | 4.34 | 4.29 |
+| cpu.zstd-3.decompress.mt (silesia/all) | 10.56 | 9.79 | 9.76 | 10.07 | 9.98 | 9.70 | 10.31 | 10.27 |
+| cpu.zstd-3-file.compress.mt (silesia/all) | 2.95 | 2.72 | 2.80 | 2.87 | 2.93 | 2.86 | 2.86 | 2.93 |
+| cpu.zstd-3-file.decompress.1t (silesia/all) | 1.52 | 1.52 | 1.51 | 1.48 | 1.46 | 1.49 | 1.50 | 1.51 |
+| cpu.glz.compress.mt (silesia/all) | 2.19 | 1.90 | 2.12 | 2.11 | 2.18 | 2.22 | 2.36 | 2.46 |
+| cpu.glz.decompress.mt (silesia/all) | 12.56 | 12.44 | 13.45 | 13.75 | 14.31 | 13.66 | 13.93 | 12.78 |
+| gpu.glz.compress.kernel (silesia/all) | 3.52 | 3.46 | 3.45 | 3.44 | 3.45 | 3.43 | 3.46 | 3.52 |
+| gpu.glz.compress.e2e (silesia/all) | 2.84 | 2.76 | 2.95 | 2.93 | 2.93 | 2.91 | 2.91 | 3.03 |
+| gpu.glz.decompress.kernel (silesia/all) | 4.95 | 4.83 | 4.80 | 4.79 | 4.84 | 4.84 | 4.87 | 4.98 |
+| gpu.glz.decompress.e2e (silesia/all) | 3.48 | 3.40 | 3.83 | 3.81 | 3.85 | 3.91 | 3.84 | 3.92 |
+| cpu.glz-g64.compress.mt (silesia/all) | 0.96 | 0.82 | 0.93 | 0.92 | 0.94 | 0.96 | 0.96 | 0.98 |
+| gpu.glz-g64.compress.kernel (silesia/all) | 1.40 | 1.39 | 1.39 | 1.39 | 1.38 | 1.38 | 1.39 | 1.41 |
+| gpu.glz-g64.compress.e2e (silesia/all) | 1.26 | 1.25 | 0.28 | 0.28 | 0.26 | 0.28 | 0.26 | 0.29 |
+| gpu.glz-g64.decompress.kernel (silesia/all) | 6.99 | 6.90 | 6.92 | 6.86 | 6.88 | 6.88 | 6.96 | 7.03 |
+| gpu.glz-g64.decompress.e2e (silesia/all) | 4.39 | 4.28 | 5.01 | 4.96 | 4.94 | 5.01 | 5.04 | 5.10 |
+| cpu.glze.compress.mt (silesia/all) | 1.68 | 1.51 | 1.64 | 1.70 | 1.74 | 1.75 | 1.91 | 1.91 |
+| cpu.glze.decompress.mt (silesia/all) | 6.85 | 6.20 | 6.73 | 6.85 | 9.32 | 9.45 | 9.36 | 8.94 |
+| gpu.glze.compress.kernel (silesia/all) | 2.67 | 2.62 | 2.64 | 2.61 | 2.61 | 2.59 | 2.64 | 2.68 |
+| gpu.glze.compress.e2e (silesia/all) | 2.31 | 2.25 | 2.26 | 2.22 | 2.22 | 2.23 | 2.24 | 2.28 |
+| gpu.glze.decompress.kernel (silesia/all) | 3.62 | 3.57 | 3.57 | 3.56 | 3.59 | 3.62 | 3.62 | 3.61 |
+| gpu.glze.decompress.e2e (silesia/all) | 2.81 | 2.75 | 2.81 | 2.82 | 2.92 | 2.98 | 2.85 | 2.89 |
+| cpu.glze.l2.compress.mt (silesia/all) | 0.96 | 0.86 | 0.94 | 1.00 | 1.05 | 1.06 | 1.17 | 1.21 |
+| cpu.glze.l2.decompress.mt (silesia/all) | 7.12 | 6.51 | 6.77 | 7.21 | 9.73 | 9.68 | 9.79 | 9.92 |
+| gpu.glze.l2.compress.kernel (silesia/all) | 1.59 | 1.56 | 1.58 | 1.56 | 1.56 | 1.54 | 1.57 | 1.59 |
+| gpu.glze.l2.compress.e2e (silesia/all) | 1.45 | 1.42 | 1.42 | 1.40 | 1.41 | 1.39 | 1.43 | 1.45 |
+| gpu.glze.l2.decompress.kernel (silesia/all) | 3.86 | 3.75 | 3.82 | 3.76 | 3.77 | 3.76 | 3.78 | 3.86 |
+| gpu.glze.l2.decompress.e2e (silesia/all) | 2.93 | 2.88 | 3.00 | 2.97 | 2.97 | 3.01 | 2.97 | 3.03 |
+| cpu.glze.l3.compress.mt (silesia/all) | 0.62 | 0.54 | 0.61 | 0.62 | 0.64 | 0.64 | 0.68 | 0.69 |
+| cpu.glze.l3.decompress.mt (silesia/all) | 7.23 | 6.61 | 7.32 | 7.25 | 9.77 | 9.93 | 9.97 | 9.98 |
+| gpu.glze.l3.compress.kernel (silesia/all) | 0.92 | 0.90 | 0.91 | 0.90 | 0.90 | 0.91 | 0.91 | 0.92 |
+| gpu.glze.l3.compress.e2e (silesia/all) | 0.87 | 0.85 | 0.87 | 0.84 | 0.84 | 0.87 | 0.85 | 0.87 |
+| gpu.glze.l3.decompress.kernel (silesia/all) | 3.98 | 3.90 | 3.96 | 3.91 | 3.91 | 3.99 | 3.94 | 3.97 |
+| gpu.glze.l3.decompress.e2e (silesia/all) | 3.03 | 2.95 | 3.14 | 3.05 | 3.04 | 3.14 | 3.10 | 3.15 |
+| gpu.lz4.decompress.naive.kernel (silesia/all) | 1.99 | 1.96 | 1.99 | 1.98 | 1.97 | 1.94 | 1.98 | 1.98 |
+| gpu.lz4.decompress.naive.e2e (silesia/all) | 1.73 | 1.68 | 0.95 | 0.94 | 0.95 | 0.92 | 0.95 | 0.94 |
+| gpu.lz4.decompress.coop.kernel (silesia/all) | 3.41 | 3.19 | 3.30 | 3.09 | 3.13 | 3.41 | 3.30 | 3.41 |
+| gpu.lz4.decompress.coop.e2e (silesia/all) | 2.70 | 2.56 | 2.71 | 2.66 | 2.64 | 2.85 | 2.70 | 2.78 |
+| gpu.lz4.compress.kernel (silesia/all) | 3.53 | 3.41 | 3.46 | 3.45 | 3.46 | 3.52 | 3.48 | 3.52 |
+| gpu.lz4.compress.e2e (silesia/all) | 2.87 | 2.77 | 3.01 | 2.97 | 2.98 | 3.06 | 3.02 | 3.06 |
+| gpu.lz4.l2.compress.kernel (silesia/all) | 1.83 | 1.78 | 1.84 | 1.80 | 1.81 | 1.84 | 1.82 | 1.84 |
+| gpu.lz4.l2.compress.e2e (silesia/all) | 1.64 | 1.58 | 1.69 | 1.63 | 1.63 | 1.70 | 1.65 | 1.70 |
+| gpu.lz4.l3.compress.kernel (silesia/all) | 0.99 | 0.97 | 0.99 | 0.97 | 0.98 | 0.99 | 0.98 | 0.96 |
+| gpu.lz4.l3.compress.e2e (silesia/all) | 0.93 | 0.90 | 0.91 | 0.92 | 0.91 | 0.94 | 0.92 | 0.89 |
+| gpu.lz4.compress.upto.match (silesia/all) | 7.07 | 6.94 | 6.87 | 6.95 | 6.96 | 7.07 | 7.02 | 6.91 |
+| gpu.lz4.compress.upto.parse (silesia/all) | 4.43 | 4.34 | 4.28 | 4.30 | 4.31 | 4.41 | 4.34 | 4.30 |
+| gpu.lz4.compress.upto.emit (silesia/all) | 3.53 | 3.48 | 3.41 | 3.44 | 3.44 | 3.52 | 3.47 | 3.41 |
+| gpu.lz4.l3.compress.upto.match (silesia/all) | 6.69 | 6.67 | 6.60 | 6.61 | 6.57 | 6.68 | 6.64 | 6.59 |
+| gpu.lz4.l3.compress.upto.deep (silesia/all) | 1.16 | 1.13 | 1.13 | 1.13 | 1.14 | 1.15 | 1.14 | 1.13 |
+| gpu.lz4.l3.compress.upto.parse (silesia/all) | 1.05 | 1.02 | 1.03 | 1.03 | 1.03 | 1.05 | 1.03 | 1.02 |
+| gpu.lz4.l3.compress.upto.emit (silesia/all) | 0.99 | 0.96 | 0.98 | 0.97 | 0.98 | 0.99 | 0.98 | 0.97 |
+| gpu.glze.compress.upto.match (silesia/all) | 6.97 | 6.75 | 6.84 | 6.85 | 6.85 | 6.95 | 6.91 | 6.88 |
+| gpu.glze.compress.upto.parse (silesia/all) | 4.39 | 4.35 | 4.28 | 4.27 | 4.26 | 4.34 | 4.30 | 4.31 |
+| gpu.glze.compress.upto.emit (silesia/all) | 3.50 | 3.43 | 3.42 | 3.41 | 3.41 | 3.47 | 3.44 | 3.44 |
+| gpu.glze.compress.upto.glze-hist (silesia/all) | 3.18 | 3.10 | 3.11 | 3.12 | 3.11 | 3.17 | 3.14 | 3.14 |
+| gpu.glze.compress.upto.glze-build (silesia/all) | 3.11 | 3.06 | 3.05 | 3.04 | 3.04 | 3.10 | 3.07 | 3.07 |
+| gpu.glze.compress.upto.glze-write (silesia/all) | 2.67 | 2.55 | 2.63 | 2.61 | 2.61 | 2.66 | 2.64 | 2.64 |
+| gpu.glze.l3.compress.upto.match (silesia/all) | 6.55 | 6.56 | 6.49 | 6.49 | 6.50 | 6.57 | 6.52 | 6.55 |
+| gpu.glze.l3.compress.upto.deep (silesia/all) | 1.15 | 1.10 | 1.14 | 1.13 | 1.13 | 1.15 | 1.14 | 1.12 |
+| gpu.glze.l3.compress.upto.parse (silesia/all) | 1.04 | 1.03 | 1.03 | 1.03 | 1.03 | 1.04 | 1.04 | 1.02 |
+| gpu.glze.l3.compress.upto.emit (silesia/all) | 0.99 | 0.94 | 0.98 | 0.97 | 0.97 | 0.99 | 0.98 | 0.98 |
+| gpu.glze.l3.compress.upto.glze-hist (silesia/all) | 0.96 | 0.95 | 0.95 | 0.95 | 0.94 | 0.96 | 0.96 | 0.95 |
+| gpu.glze.l3.compress.upto.glze-build (silesia/all) | 0.95 | 0.93 | 0.94 | 0.94 | 0.94 | 0.95 | 0.95 | 0.93 |
+| gpu.glze.l3.compress.upto.glze-write (silesia/all) | 0.91 | 0.90 | 0.90 | 0.90 | 0.90 | 0.91 | 0.91 | 0.90 |
+| gpu.lz4.decompress.upto.decode (silesia/all) | 3.42 | 3.27 | 3.15 | 3.19 | 3.18 | 3.43 | 3.29 | 3.33 |
+| gpu.glz.decompress.upto.decode (silesia/all) | 4.94 | 4.84 | 4.90 | 4.89 | 4.86 | 4.98 | 4.92 | 4.92 |
+| gpu.glze.decompress.upto.glze-entropy (silesia/all) | 12.97 | 12.64 | 12.81 | 12.77 | 12.77 | 12.97 | 12.80 | 12.87 |
+| gpu.glze.decompress.upto.decode (silesia/all) | 3.68 | 3.61 | 3.59 | 3.58 | 3.57 | 3.61 | 3.62 | 3.58 |
+| hybrid.lz4.compress.e2e (silesia/all) | 3.90 | 3.57 | 3.75 | 3.76 | 3.75 | 3.91 | 3.94 | 3.85 |
+| hybrid.lz4.decompress.e2e (silesia/all) | 13.91 | 13.81 | 13.98 | 13.43 | 13.65 | 13.47 | 13.14 | 13.41 |
+| hybrid.glze.compress.e2e (silesia/all) | 3.16 | 2.98 | 3.02 | 2.89 | 3.00 | 3.17 | 3.18 | 3.18 |
+| hybrid.glze.decompress.e2e (silesia/all) | 6.42 | 5.63 | 6.28 | 5.93 | 8.55 | 8.71 | 8.52 | 8.42 |
+| hybrid.glze.l3.compress.e2e (silesia/all) | 1.27 | 0.92 | 1.23 | 1.20 | 1.21 | 1.25 | 1.28 | 1.26 |
+| hybrid.glze.l3.decompress.e2e (silesia/all) | 7.15 | 5.10 | 6.88 | 6.79 | 9.20 | 9.47 | 9.14 | 9.09 |
+| hybrid.lz4_flex.compress.e2e (silesia/all) | 7.57 | 6.90 | 7.06 | 7.34 | 7.43 | 7.71 | 7.47 | 7.52 |
+| file.cpu.lz4_flex.compress (silesia/all) | — | 5.23 | 5.83 | 5.55 | 5.55 | 5.84 | 6.23 | 6.18 |
+| file.cpu.lz4.decompress (silesia/all) | — | 4.65 | 4.10 | 4.72 | 4.09 | 4.67 | 9.45 | 9.26 |
+| file.zstd-1.compress.mt (silesia/all) | — | 4.43 | 4.92 | 4.59 | 4.78 | 4.96 | 4.88 | 4.88 |
+| file.zstd-1.decompress.1t (silesia/all) | — | 1.50 | 1.51 | 1.48 | 1.50 | 1.52 | 1.50 | 1.37 |
+| file.gpu.lz4.compress (silesia/all) | — | 1.12 | 2.31 | 2.24 | 2.25 | 2.24 | 2.26 | 2.10 |
+| file.gpu.lz4.decompress (silesia/all) | — | 1.30 | 1.69 | 1.70 | 1.71 | 1.79 | 1.77 | 1.49 |
+| file.hybrid.lz4_flex.compress (silesia/all) | — | — | — | 4.87 | 4.66 | 4.83 | 3.89 | 3.38 |
+| cpu.lz4.compress.none.mt (silesia/all) | 2.08 | 1.97 | 2.12 | 2.29 | 2.16 | 2.26 | 2.41 | 2.46 |
+| cpu.lz4.compress.auto.mt (silesia/all) | 1.40 | 1.35 | 1.44 | 1.53 | 1.45 | 1.34 | 1.40 | 1.14 |
+| gpu.lz4.decompress.none.kernel (silesia/all) | 3.00 | 3.00 | 2.77 | 2.78 | 2.80 | 2.98 | 2.80 | 2.85 |
+| gpu.lz4.decompress.auto.kernel (silesia/all) | 2.96 | 2.95 | 2.76 | 2.78 | 2.76 | 2.97 | 2.79 | 2.94 |
+| gpu.lz4.decompress.auto.e2e (silesia/all) | 2.41 | 2.37 | 2.31 | 2.33 | 2.35 | 2.47 | 2.30 | 2.51 |
+| gpu.lz4.compress.auto.e2e (silesia/all) | 1.69 | 1.69 | 1.64 | 1.66 | 1.65 | 1.59 | 1.55 | 1.38 |
+| cpu.lz4.auto.wins.none (silesia/all) | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.86 |
+| cpu.lz4.auto.wins.shuffle-4 (silesia/all) | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.01 |
+| cpu.lz4.auto.wins.delta-4 (silesia/all) | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.00 |
+| cpu.lz4.auto.wins.delta-shuffle-4 (silesia/all) | — | — | — | — | — | 0.00 | 0.00 | 0.00 |
+| cpu.lz4.auto.wins.delta-zigzag-shuffle-2 (silesia/all) | — | — | — | — | — | — | — | 0.07 |
+| cpu.lz4.auto.wins.delta-bitshuffle-8 (silesia/all) | — | — | — | — | — | — | — | 0.06 |
 | cpu.lz4.auto.wins.stored (silesia/all) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| cpu.lz4.compress.exhaustive.mt (silesia/all) | 0.52 | 0.59 | 0.55 | 0.60 | 0.69 | 0.65 | 0.50 | 0.54 |
-| gpu.lz4.compress.exhaustive.e2e (silesia/all) | 0.95 | 1.00 | 1.01 | 0.97 | 0.98 | 0.96 | 0.73 | 0.72 |
-| cpu.glz.compress.none.mt (silesia/all) | 1.72 | 2.04 | 1.97 | 2.09 | 2.28 | 2.19 | 2.26 | 2.37 |
-| cpu.glz.compress.auto.mt (silesia/all) | 1.18 | 1.40 | 1.35 | 1.45 | 1.50 | 1.44 | 1.32 | 1.40 |
-| gpu.glz.decompress.none.kernel (silesia/all) | 4.79 | 4.98 | 4.95 | 4.86 | 4.84 | 4.88 | 4.98 | 4.85 |
-| gpu.glz.decompress.auto.kernel (silesia/all) | 4.62 | 4.78 | 4.77 | 4.70 | 4.68 | 4.70 | 4.78 | 4.69 |
-| gpu.glz.decompress.auto.e2e (silesia/all) | 3.33 | 3.46 | 3.47 | 3.67 | 3.74 | 3.68 | 3.76 | 3.68 |
-| gpu.glz.compress.auto.e2e (silesia/all) | 1.60 | 1.69 | 1.70 | 1.64 | 1.68 | 1.65 | 1.58 | 1.55 |
-| cpu.glz.auto.wins.none (silesia/all) | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 |
-| cpu.glz.auto.wins.shuffle-4 (silesia/all) | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 |
+| cpu.lz4.compress.exhaustive.mt (silesia/all) | 0.59 | 0.55 | 0.60 | 0.69 | 0.65 | 0.50 | 0.54 | 0.35 |
+| gpu.lz4.compress.exhaustive.e2e (silesia/all) | 1.00 | 1.01 | 0.97 | 0.98 | 0.96 | 0.73 | 0.72 | 0.50 |
+| cpu.glz.compress.none.mt (silesia/all) | 2.04 | 1.97 | 2.09 | 2.28 | 2.19 | 2.26 | 2.37 | 2.41 |
+| cpu.glz.compress.auto.mt (silesia/all) | 1.40 | 1.35 | 1.45 | 1.50 | 1.44 | 1.32 | 1.40 | 1.14 |
+| gpu.glz.decompress.none.kernel (silesia/all) | 4.98 | 4.95 | 4.86 | 4.84 | 4.88 | 4.98 | 4.85 | 4.83 |
+| gpu.glz.decompress.auto.kernel (silesia/all) | 4.78 | 4.77 | 4.70 | 4.68 | 4.70 | 4.78 | 4.69 | 4.72 |
+| gpu.glz.decompress.auto.e2e (silesia/all) | 3.46 | 3.47 | 3.67 | 3.74 | 3.68 | 3.76 | 3.68 | 3.69 |
+| gpu.glz.compress.auto.e2e (silesia/all) | 1.69 | 1.70 | 1.64 | 1.68 | 1.65 | 1.58 | 1.55 | 1.39 |
+| cpu.glz.auto.wins.none (silesia/all) | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.88 | 0.86 |
+| cpu.glz.auto.wins.shuffle-4 (silesia/all) | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.10 | 0.01 |
 | cpu.glz.auto.wins.delta-4 (silesia/all) | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 | 0.01 |
-| cpu.glz.auto.wins.delta-shuffle-4 (silesia/all) | — | — | — | — | — | — | 0.00 | 0.00 |
+| cpu.glz.auto.wins.delta-shuffle-4 (silesia/all) | — | — | — | — | — | 0.00 | 0.00 | 0.00 |
+| cpu.glz.auto.wins.delta-zigzag-shuffle-2 (silesia/all) | — | — | — | — | — | — | — | 0.07 |
+| cpu.glz.auto.wins.delta-bitshuffle-8 (silesia/all) | — | — | — | — | — | — | — | 0.06 |
 | cpu.glz.auto.wins.stored (silesia/all) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| cpu.glz.compress.exhaustive.mt (silesia/all) | 0.47 | 0.58 | 0.53 | 0.59 | 0.69 | 0.66 | 0.50 | 0.53 |
-| gpu.glz.compress.exhaustive.e2e (silesia/all) | 0.95 | 1.01 | 1.00 | 0.97 | 0.98 | 0.97 | 0.74 | 0.72 |
-| cpu.glze.compress.none.mt (silesia/all) | 1.34 | 1.59 | 1.54 | 1.63 | 1.79 | 1.71 | 1.76 | 1.91 |
-| cpu.glze.compress.auto.mt (silesia/all) | 0.88 | 1.02 | 0.98 | 1.05 | 1.11 | 1.06 | 0.96 | 1.02 |
-| gpu.glze.decompress.none.kernel (silesia/all) | 3.59 | 3.67 | 3.63 | 3.60 | 3.61 | 3.56 | 3.63 | 3.58 |
-| gpu.glze.decompress.auto.kernel (silesia/all) | 3.52 | 3.58 | 3.57 | 3.53 | 3.53 | 3.50 | 3.53 | 3.46 |
-| gpu.glze.decompress.auto.e2e (silesia/all) | 2.72 | 2.81 | 2.82 | 2.77 | 2.89 | 2.75 | 2.91 | 2.85 |
-| gpu.glze.compress.auto.e2e (silesia/all) | 1.19 | 1.25 | 1.25 | 1.22 | 1.23 | 1.23 | 1.13 | 1.11 |
-| cpu.glze.auto.wins.none (silesia/all) | 0.89 | 0.89 | 0.89 | 0.89 | 0.89 | 0.89 | 0.89 | 0.89 |
-| cpu.glze.auto.wins.shuffle-4 (silesia/all) | 0.07 | 0.07 | 0.07 | 0.07 | 0.07 | 0.07 | 0.05 | 0.05 |
-| cpu.glze.auto.wins.delta-4 (silesia/all) | 0.04 | 0.04 | 0.04 | 0.04 | 0.04 | 0.04 | 0.03 | 0.03 |
-| cpu.glze.auto.wins.delta-shuffle-4 (silesia/all) | — | — | — | — | — | — | 0.04 | 0.04 |
+| cpu.glz.compress.exhaustive.mt (silesia/all) | 0.58 | 0.53 | 0.59 | 0.69 | 0.66 | 0.50 | 0.53 | 0.34 |
+| gpu.glz.compress.exhaustive.e2e (silesia/all) | 1.01 | 1.00 | 0.97 | 0.98 | 0.97 | 0.74 | 0.72 | 0.50 |
+| cpu.glze.compress.none.mt (silesia/all) | 1.59 | 1.54 | 1.63 | 1.79 | 1.71 | 1.76 | 1.91 | 1.92 |
+| cpu.glze.compress.auto.mt (silesia/all) | 1.02 | 0.98 | 1.05 | 1.11 | 1.06 | 0.96 | 1.02 | 0.82 |
+| gpu.glze.decompress.none.kernel (silesia/all) | 3.67 | 3.63 | 3.60 | 3.61 | 3.56 | 3.63 | 3.58 | 3.50 |
+| gpu.glze.decompress.auto.kernel (silesia/all) | 3.58 | 3.57 | 3.53 | 3.53 | 3.50 | 3.53 | 3.46 | 3.53 |
+| gpu.glze.decompress.auto.e2e (silesia/all) | 2.81 | 2.82 | 2.77 | 2.89 | 2.75 | 2.91 | 2.85 | 2.76 |
+| gpu.glze.compress.auto.e2e (silesia/all) | 1.25 | 1.25 | 1.22 | 1.23 | 1.23 | 1.13 | 1.11 | 0.94 |
+| cpu.glze.auto.wins.none (silesia/all) | 0.89 | 0.89 | 0.89 | 0.89 | 0.89 | 0.89 | 0.89 | 0.87 |
+| cpu.glze.auto.wins.shuffle-4 (silesia/all) | 0.07 | 0.07 | 0.07 | 0.07 | 0.07 | 0.05 | 0.05 | 0.02 |
+| cpu.glze.auto.wins.delta-4 (silesia/all) | 0.04 | 0.04 | 0.04 | 0.04 | 0.04 | 0.03 | 0.03 | 0.00 |
+| cpu.glze.auto.wins.delta-shuffle-4 (silesia/all) | — | — | — | — | — | 0.04 | 0.04 | 0.00 |
+| cpu.glze.auto.wins.delta-zigzag-shuffle-2 (silesia/all) | — | — | — | — | — | — | — | 0.08 |
+| cpu.glze.auto.wins.delta-bitshuffle-8 (silesia/all) | — | — | — | — | — | — | — | 0.02 |
 | cpu.glze.auto.wins.stored (silesia/all) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| cpu.glze.compress.exhaustive.mt (silesia/all) | 0.39 | 0.43 | 0.40 | 0.45 | 0.53 | 0.51 | 0.39 | 0.42 |
-| gpu.glze.compress.exhaustive.e2e (silesia/all) | 0.70 | 0.74 | 0.73 | 0.72 | 0.72 | 0.71 | 0.55 | 0.54 |
+| cpu.glze.compress.exhaustive.mt (silesia/all) | 0.43 | 0.40 | 0.45 | 0.53 | 0.51 | 0.39 | 0.42 | 0.27 |
+| gpu.glze.compress.exhaustive.e2e (silesia/all) | 0.74 | 0.73 | 0.72 | 0.72 | 0.71 | 0.55 | 0.54 | 0.35 |
 
 What changed:
 
-- **hybrid** `c13f23e-dirty`: parse reuses its speculative path, emit and match-finding speed-ups, fast CPU twin, CPU+GPU hybrid (mediaanalysisd used ~1-1.5 cores throughout)
 - **catch-up** `0681fbd-dirty`: GPU + lz4_flex fixed split, CPU GLZ/GLZ-E decoders 2x, tagged chain links and 16-byte compares in match finding, faster CPU emit and Huffman encoder
 - **streams** `8e89910-dirty`: Streamed CPU file paths (reading, coding and writing overlap), hand-written LZ4 decoder with wild copies, file-to-file rows; corespeechd used ~1 core
 - **pipelined** `8e89910-dirty`: Pipelined GPU encoder batches (16 MiB, two buffer sets; whole batches for the lz4_flex + GPU split), decoder output straight from readback, 512 MiB decode batches, parallel pipeline compilation; coreaudiod and corespeechd used ~1 core
@@ -336,4 +347,5 @@ What changed:
 - **huffman-decode** `2246356-dirty`: CPU GLZ-E decoding: five symbols per refill, canonical-order decode tables, vectorised offset interleave, zipped GLZ offsets
 - **delta-shuffle** `88a0790-dirty`: Delta-shuffle filter (id 3) on CPU and GPU: delta-shuffle-4 at level 1, widths 2/4/8 from level 2
 - **profile-loop** `2ff698d-dirty`: Profile/optimize loop: twin match finder (8-byte inserts, tagged chains, clamped compare), Huffman encoder (4-way histogram, pairwise flush), file rows flush outputs between runs
+- **float-filters** `b7fc10b-dirty`: Filters delta-zigzag-shuffle (4) and delta-bitshuffle (5); level 1 adds delta-zigzag-shuffle-2 and delta-bitshuffle-8, level 2+ adds delta-zigzag-shuffle-2 and delta-bitshuffle-4/-8; f64-walk numeric input; filtered GPU batches no longer divided by candidates
 

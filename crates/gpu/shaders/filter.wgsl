@@ -1,4 +1,5 @@
-// M7: byte-shuffle and delta filters (plan §4a), forward and inverse.
+// M7: byte-shuffle and delta filters and their combinations (plan §4a;
+// crates/format/FORMAT.md), forward and inverse.
 // One workgroup per job. A job reads `len` bytes at `src_offset` of `src` and
 // writes `len` bytes at `dst_offset` of `dst` (both 4-aligned). With width w
 // there are m = len / w whole elements; the trailing len % w bytes are copied.
@@ -6,9 +7,11 @@
 // the only word a job shares with bytes outside it is its last one, where the
 // bytes past `len` are preserved (read-modify-write by the owner).
 //
-// Entry points: shuffle_forward, shuffle_inverse, delta_forward and
-// delta_shuffle_forward (per word, independent), and delta_inverse and
-// delta_shuffle_inverse (a prefix sum: per-invocation segment sums, a
+// Entry points: shuffle_forward, shuffle_inverse, delta_forward,
+// delta_shuffle_forward and delta_zigzag_shuffle_forward (per word,
+// independent), delta_bitshuffle_forward (per 32-element tile and byte), and
+// delta_inverse, delta_shuffle_inverse, delta_zigzag_shuffle_inverse and
+// delta_bitshuffle_inverse (a prefix sum: per-invocation segment sums, a
 // workgroup scan, then each segment re-summed from its prefix).
 
 struct Job {
@@ -136,6 +139,39 @@ fn shuffle_inverse(
     shuffle(wg, nwg, lid, false);
 }
 
+// Element e's delta, elem[e] - elem[e - 1] (wrapping; elem[0] itself). For
+// w < 8 only the low 8 * w bits are meaningful.
+fn delta_of(job: Job, e: u32) -> vec2<u32> {
+    var prev = vec2<u32>(0u, 0u);
+    if (e > 0u) {
+        prev = elem(job, e - 1u);
+    }
+    return sub64(elem(job, e), prev);
+}
+
+// Output word k of delta for the elements from byte 0, without the tail.
+fn delta_word(job: Job, k: u32) -> u32 {
+    let w = job.width;
+    let m = job.len / w;
+    var v = 0u;
+    if (w == 8u) {
+        let e = k / 2u;
+        if (e < m) {
+            let d = delta_of(job, e);
+            v = select(d.x, d.y, (k & 1u) == 1u);
+        }
+    } else {
+        let per = 4u / w;
+        for (var t = 0u; t < per; t++) {
+            let e = k * per + t;
+            if (e < m) {
+                v |= (delta_of(job, e).x & width_mask(w)) << (8u * w * t);
+            }
+        }
+    }
+    return v;
+}
+
 // Delta: element i becomes elem[i] - elem[i - 1] (wrapping), elem[0] kept.
 @compute @workgroup_size(WG_SIZE)
 fn delta_forward(
@@ -148,47 +184,31 @@ fn delta_forward(
         return;
     }
     let job = jobs[j];
-    let w = job.width;
-    let m = job.len / w;
     let words = (job.len + 3u) / 4u;
     for (var k = lid; k < words; k += WG_SIZE) {
-        var v = 0u;
-        if (w == 8u) {
-            let e = k / 2u;
-            if (e < m) {
-                var prev = vec2<u32>(0u, 0u);
-                if (e > 0u) {
-                    prev = elem(job, e - 1u);
-                }
-                let d = sub64(elem(job, e), prev);
-                v = select(d.x, d.y, (k & 1u) == 1u);
-            }
-        } else {
-            let per = 4u / w;
-            for (var t = 0u; t < per; t++) {
-                let e = k * per + t;
-                if (e < m) {
-                    var prev = 0u;
-                    if (e > 0u) {
-                        prev = elem(job, e - 1u).x;
-                    }
-                    let d = (elem(job, e).x - prev) & width_mask(w);
-                    v |= d << (8u * w * t);
-                }
-            }
-        }
-        put_word(job, k, with_tail(job, k, v));
+        put_word(job, k, with_tail(job, k, delta_word(job, k)));
     }
 }
 
-// Delta, then shuffle: output byte p < m * w is byte p / m of element
-// (p % m)'s delta.
-@compute @workgroup_size(WG_SIZE)
-fn delta_shuffle_forward(
-    @builtin(workgroup_id) wg: vec3<u32>,
-    @builtin(num_workgroups) nwg: vec3<u32>,
-    @builtin(local_invocation_index) lid: u32,
-) {
+// Zigzag of a w-byte two's-complement delta: 0, -1, 1, -2, ... become 0, 1,
+// 2, 3, ... (bits past 8 * w of the result are zero for w < 8).
+fn zigzag(d: vec2<u32>, w: u32) -> vec2<u32> {
+    if (w == 8u) {
+        let neg = 0u - (d.y >> 31u);
+        return vec2<u32>((d.x << 1u) ^ neg, ((d.y << 1u) | (d.x >> 31u)) ^ neg);
+    }
+    let neg = 0u - ((d.x >> (8u * w - 1u)) & 1u);
+    return vec2<u32>(((d.x << 1u) ^ neg) & width_mask(w), 0u);
+}
+
+fn unzigzag(z: vec2<u32>) -> vec2<u32> {
+    let neg = 0u - (z.x & 1u);
+    return vec2<u32>(((z.x >> 1u) | (z.y << 31u)) ^ neg, (z.y >> 1u) ^ neg);
+}
+
+// Delta (zigzagged when `zz`), then shuffle: output byte p < m * w is byte
+// p / m of element (p % m)'s delta.
+fn delta_shuffled(wg: vec3<u32>, nwg: vec3<u32>, lid: u32, zz: bool) {
     let j = job_index(wg, nwg);
     if (j >= arrayLength(&jobs)) {
         return;
@@ -202,13 +222,11 @@ fn delta_shuffle_forward(
         for (var b = 0u; b < 4u; b++) {
             let p = 4u * k + b;
             if (p < m * w) {
-                let e = p % m;
                 let byte = p / m;
-                var prev = vec2<u32>(0u, 0u);
-                if (e > 0u) {
-                    prev = elem(job, e - 1u);
+                var d = delta_of(job, p % m);
+                if (zz) {
+                    d = zigzag(d, w);
                 }
-                let d = sub64(elem(job, e), prev);
                 let half = select(d.x, d.y, byte >= 4u);
                 v |= ((half >> (8u * (byte & 3u))) & 0xFFu) << (8u * b);
             }
@@ -217,14 +235,100 @@ fn delta_shuffle_forward(
     }
 }
 
-// Element e of the job's input: contiguous, or (delta-shuffle) gathered from
-// byte j's plane at j * m + e.
-fn input_elem(job: Job, e: u32, shuffled: bool) -> vec2<u32> {
-    if (!shuffled) {
+@compute @workgroup_size(WG_SIZE)
+fn delta_shuffle_forward(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    delta_shuffled(wg, nwg, lid, false);
+}
+
+@compute @workgroup_size(WG_SIZE)
+fn delta_zigzag_shuffle_forward(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    delta_shuffled(wg, nwg, lid, true);
+}
+
+// Words per bit plane of delta-bitshuffle: the first m / 32 * 32 elements
+// are spread over 8 * w planes, one bit per element, element e at bit e % 32
+// of word e / 32; later elements keep their deltas, in place.
+fn plane_words(job: Job) -> u32 {
+    return job.len / job.width / 32u;
+}
+
+// Delta, then bit-shuffle. One item per 32-element tile t and byte j of the
+// element: the tile's word of planes 8j..8j + 8, all eight at once.
+@compute @workgroup_size(WG_SIZE)
+fn delta_bitshuffle_forward(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    let j = job_index(wg, nwg);
+    if (j >= arrayLength(&jobs)) {
+        return;
+    }
+    let job = jobs[j];
+    let w = job.width;
+    let pw = plane_words(job);
+    let low = vec4<u32>(0u, 1u, 2u, 3u);
+    for (var item = lid; item < pw * w; item += WG_SIZE) {
+        let t = item / w;
+        let byte = item % w;
+        var lo = vec4<u32>(0u);
+        var hi = vec4<u32>(0u);
+        for (var i = 0u; i < 32u; i++) {
+            let d = delta_of(job, 32u * t + i);
+            let half = select(d.x, d.y, byte >= 4u);
+            let x = vec4<u32>((half >> (8u * (byte & 3u))) & 0xFFu);
+            lo |= ((x >> low) & vec4<u32>(1u)) << vec4<u32>(i);
+            hi |= ((x >> (low + 4u)) & vec4<u32>(1u)) << vec4<u32>(i);
+        }
+        for (var b = 0u; b < 4u; b++) {
+            put_word(job, (8u * byte + b) * pw + t, lo[b]);
+            put_word(job, (8u * byte + b + 4u) * pw + t, hi[b]);
+        }
+    }
+    // Elements past the planes keep their deltas; then the tail.
+    let words = (job.len + 3u) / 4u;
+    for (var k = 8u * w * pw + lid; k < words; k += WG_SIZE) {
+        put_word(job, k, with_tail(job, k, delta_word(job, k)));
+    }
+}
+
+// How the inverse kernels find element e's delta in the job's input.
+const PLAIN: u32 = 0u; // delta: contiguous
+const SHUFFLED: u32 = 1u; // delta-shuffle: byte j at j * m + e
+const ZIGZAG: u32 = 2u; // delta-zigzag-shuffle: shuffled, then unzigzagged
+const BIT_PLANES: u32 = 3u; // delta-bitshuffle: bit k from plane k
+
+fn input_elem(job: Job, e: u32, stored_as: u32) -> vec2<u32> {
+    if (stored_as == PLAIN) {
         return elem(job, e);
     }
-    let m = job.len / job.width;
     var v = vec2<u32>(0u, 0u);
+    if (stored_as == BIT_PLANES) {
+        let pw = plane_words(job);
+        if (e >= 32u * pw) {
+            return elem(job, e);
+        }
+        let at = (job.src_offset >> 2u) + e / 32u;
+        let shift = e % 32u;
+        for (var k = 0u; k < 8u * job.width; k++) {
+            let bit = (src[at + k * pw] >> shift) & 1u;
+            if (k < 32u) {
+                v.x |= bit << k;
+            } else {
+                v.y |= bit << (k - 32u);
+            }
+        }
+        return v;
+    }
+    let m = job.len / job.width;
     for (var byte = 0u; byte < job.width; byte++) {
         let b = src_byte(job.src_offset + byte * m + e);
         if (byte < 4u) {
@@ -232,6 +336,9 @@ fn input_elem(job: Job, e: u32, shuffled: bool) -> vec2<u32> {
         } else {
             v.y |= b << (8u * (byte - 4u));
         }
+    }
+    if (stored_as == ZIGZAG) {
+        return unzigzag(v);
     }
     return v;
 }
@@ -242,7 +349,7 @@ fn delta_inverse(
     @builtin(num_workgroups) nwg: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
-    running_sum(wg, nwg, lid, false);
+    running_sum(wg, nwg, lid, PLAIN);
 }
 
 @compute @workgroup_size(WG_SIZE)
@@ -251,12 +358,73 @@ fn delta_shuffle_inverse(
     @builtin(num_workgroups) nwg: vec3<u32>,
     @builtin(local_invocation_index) lid: u32,
 ) {
-    running_sum(wg, nwg, lid, true);
+    running_sum(wg, nwg, lid, SHUFFLED);
 }
 
-// The inverse of delta (of delta-shuffle when `shuffled`): a running sum of
-// the job's elements.
-fn running_sum(wg: vec3<u32>, nwg: vec3<u32>, lid: u32, shuffled: bool) {
+@compute @workgroup_size(WG_SIZE)
+fn delta_zigzag_shuffle_inverse(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    running_sum(wg, nwg, lid, ZIGZAG);
+}
+
+@compute @workgroup_size(WG_SIZE)
+fn delta_bitshuffle_inverse(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    running_sum(wg, nwg, lid, BIT_PLANES);
+}
+
+// `count << k` as a 64-bit (lo, hi) pair, for k < 64.
+fn shl64(count: u32, k: u32) -> vec2<u32> {
+    if (k >= 32u) {
+        return vec2<u32>(0u, count << (k - 32u));
+    }
+    return vec2<u32>(count << k, select(count >> (32u - k), 0u, k == 0u));
+}
+
+// Bits lo..hi of a word (0 <= lo < hi <= 32).
+fn bit_range(lo: u32, hi: u32) -> u32 {
+    let below_hi = select((1u << hi) - 1u, 0xFFFFFFFFu, hi == 32u);
+    return below_hi & ~((1u << lo) - 1u);
+}
+
+// The sum of deltas first..end. In bit planes, that's the sum over planes k
+// of 2^k times the number of set bits: a popcount per word, not a gather per
+// element.
+fn segment_sum(job: Job, first: u32, end: u32, stored_as: u32) -> vec2<u32> {
+    var sum = vec2<u32>(0u, 0u);
+    var e = first;
+    if (stored_as == BIT_PLANES) {
+        let pw = plane_words(job);
+        let planes_end = min(end, 32u * pw);
+        if (e < planes_end) {
+            let base = job.src_offset >> 2u;
+            for (var k = 0u; k < 8u * job.width; k++) {
+                var count = 0u;
+                for (var q = e / 32u; 32u * q < planes_end; q++) {
+                    let lo = max(e, 32u * q) - 32u * q;
+                    let hi = min(planes_end, 32u * q + 32u) - 32u * q;
+                    count += countOneBits(src[base + k * pw + q] & bit_range(lo, hi));
+                }
+                sum = add64(sum, shl64(count, k));
+            }
+            e = planes_end;
+        }
+    }
+    for (; e < end; e++) {
+        sum = add64(sum, input_elem(job, e, stored_as));
+    }
+    return sum;
+}
+
+// The inverse of every delta filter: a running sum of the job's deltas, read
+// through `stored_as`.
+fn running_sum(wg: vec3<u32>, nwg: vec3<u32>, lid: u32, stored_as: u32) {
     let j = job_index(wg, nwg);
     if (j >= arrayLength(&jobs)) {
         return;
@@ -271,10 +439,7 @@ fn running_sum(wg: vec3<u32>, nwg: vec3<u32>, lid: u32, shuffled: bool) {
     let end = min(first + seg, m);
 
     // 1. Each invocation sums its segment.
-    var sum = vec2<u32>(0u, 0u);
-    for (var e = first; e < end; e++) {
-        sum = add64(sum, input_elem(job, e, shuffled));
-    }
+    let sum = segment_sum(job, first, end, stored_as);
 
     // 2. Inclusive scan of the segment sums (Hillis–Steele).
     w_scan[lid] = sum;
@@ -296,7 +461,7 @@ fn running_sum(wg: vec3<u32>, nwg: vec3<u32>, lid: u32, shuffled: bool) {
     // 3. Re-sum the segment from its prefix, writing whole words.
     if (w == 8u) {
         for (var e = first; e < end; e++) {
-            running = add64(running, input_elem(job, e, shuffled));
+            running = add64(running, input_elem(job, e, stored_as));
             put_word(job, 2u * e, running.x);
             put_word(job, 2u * e + 1u, running.y);
         }
@@ -308,7 +473,7 @@ fn running_sum(wg: vec3<u32>, nwg: vec3<u32>, lid: u32, shuffled: bool) {
             for (var t = 0u; t < per; t++) {
                 let e = k * per + t;
                 if (e < end) {
-                    running = add64(running, input_elem(job, e, shuffled));
+                    running = add64(running, input_elem(job, e, stored_as));
                     v |= (running.x & mask) << (8u * w * t);
                 }
             }

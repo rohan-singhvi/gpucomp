@@ -114,14 +114,16 @@ pub fn sample_len(chunk_size: u32) -> u32 {
 /// Filters tried per chunk at `level`, in tie-break order. Must equal
 /// `cpu::filter::candidates`, so GPU and CPU files are identical.
 pub fn filter_candidates(level: u8) -> &'static [format::Filter] {
-    use format::Filter::{Delta, DeltaShuffle, None, Shuffle};
-    const LEVEL1: [format::Filter; 4] = [
+    use format::Filter::{Delta, DeltaBitShuffle, DeltaShuffle, DeltaZigzagShuffle, None, Shuffle};
+    const LEVEL1: [format::Filter; 6] = [
         None,
         Shuffle { width: 4 },
         Delta { width: 4 },
         DeltaShuffle { width: 4 },
+        DeltaZigzagShuffle { width: 2 },
+        DeltaBitShuffle { width: 8 },
     ];
-    const LEVEL2: [format::Filter; 10] = [
+    const LEVEL2: [format::Filter; 13] = [
         None,
         Shuffle { width: 2 },
         Shuffle { width: 4 },
@@ -132,6 +134,9 @@ pub fn filter_candidates(level: u8) -> &'static [format::Filter] {
         DeltaShuffle { width: 2 },
         DeltaShuffle { width: 4 },
         DeltaShuffle { width: 8 },
+        DeltaZigzagShuffle { width: 2 },
+        DeltaBitShuffle { width: 4 },
+        DeltaBitShuffle { width: 8 },
     ];
     if level <= 1 {
         &LEVEL1
@@ -224,8 +229,9 @@ pub const DEFAULT_GPU_MEMORY: u64 = 3 << 30;
 /// match scratch (4 bytes per byte), output slot, packed data and its readback,
 /// the parse's path records (or hash-chain links, which hold them too), plus
 /// per-chunk sizes, info and pack entries (and, with dependency elimination,
-/// the group lists). Filter selection keeps one extra input-sized
-/// buffer (sampled) or two per extra candidate (exhaustive).
+/// the group lists). Filter selection keeps a filtered sample and its slot
+/// per extra candidate, then one filtered input (sampled; the larger of the
+/// two), or a filtered input and slots per extra candidate (exhaustive).
 pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions, params: &EncodeParams) -> u64 {
     let c = u64::from(options.chunk_size);
     let slot = |n: u64| u64::from(slot_for(options.codec, n as u32));
@@ -249,8 +255,9 @@ pub fn encoder_bytes_per_chunk(options: &GpuCompressOptions, params: &EncodePara
     match options.filters {
         FilterMode::None => {}
         FilterMode::Auto => {
+            // The candidates' samples are freed before the filtered copy.
             let s = u64::from(sample_len(options.chunk_size));
-            bytes += c + extra * (s + slot(s));
+            bytes += c.max(extra * (s + slot(s)));
         }
         FilterMode::Exhaustive => bytes += extra * (c + slot(c)),
     }
@@ -308,11 +315,10 @@ pub fn batch_chunks(
                 .min(by_binding),
             Batching::Whole => (budget / per_chunk).min(by_binding),
         },
-        // Every candidate's scratch shares the binding limit.
-        FilterMode::Auto | FilterMode::Exhaustive => {
-            let candidates = filter_candidates(options.level).len() as u64;
-            (by_binding / candidates).min(budget / per_chunk)
-        }
+        // Candidates run one after another, each with its own filtered input
+        // and slots no larger than an unfiltered batch's (so within the
+        // binding limit); the budget counts all of them (per_chunk).
+        FilterMode::Auto | FilterMode::Exhaustive => by_binding.min(budget / per_chunk),
     };
     chunks.max(1)
 }
@@ -2484,13 +2490,13 @@ mod tests {
             filters: FilterMode::Auto,
             ..base
         };
-        // One filtered copy of the input, plus each extra candidate's filtered
-        // sample and sample slot.
+        // Each extra candidate's filtered sample and sample slot, then (after
+        // those are freed) one filtered copy of the input: the larger of the two.
         let sample = u64::from(sample_len(65_536));
         let extra = filter_candidates(1).len() as u64 - 1;
         assert_eq!(
             encoder_bytes_per_chunk(&auto, &EncodeParams::default()),
-            plain + c + extra * (sample + u64::from(slot_size(sample as u32)))
+            plain + c.max(extra * (sample + u64::from(slot_size(sample as u32))))
         );
         let exhaustive = GpuCompressOptions {
             filters: FilterMode::Exhaustive,

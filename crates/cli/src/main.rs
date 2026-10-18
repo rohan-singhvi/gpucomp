@@ -417,6 +417,7 @@ mod tests {
                 "sorted-u32",
                 "i16-audio",
                 "u64-timestamps",
+                "f64-walk",
                 "silesia/all"
             ]
         );

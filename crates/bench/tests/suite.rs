@@ -198,13 +198,15 @@ fn glz_suite_without_gpu_measures_the_cpu_paths() {
     );
 }
 
-const FILTER_CPU_ROWS: [&str; 7] = [
+const FILTER_CPU_ROWS: [&str; 9] = [
     "compress.none.mt",
     "compress.auto.mt",
     "auto.wins.none",
     "auto.wins.shuffle-4",
     "auto.wins.delta-4",
     "auto.wins.delta-shuffle-4",
+    "auto.wins.delta-zigzag-shuffle-2",
+    "auto.wins.delta-bitshuffle-8",
     "auto.wins.stored",
 ];
 
@@ -214,7 +216,13 @@ fn numeric_inputs_are_named_deterministic_and_exact_length() {
     let names: Vec<_> = inputs.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
         names,
-        ["f32-points", "sorted-u32", "i16-audio", "u64-timestamps"]
+        [
+            "f32-points",
+            "sorted-u32",
+            "i16-audio",
+            "u64-timestamps",
+            "f64-walk"
+        ]
     );
     for (name, data) in &inputs {
         assert_eq!(data.len(), 100_003, "{name}");
