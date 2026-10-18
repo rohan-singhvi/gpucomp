@@ -142,10 +142,20 @@ pub fn codes(lengths: &[u8; 256]) -> [u16; 256] {
 /// three are whole words.
 pub fn encode_stream(symbols: &[u8], out: &mut Vec<u8>) {
     let n = symbols.len();
-    let mut counts = [0u32; 256];
-    for &s in symbols {
-        counts[s as usize] += 1;
+    // Four histograms, summed: runs of one symbol don't wait on one counter.
+    let mut partial = [[0u32; 256]; 4];
+    let (quads, rest) = symbols.as_chunks::<4>();
+    for q in quads {
+        partial[0][q[0] as usize] += 1;
+        partial[1][q[1] as usize] += 1;
+        partial[2][q[2] as usize] += 1;
+        partial[3][q[3] as usize] += 1;
     }
+    for &s in rest {
+        partial[0][s as usize] += 1;
+    }
+    let counts: [u32; 256] =
+        std::array::from_fn(|s| partial[0][s] + partial[1][s] + partial[2][s] + partial[3][s]);
     let used = counts.iter().filter(|&&c| c > 0).count();
     if used == 1 {
         out.extend_from_slice(&(MODE_RLE | u32::from(symbols[0]) << 8).to_le_bytes());
@@ -171,10 +181,16 @@ pub fn encode_stream(symbols: &[u8], out: &mut Vec<u8>) {
         for k in 0..lanes {
             let lane_start = at;
             let (mut acc, mut fill) = (0u64, 0u32);
-            for &s in &symbols[lane_range(n, lanes, k)] {
-                let e = entries[s as usize];
-                acc |= u64::from(e & 0xFFFF) << fill;
-                fill += e >> 16;
+            // Two symbols per word check: after a flush fewer than 32 bits
+            // are pending, and two codes add at most 2 * MAX_LEN = 22.
+            let lane = &symbols[lane_range(n, lanes, k)];
+            let (pairs, last) = lane.as_chunks::<2>();
+            for pair in pairs.iter().map(|p| &p[..]).chain(std::iter::once(last)) {
+                for &s in pair {
+                    let e = entries[s as usize];
+                    acc |= u64::from(e & 0xFFFF) << fill;
+                    fill += e >> 16;
+                }
                 if fill >= 32 {
                     out[at..at + 4].copy_from_slice(&(acc as u32).to_le_bytes());
                     at += 4;

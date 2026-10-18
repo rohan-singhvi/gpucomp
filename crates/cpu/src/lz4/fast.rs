@@ -20,17 +20,33 @@ fn read_u64(input: &[u8], p: usize) -> u64 {
 /// (`p + max` within the input).
 fn common(input: &[u8], q: usize, p: usize, max: usize) -> usize {
     let mut i = 0;
-    while i + 8 <= max {
+    // 8 bytes at a time, the last step clamped to `max`; bytes only where
+    // fewer than 8 remain in the input (q < p, so p's side ends first).
+    while i < max {
+        if p + i + 8 > input.len() {
+            while i < max && input[q + i] == input[p + i] {
+                i += 1;
+            }
+            return i;
+        }
         let x = read_u64(input, q + i) ^ read_u64(input, p + i);
         if x != 0 {
-            return i + (x.trailing_zeros() / 8) as usize;
+            return (i + (x.trailing_zeros() / 8) as usize).min(max);
         }
         i += 8;
     }
-    while i < max && input[q + i] == input[p + i] {
-        i += 1;
-    }
-    i
+    max
+}
+
+/// With depth > 1, table and chain entries carry an 11-bit tag of their
+/// position's first 4 bytes above the position + 1 (as the GPU's chain links
+/// do): a candidate whose tag differs from the position's can't match, so the
+/// walk skips it without loading its bytes.
+const LINK_BITS: u32 = 21;
+const LINK_MASK: u32 = (1 << LINK_BITS) - 1;
+
+fn tag(word: u32) -> u32 {
+    word.wrapping_mul(0x85EB_CA77) >> LINK_BITS
 }
 
 /// Phase-1 matches on demand, in nondecreasing position order.
@@ -71,14 +87,44 @@ impl<'a> Matcher<'a> {
             let end = (self.inserted + block).min(self.last_start + 1);
             if self.params.depth > 1 {
                 // A position's first candidate is the bucket before its own
-                // block's inserts (the GPU's chain links).
-                for q in self.inserted..end {
-                    self.chain[q] = self.table[hash(read_u32(self.input, q), hash_log) as usize];
+                // block's inserts (the GPU's chain links); four per load, as
+                // below.
+                let (input, table) = (self.input, &self.table[..]);
+                let chain = &mut self.chain[self.inserted..end];
+                let mut k = 0;
+                while k + 4 <= chain.len() && self.inserted + k + 8 <= input.len() {
+                    let v = read_u64(input, self.inserted + k);
+                    for j in 0..4 {
+                        chain[k + j] = table[hash((v >> (8 * j)) as u32, hash_log) as usize];
+                    }
+                    k += 4;
+                }
+                for (j, link) in chain.iter_mut().enumerate().skip(k) {
+                    *link = table[hash(read_u32(input, self.inserted + j), hash_log) as usize];
                 }
             }
-            for q in self.inserted..end {
-                // Positions only grow, so the latest wins without a max.
-                self.table[hash(read_u32(self.input, q), hash_log) as usize] = q as u32 + 1;
+            // Positions only grow, so the latest wins without a max. Four
+            // positions per 8-byte load: position q + k's word is its bytes
+            // k..k + 4.
+            let input = self.input;
+            let table = &mut self.table[..];
+            let tagged = self.params.depth > 1;
+            let entry = |q: usize, word: u32| {
+                let tag = if tagged { tag(word) << LINK_BITS } else { 0 };
+                (q as u32 + 1) | tag
+            };
+            let mut q = self.inserted;
+            while q + 4 <= end && q + 8 <= input.len() {
+                let v = read_u64(input, q);
+                for k in 0..4 {
+                    let word = (v >> (8 * k)) as u32;
+                    table[hash(word, hash_log) as usize] = entry(q + k, word);
+                }
+                q += 4;
+            }
+            for q in q..end {
+                let word = read_u32(input, q);
+                table[hash(word, hash_log) as usize] = entry(q, word);
             }
             self.inserted += block;
         }
@@ -124,18 +170,20 @@ impl<'a> Matcher<'a> {
             };
         }
         let mut best = Match::default();
+        let ptag = tag(word);
         for _ in 0..self.params.depth.max(1) {
-            if entry == 0 {
+            if entry & LINK_MASK == 0 {
                 break;
             }
-            let candidate = entry as usize - 1;
+            let candidate = (entry & LINK_MASK) as usize - 1;
             let offset = p - candidate;
             if offset > MAX_OFFSET {
                 break;
             }
-            // Only a longer match counts, so byte `best.len` must match too.
+            // Only a longer match counts, so byte `best.len` must match too;
+            // and a candidate with another prefix can't match at all.
             let b = best.len as usize;
-            if b == 0 || input[candidate + b] == input[p + b] {
+            if entry >> LINK_BITS == ptag && (b == 0 || input[candidate + b] == input[p + b]) {
                 let len = common(input, candidate, p, max);
                 if len >= MIN_MATCH && len > b {
                     best = Match {

@@ -79,37 +79,37 @@ For files larger than memory, use `cpu::container::compress_stream` and `decompr
 
 ## Performance
 
-Apple M4 Pro (12 CPU cores, 20-core GPU), [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) (212 MB), 64 KiB chunks, `huffman-decode` run. GPU numbers are end to end: input in host memory, output back in host memory. Multi-threaded CPU rows vary between runs: the lz4_flex row has ranged from about 5 to 5.8 GB/s, and reaches about 7 at best on an idle machine.
+Apple M4 Pro (12 CPU cores, 20-core GPU), [Silesia corpus](https://sun.aei.polsl.pl/~sdeor/index.php?page=silesia) (212 MB), 64 KiB chunks, `profile-loop` run. GPU numbers are end to end: input in host memory, output back in host memory. Multi-threaded CPU rows vary between runs: the lz4_flex row has ranged from about 5 to 5.8 GB/s, and reaches about 7 at best on an idle machine.
 
 | Path | Ratio | Compress GB/s | Decompress GB/s |
 |---|---|---|---|
-| GPU, LZ4 (default) | 1.99× | 2.98 | 2.64 |
-| GPU, LZ4 `--level 2` | 2.21× | 1.63 | 2.64 |
-| GPU, LZ4 `--level 3` | 2.32× | 0.91 | 2.64 |
-| GPU, GLZ | 1.95× | 2.93 | 3.85 |
-| GPU, **GLZ-E** (Huffman-coded GLZ) | **2.50×** | 2.22 | 2.92 |
-| GPU, GLZ-E `--level 3` | **2.75×** | 0.84 | 3.04 |
-| CPU+GPU (`--hybrid`), LZ4 | 1.99× | 3.75 | 13.6 |
-| CPU+GPU, GLZ-E | 2.50× | 3.00 | 8.55 |
-| CPU+GPU, GLZ-E `--level 3` | 2.75× | 1.21 | 9.20 |
-| **lz4_flex + GPU** (`--hybrid --gpu-share 0.25`), LZ4 | 2.03× | **7.43** | — |
-| CPU, GLZ (gpucomp), 12 threads | 1.95× | 2.18 | 14.3 |
-| CPU, GLZ-E (gpucomp), 12 threads | 2.50× | 1.74 | 9.32 |
-| CPU, GLZ-E `--level 3` (gpucomp), 12 threads | 2.75× | 0.64 | 9.77 |
-| CPU `lz4_flex`, 12 threads | 2.04× | 5.71 | 13.1 |
-| CPU zstd -1, 64 KiB chunks, 12 threads | 2.76× | 5.57 | 9.37 |
-| CPU zstd -1, whole file (no random access) | 2.89× | 5.85 | 1.62 (1 thread) |
+| GPU, LZ4 (default) | 1.99× | 3.02 | 2.70 |
+| GPU, LZ4 `--level 2` | 2.21× | 1.65 | 2.70 |
+| GPU, LZ4 `--level 3` | 2.32× | 0.92 | 2.70 |
+| GPU, GLZ | 1.95× | 2.91 | 3.84 |
+| GPU, **GLZ-E** (Huffman-coded GLZ) | **2.50×** | 2.24 | 2.85 |
+| GPU, GLZ-E `--level 3` | **2.75×** | 0.85 | 3.10 |
+| CPU+GPU (`--hybrid`), LZ4 | 1.99× | 3.94 | 13.1 |
+| CPU+GPU, GLZ-E | 2.50× | 3.18 | 8.52 |
+| CPU+GPU, GLZ-E `--level 3` | 2.75× | 1.28 | 9.14 |
+| **lz4_flex + GPU** (`--hybrid --gpu-share 0.25`), LZ4 | 2.03× | **7.47** | — |
+| CPU, GLZ (gpucomp), 12 threads | 1.95× | 2.36 | 13.9 |
+| CPU, GLZ-E (gpucomp), 12 threads | 2.50× | 1.91 | 9.36 |
+| CPU, GLZ-E `--level 3` (gpucomp), 12 threads | 2.75× | 0.68 | 9.97 |
+| CPU `lz4_flex`, 12 threads | 2.04× | 6.23 | 13.0 |
+| CPU zstd -1, 64 KiB chunks, 12 threads | 2.76× | 5.76 | 10.4 |
+| CPU zstd -1, whole file (no random access) | 2.89× | 5.91 | 1.62 (1 thread) |
 
 LZ4 decompression on the GPU is measured on the default level's file. zstd in 64 KiB chunks gives the same random access as gpucomp. CPU+GPU decompression leaves the GPU out on this machine, because the CPU finishes before a GPU pass would pay off. The lz4_flex + GPU file is an ordinary LZ4 file, so it decodes like the other LZ4 rows.
 
-**From file to file**, as the `gpucomp` command runs, the CPU path streams: it reads, compresses or decompresses on every core, and writes at the same time. Silesia as one file, page cache warm, same run:
+**From file to file**, as the `gpucomp` command runs, the CPU path streams: it reads, compresses or decompresses on every core, and writes at the same time. Silesia as one file, page cache warm, outputs flushed to disk between runs, same run:
 
 | Command | Ratio | Compress | Decompress |
 |---|---|---|---|
-| `gpucomp compress` / `decompress` (CPU) | 2.04× | **38.2 ms** | **51.8 ms** |
-| zstd -1 with all threads; `zstd -d` | 2.89× | 44.3 ms | 141.3 ms |
-| `gpucomp ... --gpu` | 1.99× | 94.3 ms | 124.3 ms |
-| `gpucomp compress --gpu --hybrid --gpu-share 0.25` | 2.03× | 45.4 ms | — |
+| `gpucomp compress` / `decompress` (CPU) | 2.04× | **34.0 ms** | **22.4 ms** |
+| zstd -1 with all threads; `zstd -d` | 2.89× | 43.5 ms | 141.1 ms |
+| `gpucomp ... --gpu` | 1.99× | 93.6 ms | 119.4 ms |
+| `gpucomp compress --gpu --hybrid --gpu-share 0.25` | 2.03× | 54.5 ms | — |
 
 The real `lz4` command line tool (1.10) took 65 ms to compress and 76 ms to decompress on this machine. The GPU's file paths pipeline 16 MiB batches, but about 20 ms go to creating the GPU context and compiling kernels on every run, and a fresh process's first GPU work pays more on top. The benchmark keeps the GPU driver warm; as separate commands on this file, `--gpu-share 0.25` takes 68 ms and the CPU alone 40.
 

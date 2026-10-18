@@ -1570,3 +1570,57 @@ inputs, GLZ-E auto at levels 1 / 2 / 3: floats 1.42 / 1.49 / 1.56×, audio 1.37 
 1.44 / 1.45×, sorted u32 5.08 / 5.14 / 5.14×, timestamps 3.17 / **12.63** / 12.63×
 (zstd -19: 1.41, 1.04, 2.91, 3.90×). Level 1 keeps to width 4, as before, rather
 than paying two more trial encodes per chunk for widths 2 and 8.
+
+## Profile and optimize, as a loop (2026-10-18)
+Each pass: profile (GPU stage prefixes via `dispatch_stages`; CPU with macOS
+`sample`), change one thing, run its tests, A/B in the same session, keep only a
+measured gain. In order:
+
+1. **GPU deep pass, skip positions after a long first match** (they're usually
+   inside a match the parse jumps over; the parse computes any it does visit).
+   The parse's on-demand walks cost about twice the pass's: level-3 kernels 216 →
+   261 / 247 / 222 ms for thresholds 4 / 8 / 16. Rejected. The costly walks are at
+   positions the parse visits.
+2. **GPU deep pass, refilling lanes.** A CPU simulation of the walks put SIMD-32
+   lane use at 54% (18% of positions exit at once, 30% walk all 15 links). Lanes
+   that take the next position from a workgroup counter when done: 154 → 178 ms
+   (one position per lane, the extra loop state) and 210–217 ms (4–16 per lane;
+   set-up and link branches mixed in one SIMD group). Rejected; occupancy already
+   hides the latency.
+3. **GPU LZ4 decode, short copies a word at a time** in invocation 0 (one atomic
+   per word, not per byte): kernel 73 → 137 ms (a per-byte branch and modulo).
+   Rejected; the atomics weren't the cost, the serial parse is.
+4. **CPU GLZ-E decode, sampled:** Huffman 54%, GLZ 35%, tables 6%, memory 5%. No
+   single hot spot left after the previous round.
+5. **CPU decompression to a file:** the stream decodes Silesia in 9.6 ms to a
+   sink, but to a file the best of 11 runs is 20.6 ms and the median 50.8: writing
+   212 MB again and again piles up dirty pages, and the OS throttles. Parallel
+   `pwrite` is slower (25.8 ms with one thread, 28–36 with 2–8), and truncating
+   the old output costs nothing (new file 23.1, truncate 21.9, in place 20.5). The
+   bench's file rows now flush their outputs after each run, outside the timing
+   (median 50.8 → 33.6), so a run starts as a single command would; zstd's rows
+   get the same.
+6. **CPU twin match finder** (57% of CPU GLZ-E encoding): inserts four positions
+   per 8-byte load, the same for chain links, and at depth > 1 tags of each
+   position's first 4 bytes in its table and chain entries (as the GPU's links),
+   so the walk skips collisions without loading them. One thread: level 1 725 →
+   700 ms, level 3 2532 → 2418. All cores: LZ4 twin 2.41–2.46 → 2.54–2.57 GB/s,
+   GLZ-E 1.86–1.89 → 1.93–1.95, GLZ-E level 3 0.66–0.68 → 0.70.
+7. **Huffman encoder** (19% of CPU GLZ-E encoding): four interleaved histograms
+   (runs of one symbol don't wait on one counter), 222 → 206 ms over Silesia's
+   blocks; the word check once per symbol pair (two codes add at most 22 bits to
+   fewer than 32 pending), 206 → 183 ms.
+8. **Twin `common`:** the last 8-byte compare clamped to the limit instead of a
+   byte loop: level 1 713 → 684 ms, level 3 unchanged.
+9. GPU GLZ-E write kernel (11 ms): one table of code and length would save one
+   workgroup read per symbol, ~1–2 ms of 95; not tried.
+
+The GPU kernels resisted (each idea measured slower); the CPU twin and entropy
+coder gave ~5–18%.
+
+Recorded (`profile-loop` run against `delta-shuffle`): CPU twin compression on all
+cores LZ4 2.17 → **2.40** GB/s, GLZ 2.22 → 2.36, GLZ-E 1.75 → **1.91**, level 2 1.06
+→ 1.17, level 3 0.64 → 0.68. CPU+GPU with identical output moved ~1% (GPU-bound).
+File rows with flushing: gpucomp CPU decompress to a file 45.4 → **22.4 ms** (zstd
+-d 141.1), compress 36.3 → 34.0 (zstd -1 -T0 43.5). The streamed split's file row
+was noisier (43.9 → 54.5 ms).

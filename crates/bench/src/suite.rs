@@ -807,7 +807,8 @@ pub fn zstd(inputs: &[(String, Vec<u8>)], cfg: &SuiteConfig) -> anyhow::Result<V
 }
 
 /// File-to-file wall time, as the CLI runs it, page cache warm, on files in
-/// `dir` (created, then removed):
+/// `dir` (created, then removed); outputs are flushed to disk between runs,
+/// outside the timing:
 /// - `file.cpu.lz4_flex.compress` / `file.cpu.lz4.decompress`: gpucomp's
 ///   streamed CPU paths (lz4_flex, then the hand-written decoder);
 /// - `file.zstd-1.compress.mt` / `file.zstd-1.decompress.1t`: zstd's own
@@ -849,13 +850,6 @@ fn file_rows(
             }
         }
     }
-    let time = |f: &dyn Fn() -> anyhow::Result<()>| {
-        median_of(cfg.warmup, cfg.runs, || {
-            let start = Instant::now();
-            f()?;
-            Ok(start.elapsed())
-        })
-    };
     let workers = u32::try_from(rayon::current_num_threads())?;
     let (src, out) = (dir.join("input"), dir.join("output"));
     let (packed, zst, gpu_packed) = (
@@ -863,6 +857,27 @@ fn file_rows(
         dir.join("input.zst"),
         dir.join("gpu.gpcz"),
     );
+    // Repeated runs that each write hundreds of MB pile up dirty pages, and
+    // the OS then throttles writes (Silesia decompressed to a file: best
+    // 21 ms, median 51). Flushing the outputs after each run, outside the
+    // timing, starts every run as a single command would.
+    let flush = || -> anyhow::Result<()> {
+        for path in [&out, &packed, &zst, &gpu_packed] {
+            if let Ok(file) = File::open(path) {
+                file.sync_all()?;
+            }
+        }
+        Ok(())
+    };
+    let time = |f: &dyn Fn() -> anyhow::Result<()>| {
+        median_of(cfg.warmup, cfg.runs, || {
+            let start = Instant::now();
+            f()?;
+            let elapsed = start.elapsed();
+            flush()?;
+            Ok(elapsed)
+        })
+    };
     let mut rows = Vec::new();
     for (name, data) in inputs {
         if data.is_empty() {
