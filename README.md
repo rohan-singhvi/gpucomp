@@ -158,4 +158,4 @@ GPU tests are skipped when no adapter is available. CI runs on macOS and Windows
 
 ## License
 
-[MIT NON-AI License](LICENSE).
+[MIT](LICENSE).
